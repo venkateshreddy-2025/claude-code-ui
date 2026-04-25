@@ -920,6 +920,14 @@
   .persona-edit-actions .btn-ghost.danger:hover{background:rgba(226,81,81,.08);
     border-color:rgba(226,81,81,.5)}
 
+  /* Themed confirm dialog body. Inherits the .modal frame; we just need
+     a place for the question text + danger styling for the OK button. */
+  .confirm-body{font-size:14px;color:var(--fg);line-height:1.5;margin:0 0 4px}
+  .confirm-body code{background:var(--code-bg);padding:1px 5px;border-radius:4px;
+    border:1px solid var(--border);font-size:12px;font-family:"SF Mono",Menlo,monospace}
+  #confirmModal .btn-primary.danger{background:#e25151;border-color:#e25151;color:#fff}
+  #confirmModal .btn-primary.danger:hover{background:#d23838;border-color:#d23838}
+
   /* mobile drawer overlay */
   .drawer-bg{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:25;display:none}
   .drawer-bg.on{display:block;animation:fadein .15s}
@@ -1247,20 +1255,39 @@
   </p>
   <label class="setting-label" for="newSessionCwd">Working directory</label>
   <div class="setting-row">
-    <input type="text" id="newSessionCwd" class="setting-input"
-           placeholder="default: ~/claude-ui/&lt;timestamp&gt;/"
-           autocomplete="off" spellcheck="false">
+    <!-- Read-only by design: prefilled with the last-used (or current
+         session's) cwd. To change, the user clicks Browse → native
+         folder picker. Keeps casual users from accidentally typing a
+         broken path. -->
+    <input type="text" id="newSessionCwd" class="setting-input" readonly
+           autocomplete="off" spellcheck="false"
+           title="Click Browse… to change">
     <button type="button" class="btn-ghost" id="newSessionBrowse"
             title="Pick a folder">📁 Browse…</button>
   </div>
   <p class="setting-help">
-    Pre-filled with the folder you used last. Change it (type or browse)
-    or clear it to auto-create a fresh timestamped folder under
-    <code>~/claude-ui/</code>.
+    Defaults to the folder you used last. Click <strong>Browse…</strong>
+    to pick a different one. The session's PERSONA / INSTRUCTIONS files
+    will be dropped here.
   </p>
   <div class="modal-actions">
     <button type="button" class="btn-ghost"   id="newSessionCancel">Cancel</button>
     <button type="button" class="btn-primary" id="newSessionCreate">Create</button>
+  </div>
+</div>
+
+<!-- Themed confirm dialog — replaces native window.confirm() so every
+     prompt feels like part of the app instead of a browser system box.
+     The body is opt-in HTML (caller-controlled), the title is plain
+     text, and the action button can be tinted "danger" red for
+     delete-style operations. -->
+<div class="modal-backdrop" id="confirmBackdrop"></div>
+<div class="modal" id="confirmModal" hidden>
+  <h3 id="confirmTitle">Confirm</h3>
+  <div class="confirm-body" id="confirmBody"></div>
+  <div class="modal-actions">
+    <button type="button" class="btn-ghost"   id="confirmCancel">Cancel</button>
+    <button type="button" class="btn-primary" id="confirmOk">Confirm</button>
   </div>
 </div>
 
@@ -1673,10 +1700,25 @@
     opt('Fork — start a new chat with this as context',
         '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="3" r="2.5"/><circle cx="6" cy="21" r="2.5"/><circle cx="18" cy="9" r="2.5"/><path d="M6 5.5v13"/><path d="M18 11.5c0 4-7 5.5-7 9.5"/></svg>',
         false,
-        () => { if (confirm('Fork this chat? The new chat will start with the last 200 messages as context.')) send({type:'fork', id: sess.id, lastN: 200}); });
+        async () => {
+          const ok = await confirmAction({
+            title: 'Fork this chat?',
+            body:  'The new chat will start with the last 200 messages as context.',
+            confirmText: 'Fork',
+          });
+          if (ok) send({type:'fork', id: sess.id, lastN: 200});
+        });
     sep();
     opt('Delete chat', TRASH_ICON, true,
-        () => { if (confirm('Delete this chat? Its claude subprocess + cwd folder are kept on disk; only the metadata is removed.')) send({type:'delete', id: sess.id}); });
+        async () => {
+          const ok = await confirmAction({
+            title: 'Delete this chat?',
+            body:  `Removes <code>${escHtml(sess.title || 'this chat')}</code> from the sidebar. The cwd folder + saved files stay on disk — only the chat metadata is deleted.`,
+            confirmText: 'Delete',
+            danger: true,
+          });
+          if (ok) send({type:'delete', id: sess.id});
+        });
 
     // Position popmenu next to the dots button, clamped to viewport
     const r = anchorEl.getBoundingClientRect();
@@ -1826,9 +1868,13 @@
       forkBtn.type = 'button';
       forkBtn.title = 'Fork — start a new chat with these messages as context';
       forkBtn.innerHTML = ICON_FORK + '<span>Fork</span>';
-      forkBtn.onclick = () => {
-        if (!confirm('Fork this chat into a new session? The new chat will start with the last 200 messages as context.')) return;
-        send({type: 'fork', id: activeId, lastN: 200});
+      forkBtn.onclick = async () => {
+        const ok = await confirmAction({
+          title: 'Fork this chat?',
+          body:  'The new chat will start with the last 200 messages as context.',
+          confirmText: 'Fork',
+        });
+        if (ok) send({type: 'fork', id: activeId, lastN: 200});
       };
       bar.appendChild(forkBtn);
     }
@@ -2614,11 +2660,17 @@
   // pick a working directory + a model up-front before claude is spawned.
   // Server's `new` command accepts {cwd, model} so the picks are honored.
   // Last-used cwd is sticky so users opening "+ New session" see the
-  // folder they were just in, not an empty box. They can clear it or
-  // pick a new one — whatever they save here becomes the next default.
+  // folder they were just in, not an empty box. They can pick a new
+  // one via Browse… — whatever they save becomes the next default.
+  // Falls back to the active session's cwd if there's no saved value
+  // yet (so the field is never blank for first-time users).
   const LAST_CWD_KEY = 'cc.lastCwd';
   function getLastCwd(){
-    try { return localStorage.getItem(LAST_CWD_KEY) || ''; } catch(e) { return ''; }
+    try {
+      const stored = localStorage.getItem(LAST_CWD_KEY);
+      if (stored) return stored;
+    } catch(e) {}
+    return cwd || '';      // active session's cwd — populated from server state
   }
   function setLastCwd(v){
     try { localStorage.setItem(LAST_CWD_KEY, v || ''); } catch(e) {}
@@ -2630,13 +2682,6 @@
     document.getElementById('newSessionCwd').value = getLastCwd();
     refreshPersonasUI();
     send({ type: 'personas_list' });
-    // Focus cwd input but place cursor at the end so the prefill is
-    // ready to edit, not selected for replacement.
-    setTimeout(() => {
-      const inp = document.getElementById('newSessionCwd');
-      inp.focus();
-      inp.setSelectionRange(inp.value.length, inp.value.length);
-    }, 30);
   }
   function closeNewSession(){
     document.getElementById('newSessionBackdrop').classList.remove('on');
@@ -2821,11 +2866,19 @@
     showPersonaList();
   });
   document.getElementById('personaCancel').addEventListener('click', showPersonaList);
-  document.getElementById('personaDelete').addEventListener('click', () => {
+  document.getElementById('personaDelete').addEventListener('click', async () => {
     if (!personaEditingId){
       showPersonaList(); return;
     }
-    if (!confirm('Delete this persona? This cannot be undone.')) return;
+    const name = personasState.personas.find(p => p.id === personaEditingId)?.name;
+    const ok = await confirmAction({
+      title: 'Delete this persona?',
+      body:  name ? `Deletes <code>${escHtml(name)}</code>. This cannot be undone.`
+                  : 'This cannot be undone.',
+      confirmText: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
     send({ type: 'persona_delete', id: personaEditingId });
     showPersonaList();
   });
@@ -2994,6 +3047,47 @@
     return (s || '').replace(/[&<>"']/g, c => ({
       '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
     }[c]));
+  }
+
+  // Themed confirm dialog — Promise-based replacement for window.confirm.
+  // opts: { title, body (HTML allowed), confirmText, cancelText, danger:bool }.
+  // Resolves with true on confirm, false on cancel / Esc / backdrop click.
+  function confirmAction(opts){
+    return new Promise(resolve => {
+      const modal     = document.getElementById('confirmModal');
+      const backdrop  = document.getElementById('confirmBackdrop');
+      const titleEl   = document.getElementById('confirmTitle');
+      const bodyEl    = document.getElementById('confirmBody');
+      const okBtn     = document.getElementById('confirmOk');
+      const cancelBtn = document.getElementById('confirmCancel');
+      titleEl.textContent  = opts.title || 'Confirm';
+      bodyEl.innerHTML     = opts.body  || '';
+      okBtn.textContent    = opts.confirmText || 'Confirm';
+      cancelBtn.textContent = opts.cancelText || 'Cancel';
+      okBtn.classList.toggle('danger', !!opts.danger);
+      backdrop.classList.add('on');
+      modal.hidden = false;
+      const close = (val) => {
+        backdrop.classList.remove('on');
+        modal.hidden = true;
+        okBtn.removeEventListener('click', onOk);
+        cancelBtn.removeEventListener('click', onCancel);
+        backdrop.removeEventListener('click', onCancel);
+        document.removeEventListener('keydown', onKey);
+        resolve(val);
+      };
+      const onOk     = () => close(true);
+      const onCancel = () => close(false);
+      const onKey    = e => {
+        if (e.key === 'Escape')  { e.preventDefault(); onCancel(); }
+        if (e.key === 'Enter')   { e.preventDefault(); onOk(); }
+      };
+      okBtn.addEventListener('click', onOk);
+      cancelBtn.addEventListener('click', onCancel);
+      backdrop.addEventListener('click', onCancel);
+      document.addEventListener('keydown', onKey);
+      setTimeout(() => okBtn.focus(), 30);
+    });
   }
 
   function openSearch(){
