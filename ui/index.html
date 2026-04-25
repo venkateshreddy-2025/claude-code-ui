@@ -22,7 +22,8 @@
 <style>
   /* ───── reset + tokens ───── */
   *,*::before,*::after{box-sizing:border-box}
-  html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#0a0a0d;color:#e7e7ea;
+  html,body{margin:0;padding:0;height:100%;overflow:hidden;
+    background:var(--bg);color:var(--fg);
     font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Inter",system-ui,sans-serif;
     font-size:16px;line-height:1.45;-webkit-font-smoothing:antialiased;
     -webkit-tap-highlight-color:transparent}
@@ -32,6 +33,13 @@
     --accent:#c78f5b; --accent-2:#e0a06a;
     --bubble-user-a:#c78f5b; --bubble-user-b:#e0a06a;
     --bubble-bot:#1b1b22; --border:#26262e; --border-soft:#1f1f26;
+    /* Header / footer chrome use these tinted-glass blends. They flip
+       in light mode below so the blur doesn't go gray-on-cream. */
+    --chrome-top-a:rgba(10,10,13,.92); --chrome-top-b:rgba(10,10,13,.6);
+    --chrome-bot-a:rgba(10,10,13,.96); --chrome-bot-b:rgba(10,10,13,.7);
+    --code-bg:#0d0d12; --pre-bg:#0a0a0e;
+    --hover:rgba(255,255,255,.06); --hover-strong:rgba(255,255,255,.12);
+    --sub-tint:rgba(255,255,255,.02); --sub-tint-2:rgba(255,255,255,.05);
     --side-w:268px;
     --safe-top:env(safe-area-inset-top,0px);
     --safe-bot:env(safe-area-inset-bottom,0px);
@@ -40,7 +48,59 @@
        still keeping bubbles a sensible reading width on big monitors. */
     --col:1280px;
   }
-  html[data-theme="amber"]   {--accent:#c78f5b;--accent-2:#e0a06a;--bubble-user-a:#c78f5b;--bubble-user-b:#e0a06a}
+  /* Light ("bright") mode: warm-cream surfaces + dark brown ink.
+     Triggered with html[data-mode="light"] from the theme picker. The
+     accent color is intentionally NOT changed here — picking Tidewander
+     in light mode still gives you blue accents on cream. */
+  html[data-mode="light"]{
+    --bg:#f6ecd3; --bg-2:#fbf5e3; --bg-3:#ecdfc3;
+    --fg:#2a1d10; --fg-dim:#5d4a30; --fg-faint:#8e7a5a;
+    --bubble-bot:#ffffff;
+    --border:#dccba8; --border-soft:#ead9b6;
+    --chrome-top-a:rgba(246,236,211,.92); --chrome-top-b:rgba(246,236,211,.6);
+    --chrome-bot-a:rgba(246,236,211,.96); --chrome-bot-b:rgba(246,236,211,.7);
+    --code-bg:#fcf6e6; --pre-bg:#fbf2dc;
+    --hover:rgba(0,0,0,.05); --hover-strong:rgba(0,0,0,.10);
+    --sub-tint:rgba(0,0,0,.03); --sub-tint-2:rgba(0,0,0,.06);
+    color-scheme:light;
+  }
+  /* iOS / Safari sees this hint and tints the system status-bar area to
+     match. Without it, light mode would still get a black status bar. */
+  html[data-mode="light"] body{background:var(--bg)}
+  /* Light-mode targeted overrides for the few hard-coded dark surfaces
+     that don't already pull from a CSS var. Keeps the dark default
+     blocks above unchanged. */
+  html[data-mode="light"] main#scrollarea::-webkit-scrollbar-thumb,
+  html[data-mode="light"] .session-list::-webkit-scrollbar-thumb,
+  html[data-mode="light"] .search-results::-webkit-scrollbar-thumb { background:#cdb78c }
+  html[data-mode="light"] #jumpBottom { background:#fbf3df; color:var(--fg) }
+  html[data-mode="light"] #jumpBottom:hover { background:#ecdebd; border-color:#d4c2a3 }
+  html[data-mode="light"] .bubble code  { background:var(--code-bg); color:var(--accent) }
+  html[data-mode="light"] .bubble pre   { background:var(--pre-bg) }
+  html[data-mode="light"] .bubble pre code { background:none; color:var(--fg) }
+  html[data-mode="light"] .empty-pane code { background:var(--code-bg); color:var(--fg-dim) }
+  html[data-mode="light"] .session-item:hover,
+  html[data-mode="light"] .session-item.active,
+  html[data-mode="light"] .session-item button.dots:hover,
+  html[data-mode="light"] #popmenu button:hover,
+  html[data-mode="light"] .icon-btn:hover,
+  html[data-mode="light"] .menu-btn:hover,
+  html[data-mode="light"] .header-action:hover { background:var(--hover) }
+  html[data-mode="light"] .bubble blockquote { background:rgba(0,0,0,.03) }
+  html[data-mode="light"] .bubble tr:nth-child(even) td { background:rgba(0,0,0,.025) }
+  html[data-mode="light"] .se-result:hover    { background:var(--hover) }
+  html[data-mode="light"] .msg-actions button { background:var(--sub-tint) }
+  html[data-mode="light"] .msg-actions button:hover { background:var(--hover); border-color:var(--border) }
+  html[data-mode="light"] .dot { background:#9ca0aa }
+  html[data-mode="light"] .dot.live { background:#1f9a52 }
+  html[data-mode="light"] #searchOverlay { background:rgba(246,236,211,.92) }
+  html[data-mode="light"] #searchPreview { background:rgba(0,0,0,.40) }
+  html[data-mode="light"] textarea#input { background:transparent; color:var(--fg) }
+  html[data-mode="light"] .menu-btn,
+  html[data-mode="light"] .header-action,
+  html[data-mode="light"] .icon-btn { color:#5b4a30 }
+  html[data-mode="light"] .stream-cursor { background:var(--accent) }
+  html[data-theme="amber"]{--accent:#c78f5b;--accent-2:#e0a06a;--bubble-user-a:#c78f5b;--bubble-user-b:#e0a06a}
   html[data-theme="ember"]   {--accent:#ff5a3c;--accent-2:#ff8a3d;--bubble-user-a:#ff5a3c;--bubble-user-b:#ff8a3d}
   html[data-theme="ocean"]   {--accent:#3b82f6;--accent-2:#06b6d4;--bubble-user-a:#3b82f6;--bubble-user-b:#06b6d4}
   html[data-theme="forest"]  {--accent:#10b981;--accent-2:#22c55e;--bubble-user-a:#10b981;--bubble-user-b:#22c55e}
@@ -153,7 +213,7 @@
   /* header */
   header{display:flex;align-items:center;gap:10px;
     padding:calc(var(--safe-top) + 10px) 14px 10px;
-    background:linear-gradient(180deg,rgba(10,10,13,.92),rgba(10,10,13,.6));
+    background:linear-gradient(180deg,var(--chrome-top-a),var(--chrome-top-b));
     backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px);
     border-bottom:1px solid var(--border); position:sticky;top:0;z-index:5}
   .menu-btn{flex:0 0 36px;width:36px;height:36px;border:none;background:transparent;
@@ -206,6 +266,17 @@
   .dot.err{background:#f5374f}
   .dot.busy{background:var(--accent)}
   @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(52,208,118,.5)}50%{box-shadow:0 0 0 6px rgba(52,208,118,0)}}
+
+  /* Inline thinking-dots — appears next to the header status text while
+     claude is busy so the user always has a sign of life, even between
+     text blocks (during tool calls, multi-step reasoning). */
+  .think-dots{display:none;margin-left:6px;align-items:center;gap:3px}
+  .think-dots.on{display:inline-flex}
+  .think-dots i{width:4px;height:4px;border-radius:50%;background:var(--accent);
+    animation:tdot 1.2s ease-in-out infinite}
+  .think-dots i:nth-child(2){animation-delay:.16s}
+  .think-dots i:nth-child(3){animation-delay:.32s}
+  @keyframes tdot{0%,80%,100%{transform:scale(.5);opacity:.3}40%{transform:scale(1);opacity:1}}
 
   /* ───── messages ───── */
   main#scrollarea{flex:1;overflow-y:auto;overflow-x:hidden;position:relative;
@@ -338,8 +409,13 @@
   /* themed header tint — uses --accent at low opacity. The hardcoded RGB
      above approximates "amber"; for other themes the rgba() falls back to
      the default accent so the contrast is good enough across the board. */
+  /* Tables explicitly opt-OUT of the bubble's overflow-wrap:anywhere so
+     long words don't shatter into single-letter line wraps. We allow long
+     words to break with `break-word` only as a last resort, otherwise
+     wrap at natural spaces. */
   .bubble th,.bubble td{border-bottom:1px solid var(--border);padding:6px 10px;
-    text-align:left;vertical-align:top}
+    text-align:left;vertical-align:top;
+    overflow-wrap:break-word;word-break:normal;hyphens:none}
   .bubble th{font-weight:600;color:var(--accent);text-transform:uppercase;
     font-size:11.5px;letter-spacing:.04em;padding:8px 10px}
   .bubble td{color:var(--fg)}
@@ -488,7 +564,7 @@
   @keyframes searchIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
 
   .search-bar{display:flex;align-items:center;gap:10px;padding:14px 18px 10px;
-    border-bottom:1px solid var(--border);background:rgba(10,10,13,.92);position:sticky;top:0}
+    border-bottom:1px solid var(--border);background:var(--chrome-top-a);position:sticky;top:0}
   .search-bar .se-icon{width:18px;height:18px;color:var(--fg-faint);flex:0 0 18px}
   .search-bar input.se-input{flex:1;min-width:0;background:transparent;color:var(--fg);
     border:none;outline:none;font:inherit;font-size:16px;padding:8px 0;
@@ -619,7 +695,7 @@
 
   /* ───── composer ───── */
   footer{padding:8px 12px calc(10px + var(--safe-bot));
-    background:linear-gradient(0deg,rgba(10,10,13,.96),rgba(10,10,13,.7));
+    background:linear-gradient(0deg,var(--chrome-bot-a),var(--chrome-bot-b));
     backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px);
     border-top:1px solid var(--border);
     display:flex;flex-direction:column;align-items:center;gap:8px}
@@ -699,14 +775,61 @@
   .swatch:hover{transform:translateY(-2px)}
   .swatch:active{transform:scale(.94)}
   .swatch.active{border-color:var(--fg)}
-  /* Theme swatch label = whimsical name (top, bigger) + small hue hint
-     (bottom, faded). Capitalised cleanly — no automatic uppercasing. */
-  .swatch-label{text-align:center;margin-top:4px;line-height:1.15}
-  .swatch-name{font-size:11px;color:var(--fg-dim);font-weight:600;letter-spacing:-.005em}
-  .swatch-sub {font-size:9.5px;color:var(--fg-faint);
-    text-transform:lowercase;letter-spacing:.04em;margin-top:1px}
+  .swatch-label{font-size:11px;color:var(--fg-dim);text-align:center;margin-top:5px;
+    font-weight:600;letter-spacing:-.005em}
   .theme-row{display:flex;flex-direction:column;align-items:center;gap:0}
   .theme-row .swatch{width:100%}
+
+  /* Settings primitives ---------------------------------------------- */
+  /* Segmented toggle (Dark / Bright). */
+  .seg-toggle{display:inline-flex;background:var(--sub-tint);
+    border:1px solid var(--border);border-radius:12px;padding:3px;gap:2px}
+  .seg-toggle .seg{padding:7px 14px;border-radius:9px;border:none;background:transparent;
+    color:var(--fg-dim);font:inherit;font-size:12.5px;cursor:pointer;font-weight:500;
+    transition:color .15s,background .15s}
+  .seg-toggle .seg:hover{color:var(--fg)}
+  .seg-toggle .seg.on{background:var(--accent);color:#0f0f15;font-weight:600;
+    box-shadow:0 1px 0 rgba(0,0,0,.2)}
+
+  .setting-help{font-size:11.5px;color:var(--fg-faint);line-height:1.45;margin:2px 0 8px}
+  .setting-help code{background:var(--code-bg);padding:1px 5px;border-radius:4px;
+    border:1px solid var(--border);font-size:10.5px;font-family:"SF Mono",Menlo,monospace}
+  .setting-label{display:block;font-size:11px;color:var(--fg-dim);font-weight:600;
+    text-transform:uppercase;letter-spacing:.06em;margin:10px 0 4px}
+  .setting-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .setting-input,.setting-select{
+    background:var(--bg-3);border:1px solid var(--border);color:var(--fg);
+    border-radius:8px;padding:8px 10px;font:inherit;font-size:13px;outline:none;
+    min-width:0;flex:1 1 220px;
+    transition:border-color .15s}
+  .setting-input.wide,.setting-select.wide{width:100%;flex:1 1 100%}
+  .setting-input:focus,.setting-select:focus{border-color:var(--accent)}
+  .setting-select{cursor:pointer;appearance:none;
+    background-image:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%239b9ba3" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>');
+    background-repeat:no-repeat;background-position:right 8px center;background-size:14px;
+    padding-right:30px}
+
+  /* Modal primitive (used by new-session popup + summary-done dialog). */
+  .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.55);
+    z-index:55;display:none;backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)}
+  .modal-backdrop.on{display:block;animation:fadein .15s}
+  .modal{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:56;
+    width:min(480px,calc(100% - 24px));background:var(--bg-2);
+    border:1px solid var(--border);border-radius:14px;padding:18px 20px 16px;
+    box-shadow:0 28px 80px -20px rgba(0,0,0,.6);animation:popin .18s ease-out both}
+  .modal h3{margin:0 0 10px;font-size:13px;text-transform:uppercase;letter-spacing:.08em;
+    color:var(--fg-dim);font-weight:600}
+  .modal .close{position:absolute;top:8px;right:10px;width:32px;height:32px;border:none;
+    background:transparent;color:var(--fg-dim);font-size:22px;line-height:1;
+    border-radius:50%;cursor:pointer;display:grid;place-items:center}
+  .modal .close:hover{color:var(--fg);background:var(--hover)}
+  .modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+  .btn-ghost,.btn-primary{height:32px;padding:0 14px;border-radius:8px;border:1px solid var(--border);
+    background:var(--sub-tint);color:var(--fg);font:inherit;font-size:13px;cursor:pointer;
+    display:inline-flex;align-items:center;gap:6px;transition:background .15s,color .15s}
+  .btn-ghost:hover{background:var(--hover)}
+  .btn-primary{background:var(--accent);border-color:var(--accent);color:#0f0f15;font-weight:600}
+  .btn-primary:hover{filter:brightness(1.08)}
 
   /* mobile drawer overlay */
   .drawer-bg{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:25;display:none}
@@ -718,12 +841,12 @@
   <!-- ────────  sidebar  ──────── -->
   <aside id="sidebar">
     <div class="side-top">
-      <button class="new-btn" id="newBtn" title="Start a new chat">
+      <button class="new-btn" id="newBtn" title="Start a new session">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
           stroke-linecap="round" stroke-linejoin="round">
           <path d="M12 5v14M5 12h14"/>
         </svg>
-        <span>New chat</span>
+        <span>New session</span>
       </button>
     </div>
     <!-- starred sessions render as a pinned section above the main list -->
@@ -764,12 +887,26 @@
         <div class="status">
           <span class="dot" id="dot"></span>
           <span id="statusText">connecting…</span>
+          <span class="think-dots" id="thinkDots" aria-hidden="true">
+            <i></i><i></i><i></i>
+          </span>
         </div>
       </div>
       <span class="spawn-chip" id="spawnChip" aria-live="polite">
         <span class="spinner" aria-hidden="true"></span>
         <span id="spawnChipText">starting…</span>
       </span>
+      <button class="header-action" id="saveProgressBtn" type="button"
+              title="Save progress (Markdown summary via opus 4.6 1M)"
+              aria-label="Save progress">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <!-- floppy-disk-ish "save" glyph, classic + recognisable. -->
+          <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+          <polyline points="17 21 17 13 7 13 7 21"/>
+          <polyline points="7 3 7 8 15 8"/>
+        </svg>
+      </button>
       <button class="header-action" id="searchBtn" type="button"
               title="Search across all chats (⌘K / Ctrl-K)" aria-label="Search">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -914,12 +1051,70 @@
 <!-- Floating menu shown when the ⋮ on a session row is clicked -->
 <div id="popmenu" role="menu"></div>
 
-<!-- Settings sheet (theme picker) -->
+<!-- Settings sheet — theme + appearance (light/dark) + default model -->
 <div class="sheet-backdrop" id="sheetBackdrop"></div>
 <div class="sheet" id="sheet" hidden>
   <button class="close" id="sheetClose" aria-label="Close">×</button>
-  <h3>Theme</h3>
+
+  <h3>Appearance</h3>
+  <div class="seg-toggle" id="modeToggle" role="radiogroup" aria-label="Light or dark mode">
+    <button type="button" class="seg on"  data-mode="dark"
+            aria-pressed="true">🌙 Dark</button>
+    <button type="button" class="seg"     data-mode="light"
+            aria-pressed="false">☀️ Bright</button>
+  </div>
+
+  <h3 style="margin-top:18px">Theme</h3>
   <div class="theme-grid" id="themeGrid"></div>
+
+  <h3 style="margin-top:18px">Default model for new sessions</h3>
+  <p class="setting-help">
+    Used when you create a new session. Existing chats keep whatever model
+    they were started with — switch them per-chat with <code>/model</code>.
+  </p>
+  <div class="setting-row">
+    <select id="defaultModel" class="setting-select"></select>
+    <input type="text" id="defaultModelCustom" class="setting-input"
+           placeholder="…or type a model name"
+           autocomplete="off" spellcheck="false">
+  </div>
+  <p class="setting-help" id="defaultModelStatus" style="margin-top:6px"></p>
+</div>
+
+<!-- New-session popup — opens from "+ New session" with path + model. -->
+<div class="modal-backdrop" id="newSessionBackdrop"></div>
+<div class="modal" id="newSessionModal" hidden>
+  <button class="close" id="newSessionClose" aria-label="Close">×</button>
+  <h3>New session</h3>
+  <label class="setting-label" for="newSessionCwd">Working directory</label>
+  <input type="text" id="newSessionCwd" class="setting-input wide"
+         placeholder="default: ~/claude-ui/&lt;timestamp&gt;/"
+         autocomplete="off" spellcheck="false">
+  <p class="setting-help">
+    Where claude runs (its <code>cwd</code>). Leave blank to auto-create a
+    fresh timestamped folder, or paste an absolute path to start in an
+    existing project.
+  </p>
+  <label class="setting-label" for="newSessionModel">Model</label>
+  <select id="newSessionModel" class="setting-select wide"></select>
+  <p class="setting-help">Override just for this session. Default is set in Settings.</p>
+  <div class="modal-actions">
+    <button type="button" class="btn-ghost"   id="newSessionCancel">Cancel</button>
+    <button type="button" class="btn-primary" id="newSessionCreate">Create</button>
+  </div>
+</div>
+
+<!-- Save-progress dialog — shown after summarization finishes. -->
+<div class="modal-backdrop" id="summaryDoneBackdrop"></div>
+<div class="modal" id="summaryDoneModal" hidden>
+  <button class="close" id="summaryDoneClose" aria-label="Close">×</button>
+  <h3>Progress saved</h3>
+  <p class="setting-help" id="summaryDonePath"></p>
+  <p class="setting-help" id="summaryDoneSize"></p>
+  <div class="modal-actions">
+    <button type="button" class="btn-ghost"   id="summaryCopyPath">Copy path</button>
+    <button type="button" class="btn-primary" id="summaryDoneOk">Got it</button>
+  </div>
 </div>
 
 <script>
@@ -1038,6 +1233,12 @@
   function setStatus(text, level){
     statusText.textContent = text;
     dot.className = 'dot ' + (level || '');
+    // Bouncing dots in the header light up whenever level === 'busy', so
+    // the user has a continuous "still thinking" signal from the moment
+    // the message is sent until turn_done — INCLUDING the gaps between
+    // text blocks where claude is doing tool calls or reasoning.
+    const td = document.getElementById('thinkDots');
+    if (td) td.classList.toggle('on', level === 'busy');
   }
   function showBanner(text){banner.textContent=text;banner.classList.add('on');}
   function hideBanner(){banner.classList.remove('on');}
@@ -1312,7 +1513,7 @@
     if (!recent.length && !starred.length){
       const e = document.createElement('div');
       e.className = 'empty-list';
-      e.textContent = 'No chats yet. Click "New chat" above to start.';
+      e.textContent = 'No sessions yet. Click "New session" above to start.';
       sessionList.appendChild(e);
       return;
     }
@@ -1331,7 +1532,7 @@
       '<p>' +
       (activeId
         ? 'Send a message — Claude will spawn here. Working in <code>' + escapeHTML(cwd) + '</code>.'
-        : 'Click <strong>New chat</strong> in the sidebar to start a fresh Claude session.') +
+        : 'Click <strong>New session</strong> in the sidebar to start a fresh Claude session.') +
       '</p>';
     messagesEl.appendChild(div);
   }
@@ -1567,8 +1768,13 @@
     if (streamingBubble){
       streamingBubble.classList.remove('streaming');
       const raw = streamingBubble.dataset.raw || streamingBubble.innerText;
-      streamingBubble.innerHTML = md(raw);     // no cursor — turn is done
-      // Update wrap.dataset.text so dedup + copy paths see the final text
+      // If the turn isn't actually finished (claude is still thinking /
+      // running tools between text blocks), keep a blinking cursor at
+      // the end so the typewriter effect persists. The cursor goes away
+      // for real on `turn_done` via finishStreamingCursors().
+      const stillThinking = busy;
+      streamingBubble.innerHTML = md(raw)
+        + (stillThinking ? '<span class="stream-cursor pending"></span>' : '');
       const wrap = streamingBubble.closest('.msg');
       if (wrap){
         wrap.dataset.text = raw;
@@ -1580,6 +1786,13 @@
       refreshLastBotForkButton();
     }
     streamingId = null; streamingBubble = null;
+  }
+
+  // Strip every "still thinking" cursor we may have left on past bubbles.
+  // Called on turn_done / session_ended so the chat returns to a calm
+  // state once claude actually stops working.
+  function finishStreamingCursors(){
+    messagesEl.querySelectorAll('.stream-cursor').forEach(el => el.remove());
   }
 
   // ───── tap image → fullscreen lightbox ─────
@@ -1711,6 +1924,7 @@
         endStream();
         showTyping(false);
         busy = false;
+        finishStreamingCursors();
         if (m.sessions) { sessions = m.sessions; renderSessions(); refreshHeaderTitle(); }
         // If the turn produced no text response and the user's message was
         // a slash command, claude likely handled it silently (e.g., /model
@@ -1733,6 +1947,7 @@
         showTyping(false);
         showSpawning(false);
         pid = null; busy = false;
+        finishStreamingCursors();
         setOnline(true);
         focusComposer();
         break;
@@ -1752,6 +1967,18 @@
       case 'search_results': onSearchResults(m); break;
       case 'search_detail':  onSearchDetail(m);  break;
       case 'spawning': showSpawning(true, m.title || 'starting…'); break;
+      case 'summarizing':
+        // Server confirms it's started the summarize subprocess. We
+        // already toggled the UI optimistically when the user clicked
+        // Save progress, so this is informational.
+        setSummarizing(true);
+        break;
+      case 'summary_done': onSummaryDone(m); break;
+      case 'summary_error':
+        setSummarizing(false);
+        showBanner('Summarize failed: ' + (m.message || 'unknown'));
+        setTimeout(hideBanner, 5000);
+        break;
       case 'error':
         showBanner('Error: ' + (m.message||'unknown'));
         setTimeout(hideBanner, 5000);
@@ -1928,14 +2155,16 @@
     renderMessage(localMsg);
   });
 
-  // ───── new chat ─────
+  // ───── new session ─────
+  // The button now opens a popup (path + model picker) instead of
+  // sending {type:'new'} immediately. The popup itself fires the WS
+  // command and closes itself when the user hits Create.
   $('newBtn').addEventListener('click', () => {
     if (!online) return;
-    send({type:'new'});
     closeDrawer();
-    // The full state arrives in a moment; pre-focus so the user can start
-    // typing without waiting for the round-trip.
-    setTimeout(focusComposer, 50);
+    // openNewSession is defined below in the settings/popup block.
+    if (typeof openNewSession === 'function') openNewSession();
+    else send({type:'new'});  // safety fallback if popup module didn't load
   });
 
   // ───── settings sheet (theme) ─────
@@ -1967,14 +2196,12 @@
       const sw = document.createElement('button'); sw.type = 'button';
       sw.className = 'swatch'; sw.dataset.theme = t.id;
       sw.style.setProperty('--sw-a', t.a); sw.style.setProperty('--sw-b', t.b);
-      sw.title = t.label + ' — ' + t.sub;
-      sw.setAttribute('aria-label', 'Theme: ' + t.label + ' (' + t.sub + ')');
+      sw.title = t.label;
+      sw.setAttribute('aria-label', 'Theme: ' + t.label);
       sw.onclick = () => applyTheme(t.id);
-      const labelWrap = document.createElement('div'); labelWrap.className='swatch-label';
-      const main = document.createElement('div'); main.className='swatch-name';  main.textContent = t.label;
-      const sub  = document.createElement('div'); sub.className ='swatch-sub';   sub.textContent  = t.sub;
-      labelWrap.appendChild(main); labelWrap.appendChild(sub);
-      cell.appendChild(sw); cell.appendChild(labelWrap); grid.appendChild(cell);
+      const label = document.createElement('div');
+      label.className = 'swatch-label'; label.textContent = t.label;
+      cell.appendChild(sw); cell.appendChild(label); grid.appendChild(cell);
     }
   }
   function loadTheme(){
@@ -1983,6 +2210,99 @@
     if (!THEMES.some(t => t.id === id)) id = 'amber';
     applyTheme(id);
   }
+
+  // ───── light / dark mode ─────
+  // Independent of the theme (which controls accents). "dark" is the
+  // default; "light" gives a warm cream surface with the same accents.
+  const MODE_KEY = 'cc.mode';
+  function applyMode(mode){
+    if (mode !== 'light') mode = 'dark';
+    document.documentElement.setAttribute('data-mode', mode);
+    try { localStorage.setItem(MODE_KEY, mode); } catch(e) {}
+    const seg = document.querySelectorAll('#modeToggle .seg');
+    seg.forEach(b => {
+      const on = b.dataset.mode === mode;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    // Sync the system status-bar color so iOS/Safari tints to match.
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', mode === 'light' ? '#f6ecd3' : '#0a0a0d');
+  }
+  function loadMode(){
+    let m = 'dark';
+    try { m = localStorage.getItem(MODE_KEY) || 'dark'; } catch(e) {}
+    applyMode(m);
+  }
+  document.getElementById('modeToggle').addEventListener('click', e => {
+    const btn = e.target.closest('.seg');
+    if (!btn) return;
+    applyMode(btn.dataset.mode);
+  });
+
+  // ───── default-model picker ─────
+  // The current model list. Edit one place — also used by the
+  // new-session popup. The user can also type a custom model in the
+  // free-text input next to the dropdown for anything not on this list.
+  const KNOWN_MODELS = [
+    { id: 'claude-opus-4-6[1m]',  label: 'Opus 4.6 — 1M context' },
+    { id: 'claude-opus-4-6',      label: 'Opus 4.6' },
+    { id: 'claude-opus-4-1',      label: 'Opus 4.1' },
+    { id: 'claude-sonnet-4-5',    label: 'Sonnet 4.5' },
+    { id: 'claude-sonnet-4-1',    label: 'Sonnet 4.1' },
+    { id: 'claude-haiku-4-5',     label: 'Haiku 4.5' },
+  ];
+  const DEFAULT_MODEL_KEY = 'cc.defaultModel';
+  function getDefaultModel(){
+    try { return localStorage.getItem(DEFAULT_MODEL_KEY) || ''; } catch(e) { return ''; }
+  }
+  function setDefaultModel(id){
+    try { localStorage.setItem(DEFAULT_MODEL_KEY, id || ''); } catch(e) {}
+    const status = document.getElementById('defaultModelStatus');
+    if (status){
+      status.textContent = id
+        ? 'New sessions will start with: ' + id
+        : 'Server default will be used (no override).';
+    }
+  }
+  function fillModelSelect(sel, current){
+    sel.innerHTML = '';
+    const blank = document.createElement('option');
+    blank.value = ''; blank.textContent = '— server default —';
+    sel.appendChild(blank);
+    let matched = false;
+    for (const m of KNOWN_MODELS){
+      const o = document.createElement('option');
+      o.value = m.id; o.textContent = m.label + ' (' + m.id + ')';
+      if (current === m.id){ o.selected = true; matched = true; }
+      sel.appendChild(o);
+    }
+    if (current && !matched){
+      // Custom value the user typed earlier — preserve it as the selected option.
+      const o = document.createElement('option');
+      o.value = current; o.textContent = current + ' (custom)'; o.selected = true;
+      sel.appendChild(o);
+    }
+  }
+  function initDefaultModelUI(){
+    const cur = getDefaultModel();
+    const sel = document.getElementById('defaultModel');
+    const inp = document.getElementById('defaultModelCustom');
+    fillModelSelect(sel, cur);
+    inp.value = '';
+    setDefaultModel(cur);
+    sel.addEventListener('change', () => {
+      setDefaultModel(sel.value);
+      inp.value = '';
+    });
+    inp.addEventListener('change', () => {
+      const v = inp.value.trim();
+      if (!v) return;
+      setDefaultModel(v);
+      fillModelSelect(sel, v);
+    });
+  }
+
   function openSheet(){$('sheet').hidden=false;$('sheetBackdrop').classList.add('on');}
   function closeSheet(){$('sheet').hidden=true;$('sheetBackdrop').classList.remove('on');}
   $('settingsBtn').addEventListener('click', openSheet);
@@ -1991,7 +2311,89 @@
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && !$('sheet').hidden) closeSheet();
   });
-  buildThemeGrid(); loadTheme();
+  buildThemeGrid(); loadTheme(); loadMode(); initDefaultModelUI();
+
+  // ───── new-session popup ─────
+  // Replaces the old "+ New chat → instantly create" flow. Lets the user
+  // pick a working directory + a model up-front before claude is spawned.
+  // Server's `new` command accepts {cwd, model} so the picks are honored.
+  function openNewSession(){
+    document.getElementById('newSessionBackdrop').classList.add('on');
+    document.getElementById('newSessionModal').hidden = false;
+    document.getElementById('newSessionCwd').value = '';
+    fillModelSelect(document.getElementById('newSessionModel'), getDefaultModel());
+    setTimeout(() => document.getElementById('newSessionCwd').focus(), 30);
+  }
+  function closeNewSession(){
+    document.getElementById('newSessionBackdrop').classList.remove('on');
+    document.getElementById('newSessionModal').hidden = true;
+  }
+  document.getElementById('newSessionClose').addEventListener('click', closeNewSession);
+  document.getElementById('newSessionCancel').addEventListener('click', closeNewSession);
+  document.getElementById('newSessionBackdrop').addEventListener('click', closeNewSession);
+  document.getElementById('newSessionCreate').addEventListener('click', () => {
+    const cwd = document.getElementById('newSessionCwd').value.trim();
+    const model = document.getElementById('newSessionModel').value;
+    const payload = { type: 'new' };
+    if (cwd)   payload.cwd   = cwd;
+    if (model) payload.model = model;
+    if (send(payload)) closeNewSession();
+  });
+  // The sidebar's "+ New session" button (#newBtn) calls openNewSession
+  // directly via its existing handler — see the "// ───── new session ─────"
+  // block earlier in this file.
+
+  // ───── save progress (Markdown summary via opus 4.6 1M) ─────
+  // Spawns a SEPARATE claude subprocess on the server side so the active
+  // session's claude isn't disturbed. Disables the composer in the
+  // active chat while running. Server emits `summarizing` then
+  // `summary_done` (with {path, bytes}) to drive the modal.
+  let summarizing = false;
+  function setSummarizing(on){
+    summarizing = !!on;
+    appEl.classList.toggle('summarizing', summarizing);
+    const inp = document.getElementById('input');
+    const sendBtn = document.getElementById('send');
+    if (inp) inp.disabled = summarizing;
+    if (sendBtn) sendBtn.disabled = summarizing || !inp || !inp.value.trim();
+    const saveBtn = document.getElementById('saveProgressBtn');
+    if (saveBtn) saveBtn.disabled = summarizing;
+    if (summarizing){
+      showBanner('Saving progress — summarizing with Opus 4.6 (1M)…');
+    } else {
+      hideBanner();
+    }
+  }
+  document.getElementById('saveProgressBtn').addEventListener('click', () => {
+    if (summarizing) return;
+    if (!activeId){ showBanner('No active chat to summarize.'); setTimeout(hideBanner, 3000); return; }
+    if (!confirm('Save progress?\n\nThis spawns a separate Opus 4.6 (1M) subprocess to summarize the current chat into a Markdown file in this session\'s working directory. The chat will be disabled until the summary is ready.')) return;
+    setSummarizing(true);
+    send({ type: 'summarize', id: activeId });
+  });
+
+  function onSummaryDone(m){
+    setSummarizing(false);
+    const path = m.path || '';
+    const bytes = m.bytes || 0;
+    document.getElementById('summaryDonePath').innerHTML =
+      path ? 'Saved to: <code>' + escHtml(path) + '</code>'
+           : 'Summary completed (no path returned).';
+    document.getElementById('summaryDoneSize').textContent =
+      bytes ? humanBytes(bytes) + ' written.' : '';
+    document.getElementById('summaryDoneBackdrop').classList.add('on');
+    document.getElementById('summaryDoneModal').hidden = false;
+    document.getElementById('summaryCopyPath').onclick = async () => {
+      try { await navigator.clipboard.writeText(path); showBanner('Path copied'); setTimeout(hideBanner, 1800); } catch(e) {}
+    };
+  }
+  function closeSummaryDone(){
+    document.getElementById('summaryDoneBackdrop').classList.remove('on');
+    document.getElementById('summaryDoneModal').hidden = true;
+  }
+  document.getElementById('summaryDoneClose').addEventListener('click', closeSummaryDone);
+  document.getElementById('summaryDoneOk').addEventListener('click', closeSummaryDone);
+  document.getElementById('summaryDoneBackdrop').addEventListener('click', closeSummaryDone);
 
   // ───── mic / speech-to-text (Web Speech API) ─────
   // Uses the browser's built-in recognition: macOS Safari/Chrome both wire it

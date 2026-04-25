@@ -388,11 +388,25 @@ async def start_subprocess(resume_id: str | None = None, cwd: str | None = None,
     state.reader_task = asyncio.create_task(claude_reader())
 
 
-async def new_session():
+async def new_session(cwd_override: str | None = None,
+                       model_override: str | None = None):
+    """Create a new session. Optional overrides come from the New-session
+    popup in the UI:
+
+    * cwd_override: absolute path the user wants claude to run in. We
+      expand `~` and create the directory if needed. Empty / None → use
+      the default ~/claude-ui/<timestamp>/ folder.
+    * model_override: model id to pin to this session (also persisted on
+      the session JSON so future resumes use the same model).
+    """
     sid = str(uuid.uuid4())
-    stamp_fs = time.strftime('%Y-%m-%d_%H-%M-%S')
-    cwd = CWD_ROOT / stamp_fs
-    cwd.mkdir(parents=True, exist_ok=True)
+    if cwd_override:
+        cwd = Path(cwd_override).expanduser().resolve()
+        cwd.mkdir(parents=True, exist_ok=True)
+    else:
+        stamp_fs = time.strftime('%Y-%m-%d_%H-%M-%S')
+        cwd = CWD_ROOT / stamp_fs
+        cwd.mkdir(parents=True, exist_ok=True)
     sess = {
         'id': sid,
         'title': 'New chat',
@@ -402,10 +416,14 @@ async def new_session():
         'cwd': str(cwd),
         'messages': [],
     }
+    if model_override:
+        sess['model'] = model_override
     save_session(sess)
     upsert_index_entry(sess)
     state.active_id = sid
     set_active(sid)
+    await broadcast({'type': 'spawning',
+                     'sessionId': sid, 'title': 'New chat'})
     await start_subprocess(resume_id=None, cwd=str(cwd))
     await broadcast(state_snapshot())
 
@@ -651,6 +669,146 @@ def search_messages(query: str, role: str = 'all', path_filter: str = '',
     rev = (sort != 'asc')
     results.sort(key=lambda r: r.get('ts') or 0, reverse=rev)
     return results[:limit]
+
+
+SUMMARY_MODEL = os.environ.get('CC_SUMMARY_MODEL', 'claude-opus-4-6[1m]')
+
+
+async def summarize_session(sid: str):
+    """Spawn a SEPARATE claude subprocess (separate from the active
+    session's claude) to generate a Markdown summary of the conversation,
+    then save it to <session_cwd>/PROGRESS-<timestamp>.md.
+
+    Why separate: keeps the active session's claude undisturbed, avoids
+    polluting its context with the summary prompt, and lets us pin the
+    summarizer to Opus 4.6 (1M) regardless of the user's chat model.
+    """
+    sess = load_session(sid)
+    if sess is None:
+        await broadcast({'type': 'summary_error',
+                         'sessionId': sid,
+                         'message': f'unknown session {sid}'})
+        return
+
+    msgs = sess.get('messages') or []
+    if not msgs:
+        await broadcast({'type': 'summary_error',
+                         'sessionId': sid,
+                         'message': 'session has no messages to summarize'})
+        return
+
+    # Build the prompt — JSON dump of the conversation + clear instructions.
+    # We strip attachments to keep the input compact (paths-only).
+    convo = []
+    for m in msgs:
+        if not m.get('text'):
+            continue
+        convo.append({
+            'role': m.get('role'),
+            'text': m.get('text'),
+            'ts':   m.get('ts'),
+        })
+    prompt = (
+        "You are summarizing a developer's chat session with claude code "
+        "into a clean Markdown progress report. Read the conversation "
+        "below and produce ONE Markdown document with these sections:\n\n"
+        "  # <Short title (≤8 words) — derived from the conversation>\n"
+        "  ## Overview\n"
+        "  ## Decisions made\n"
+        "  ## Code / artifacts produced\n"
+        "  ## Open questions\n"
+        "  ## Next steps\n\n"
+        "Rules:\n"
+        "  • Output ONLY the Markdown — no preamble, no commentary.\n"
+        "  • Preserve key code snippets in fenced blocks.\n"
+        "  • Use bullet points for lists; keep prose tight.\n"
+        "  • Never invent context not present in the conversation.\n"
+        "  • If a section has no content, write a single line: \"_None._\"\n\n"
+        "Conversation:\n\n"
+        "```json\n" + json.dumps(convo, ensure_ascii=False) + "\n```\n"
+    )
+
+    cwd = Path(sess.get('cwd') or DEFAULT_CWD)
+    cwd.mkdir(parents=True, exist_ok=True)
+
+    args = [
+        CLAUDE_BIN, '-p',
+        '--output-format', 'text',
+        '--model', SUMMARY_MODEL,
+        '--dangerously-skip-permissions',
+    ]
+    log(f'summarize: spawning {SUMMARY_MODEL} for session {sid} in {cwd}')
+    await broadcast({'type': 'summarizing', 'sessionId': sid,
+                     'model': SUMMARY_MODEL})
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=scrubbed_env(),
+            cwd=str(cwd),
+        )
+    except Exception as e:
+        log(f'summarize spawn failed: {e}')
+        await broadcast({'type': 'summary_error',
+                         'sessionId': sid,
+                         'message': f'spawn failed: {e}'})
+        return
+
+    try:
+        # Generous timeout — opus 4.6 1M can take a couple minutes for a
+        # long conversation. The UI is gated meanwhile.
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(prompt.encode('utf-8')),
+            timeout=300,
+        )
+    except asyncio.TimeoutError:
+        try: proc.kill()
+        except Exception: pass
+        log('summarize: timeout')
+        await broadcast({'type': 'summary_error',
+                         'sessionId': sid,
+                         'message': 'timed out after 5 minutes'})
+        return
+    except Exception as e:
+        log(f'summarize communicate failed: {e}')
+        await broadcast({'type': 'summary_error',
+                         'sessionId': sid,
+                         'message': str(e)})
+        return
+
+    if proc.returncode != 0:
+        err = (stderr or b'').decode('utf-8', errors='replace')[:500]
+        log(f'summarize: claude exit {proc.returncode}: {err}')
+        await broadcast({'type': 'summary_error',
+                         'sessionId': sid,
+                         'message': f'claude exited {proc.returncode}: {err}'})
+        return
+
+    md = (stdout or b'').decode('utf-8', errors='replace').strip()
+    if not md:
+        await broadcast({'type': 'summary_error',
+                         'sessionId': sid,
+                         'message': 'empty summary returned'})
+        return
+
+    out = cwd / f'PROGRESS-{time.strftime("%Y-%m-%d_%H-%M-%S")}.md'
+    try:
+        out.write_text(md, encoding='utf-8')
+    except Exception as e:
+        log(f'summarize: write failed: {e}')
+        await broadcast({'type': 'summary_error',
+                         'sessionId': sid,
+                         'message': f'write failed: {e}'})
+        return
+
+    log(f'summarize: saved {out} ({len(md)} bytes)')
+    await broadcast({'type': 'summary_done',
+                     'sessionId': sid,
+                     'path': str(out),
+                     'bytes': len(md)})
 
 
 def expand_match(session_id: str, msg_id: str, context_chars: int = 600) -> dict | None:
@@ -1003,7 +1161,14 @@ async def handle_client(websocket):
                 if text or attachments:
                     await send_to_claude(text, attachments)
             elif cmd == 'new':
-                await new_session()
+                await new_session(
+                    cwd_override=msg.get('cwd'),
+                    model_override=msg.get('model'),
+                )
+            elif cmd == 'summarize':
+                sid = msg.get('id') or state.active_id
+                if sid:
+                    asyncio.create_task(summarize_session(sid))
             elif cmd == 'switch':
                 sid = msg.get('id')
                 if sid: await switch_session(sid)
