@@ -9,6 +9,11 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Claude Code</title>
+<!-- Favicon: white "CC" on a dark-amber rounded square. Inline SVG keeps
+     the repo single-file. The block ID identifier is intentionally small
+     enough to read clearly at 16/32 px Apple/browser tab sizes. -->
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%235a3a1b'/><text x='32' y='44' font-family='-apple-system,Segoe UI,Helvetica,Arial,sans-serif' font-size='30' font-weight='700' fill='white' text-anchor='middle' letter-spacing='-1'>CC</text></svg>">
+<link rel="apple-touch-icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%235a3a1b'/><text x='32' y='44' font-family='-apple-system,Helvetica,Arial,sans-serif' font-size='30' font-weight='700' fill='white' text-anchor='middle' letter-spacing='-1'>CC</text></svg>">
 <!-- marked.js — full Markdown renderer (CommonMark + GFM extensions: tables,
      fenced code, strikethrough, task lists). Loaded SYNCHRONOUSLY (no defer)
      so it's available when the inline app script below runs and renders the
@@ -168,6 +173,22 @@
     transition:color .15s, background .15s}
   .header-action:hover{color:var(--fg);background:rgba(255,255,255,.06)}
   .header-action svg{width:18px;height:18px}
+
+  /* Spawn-pending indicator. Shows while we're starting a claude
+     subprocess for a session — replaces the search button on the right
+     side of the header so it's always visible during the spin-up. */
+  .spawn-chip{display:none;align-items:center;gap:7px;
+    padding:5px 11px;border-radius:14px;font-size:11.5px;line-height:1;
+    color:var(--accent-2);background:rgba(199,143,91,.10);
+    border:1px solid rgba(199,143,91,.25);font-weight:500;
+    margin-left:auto;flex:0 0 auto}
+  .spawn-chip.on{display:inline-flex}
+  .spawn-chip .spinner{width:11px;height:11px;border:1.6px solid rgba(199,143,91,.25);
+    border-top-color:var(--accent);border-radius:50%;animation:spin .85s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  /* When spawn-chip is visible, push the (now redundant) search btn aside
+     a hair so the header doesn't get crowded — purely cosmetic. */
+  #app.spawning .header-action#searchBtn{opacity:.6}
 
   .avatar{width:32px;height:32px;border-radius:8px;flex:0 0 32px;
     background:linear-gradient(135deg,var(--accent),var(--accent-2));
@@ -521,8 +542,18 @@
   .se-result .ser-role.assistant{color:var(--accent);border-color:rgba(199,143,91,.4)}
   .se-result .ser-when{font-size:11px;color:var(--fg-faint);font-variant-numeric:tabular-nums;
     margin-left:auto;flex:0 0 auto}
-  .se-result .ser-cwd{font-size:11px;color:var(--fg-faint);font-family:"SF Mono",Menlo,monospace;
-    margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* Working directory chip — the folder this session lives in. Painted
+     in the accent colour with a folder icon so users can scan results by
+     project at a glance. */
+  .se-result .ser-cwd{display:inline-flex;align-items:center;gap:6px;
+    margin-top:5px;padding:2px 9px;border-radius:10px;
+    background:rgba(199,143,91,.10);color:var(--accent-2);
+    border:1px solid rgba(199,143,91,.22);
+    font-family:"SF Mono",Menlo,Monaco,Consolas,monospace;font-size:11px;
+    max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    line-height:1.5}
+  .se-result .ser-cwd svg{width:11px;height:11px;flex:0 0 11px;color:var(--accent)}
+  .se-result .ser-cwd .ser-cwd-path{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .se-result .ser-snippet{font-size:13.5px;color:var(--fg-dim);line-height:1.45;margin-top:5px;
     overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
   .se-result .ser-snippet mark{background:rgba(199,143,91,.28);color:var(--accent-2);
@@ -668,8 +699,12 @@
   .swatch:hover{transform:translateY(-2px)}
   .swatch:active{transform:scale(.94)}
   .swatch.active{border-color:var(--fg)}
-  .swatch-label{font-size:10.5px;color:var(--fg-faint);text-align:center;margin-top:4px;
-    text-transform:capitalize}
+  /* Theme swatch label = whimsical name (top, bigger) + small hue hint
+     (bottom, faded). Capitalised cleanly — no automatic uppercasing. */
+  .swatch-label{text-align:center;margin-top:4px;line-height:1.15}
+  .swatch-name{font-size:11px;color:var(--fg-dim);font-weight:600;letter-spacing:-.005em}
+  .swatch-sub {font-size:9.5px;color:var(--fg-faint);
+    text-transform:lowercase;letter-spacing:.04em;margin-top:1px}
   .theme-row{display:flex;flex-direction:column;align-items:center;gap:0}
   .theme-row .swatch{width:100%}
 
@@ -731,6 +766,10 @@
           <span id="statusText">connecting…</span>
         </div>
       </div>
+      <span class="spawn-chip" id="spawnChip" aria-live="polite">
+        <span class="spinner" aria-hidden="true"></span>
+        <span id="spawnChipText">starting…</span>
+      </span>
       <button class="header-action" id="searchBtn" type="button"
               title="Search across all chats (⌘K / Ctrl-K)" aria-label="Search">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -1621,6 +1660,8 @@
         pid = m.pid;
         busy = !!m.busy;
         cwd  = m.cwd || cwd;
+        showSpawning(false);
+
         // Display sidebar cwd label using session-specific cwd if available
         const sessForCwd = sessions.find(s => s.id === m.activeId);
         const showCwd = (sessForCwd && sessForCwd.cwd) || cwd;
@@ -1690,6 +1731,7 @@
       case 'session_ended':
         endStream();
         showTyping(false);
+        showSpawning(false);
         pid = null; busy = false;
         setOnline(true);
         focusComposer();
@@ -1709,10 +1751,39 @@
       }
       case 'search_results': onSearchResults(m); break;
       case 'search_detail':  onSearchDetail(m);  break;
+      case 'spawning': showSpawning(true, m.title || 'starting…'); break;
       case 'error':
         showBanner('Error: ' + (m.message||'unknown'));
         setTimeout(hideBanner, 5000);
         break;
+    }
+  }
+
+  // Show / hide the right-side "starting…" chip during claude spawn.
+  // We enforce a small minimum display time (700 ms) so the chip remains
+  // legible even when the spawn is fast — a 60 ms flash is just noise.
+  let _spawnShownAt = 0;
+  let _spawnHideTimer = null;
+  const SPAWN_MIN_MS = 700;
+  function showSpawning(on, label){
+    const chip = document.getElementById('spawnChip');
+    const txt  = document.getElementById('spawnChipText');
+    if (!chip) return;
+    if (on){
+      if (_spawnHideTimer){ clearTimeout(_spawnHideTimer); _spawnHideTimer = null; }
+      txt.textContent = 'starting ' + (label || 'claude') + '…';
+      chip.classList.add('on');
+      appEl.classList.add('spawning');
+      _spawnShownAt = performance.now();
+    } else {
+      const elapsed = performance.now() - _spawnShownAt;
+      const wait = Math.max(0, SPAWN_MIN_MS - elapsed);
+      if (_spawnHideTimer) clearTimeout(_spawnHideTimer);
+      _spawnHideTimer = setTimeout(() => {
+        chip.classList.remove('on');
+        appEl.classList.remove('spawning');
+        _spawnHideTimer = null;
+      }, wait);
     }
   }
 
@@ -1868,17 +1939,20 @@
   });
 
   // ───── settings sheet (theme) ─────
+  // Names lean into the playful, slightly-made-up "claude voice" — feel
+  // free to add your own, the underlying CSS still keys off the id.
+  // Sublabels are gentle hints at the underlying hue family.
   const THEMES = [
-    { id:'amber',   label:'Amber',   a:'#c78f5b', b:'#e0a06a' },
-    { id:'ember',   label:'Ember',   a:'#ff5a3c', b:'#ff8a3d' },
-    { id:'sunset',  label:'Sunset',  a:'#f97316', b:'#ec4899' },
-    { id:'rose',    label:'Rose',    a:'#f43f5e', b:'#fb7185' },
-    { id:'magenta', label:'Magenta', a:'#d946ef', b:'#ec4899' },
-    { id:'violet',  label:'Violet',  a:'#8b5cf6', b:'#a855f7' },
-    { id:'ocean',   label:'Ocean',   a:'#3b82f6', b:'#06b6d4' },
-    { id:'mint',    label:'Mint',    a:'#14b8a6', b:'#5eead4' },
-    { id:'forest',  label:'Forest',  a:'#10b981', b:'#22c55e' },
-    { id:'slate',   label:'Slate',   a:'#64748b', b:'#94a3b8' },
+    { id:'amber',   label:'Goldwumple',   sub:'amber',   a:'#c78f5b', b:'#e0a06a' },
+    { id:'ember',   label:'Cinderpuff',   sub:'ember',   a:'#ff5a3c', b:'#ff8a3d' },
+    { id:'sunset',  label:'Zenithglow',   sub:'sunset',  a:'#f97316', b:'#ec4899' },
+    { id:'rose',    label:'Petalwhisper', sub:'rose',    a:'#f43f5e', b:'#fb7185' },
+    { id:'magenta', label:'Mauvelescent', sub:'magenta', a:'#d946ef', b:'#ec4899' },
+    { id:'violet',  label:'Lavenduline',  sub:'violet',  a:'#8b5cf6', b:'#a855f7' },
+    { id:'ocean',   label:'Tidewander',   sub:'ocean',   a:'#3b82f6', b:'#06b6d4' },
+    { id:'mint',    label:'Sproutfizz',   sub:'mint',    a:'#14b8a6', b:'#5eead4' },
+    { id:'forest',  label:'Pinefable',    sub:'forest',  a:'#10b981', b:'#22c55e' },
+    { id:'slate',   label:'Stonevelour',  sub:'slate',   a:'#64748b', b:'#94a3b8' },
   ];
   const THEME_KEY = 'cc.theme';
   function applyTheme(id){
@@ -1893,11 +1967,14 @@
       const sw = document.createElement('button'); sw.type = 'button';
       sw.className = 'swatch'; sw.dataset.theme = t.id;
       sw.style.setProperty('--sw-a', t.a); sw.style.setProperty('--sw-b', t.b);
-      sw.title = t.label; sw.setAttribute('aria-label','Theme: '+t.label);
+      sw.title = t.label + ' — ' + t.sub;
+      sw.setAttribute('aria-label', 'Theme: ' + t.label + ' (' + t.sub + ')');
       sw.onclick = () => applyTheme(t.id);
-      const label = document.createElement('div'); label.className='swatch-label';
-      label.textContent = t.label;
-      cell.appendChild(sw); cell.appendChild(label); grid.appendChild(cell);
+      const labelWrap = document.createElement('div'); labelWrap.className='swatch-label';
+      const main = document.createElement('div'); main.className='swatch-name';  main.textContent = t.label;
+      const sub  = document.createElement('div'); sub.className ='swatch-sub';   sub.textContent  = t.sub;
+      labelWrap.appendChild(main); labelWrap.appendChild(sub);
+      cell.appendChild(sw); cell.appendChild(labelWrap); grid.appendChild(cell);
     }
   }
   function loadTheme(){
@@ -2163,7 +2240,7 @@
       const card = document.createElement('div');
       card.className = 'se-result';
       card.dataset.idx = i;
-      const cwd = (r.sessionCwd || '').replace(/^\/Users\/[^/]+/, '~');
+      const cwdShort = (r.sessionCwd || '').replace(/^\/Users\/[^/]+/, '~');
       card.innerHTML = `
         <div class="ser-head">
           <span class="ser-role ${r.role==='user'?'user':'assistant'}">
@@ -2172,7 +2249,10 @@
           <span class="ser-title" title="${escHtml(r.sessionTitle)}">${escHtml(r.sessionTitle)}</span>
           <span class="ser-when" title="${escHtml(absTime(r.ts))}">${escHtml(relTime(r.ts))}</span>
         </div>
-        <div class="ser-cwd">${escHtml(cwd)}</div>
+        <span class="ser-cwd" title="${escHtml(r.sessionCwd || '(no working directory)')}">
+          ${ICON_FOLDER}
+          <span class="ser-cwd-path">${escHtml(cwdShort || '(no working directory)')}</span>
+        </span>
         <div class="ser-snippet">${renderSnippet(r.snippet)}</div>
       `;
       card.addEventListener('click', () => openResultPreview(r));
@@ -2180,6 +2260,10 @@
     });
     searchResults.replaceChildren(frag);
   }
+
+  // Inline folder SVG icon, themed with currentColor so it inherits the
+  // accent in result cwd chips and the popup meta.
+  const ICON_FOLDER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>';
 
   // Two-step preview: show the result immediately with the snippet's
   // text expanded as a fallback, then ask the server for the full text

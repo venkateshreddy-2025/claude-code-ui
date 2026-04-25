@@ -410,6 +410,25 @@ async def new_session():
     await broadcast(state_snapshot())
 
 
+def build_resume_system_prompt(sess: dict, last_n: int = 200) -> str | None:
+    """Build a fork-style JSON dump of the session's recent messages so
+    claude has the conversation context regardless of whether its own
+    session memory survived (e.g., after a system reboot, a different
+    claude version, or a moved $HOME). The JSON file on disk is the
+    source of truth — claude's memory is the convenient cache."""
+    msgs = (sess.get('messages') or [])[-last_n:]
+    if not msgs:
+        return None
+    convo = [{'role': m.get('role'), 'text': m.get('text') or ''} for m in msgs]
+    return (
+        'You are continuing an existing conversation. Recent dialogue '
+        '(last ' + str(len(msgs)) + ' turns, role + text only):\n\n'
+        '```json\n' + json.dumps(convo, ensure_ascii=False) + '\n```\n\n'
+        'The user already sees these messages in their UI. Continue from '
+        'where the dialogue ends without summarizing or repeating.'
+    )
+
+
 async def switch_session(sid: str):
     sess = load_session(sid)
     if not sess:
@@ -417,7 +436,18 @@ async def switch_session(sid: str):
         return
     state.active_id = sid
     set_active(sid)
-    await start_subprocess(resume_id=sid, cwd=sess.get('cwd'))
+    # Tell every connected client we're spinning up so the UI can show a
+    # loader. The state snapshot that lands a beat later carries the new
+    # PID and clears the loader.
+    await broadcast({'type': 'spawning',
+                     'sessionId': sid,
+                     'title': sess.get('title') or 'New chat'})
+    # Always feed the JSON history along with --resume. --resume uses
+    # claude's own session memory (fast path); the JSON dump is a
+    # safety net for when that memory is gone (e.g. after reboot).
+    sys_prompt = sess.get('systemPrompt') or build_resume_system_prompt(sess)
+    await start_subprocess(resume_id=sid, cwd=sess.get('cwd'),
+                           system_prompt=sys_prompt)
     await broadcast(state_snapshot())
 
 
