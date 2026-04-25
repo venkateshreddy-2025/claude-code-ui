@@ -759,6 +759,11 @@
     display:none;animation:fadein .15s ease-out}
   .sheet-backdrop.on{display:block}
   @keyframes fadein{from{opacity:0}to{opacity:1}}
+  /* CRITICAL: `display:flex` below would otherwise override the HTML
+     `hidden` attribute that we use to keep the sheet hidden by default,
+     so the dialog would pop open on every hard-refresh. The `[hidden]`
+     selector here forces `display:none` to win regardless. */
+  .sheet[hidden]{display:none !important}
   .sheet{position:fixed;left:50%;bottom:0;transform:translateX(-50%);
     width:100%;max-width:520px;background:var(--bg-2);
     border-top:1px solid var(--border);
@@ -778,6 +783,10 @@
       height:min(720px,calc(100vh - 80px))}
   }
   .sheet-pane{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
+  /* Same fix for the new-session + summary-done modals — they use
+     `hidden` to start invisible, but their `.modal { display:... }`
+     declarations would override that without an explicit precedence. */
+  .modal[hidden]{display:none !important}
   @keyframes slideup{from{transform:translate(-50%,100%)}to{transform:translate(-50%,0)}}
   @keyframes popin{from{transform:translate(-50%,-50%) scale(.94);opacity:0}
                     to{transform:translate(-50%,-50%) scale(1);opacity:1}}
