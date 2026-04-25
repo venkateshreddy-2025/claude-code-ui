@@ -414,11 +414,16 @@ async def new_session(cwd_override: str | None = None,
 
     sys_prompt = None
     persona_meta = None
+    persona_model = None
     if persona_id:
         p = persona_full(persona_id)
         if p:
             sys_prompt = materialise_persona_files(p, cwd)
             persona_meta = {'id': p.get('id'), 'name': p.get('name')}
+            persona_model = p.get('model') or None
+
+    # Effective model: explicit override > persona's preferred > server default.
+    effective_model = model_override or persona_model
 
     sess = {
         'id': sid,
@@ -429,8 +434,8 @@ async def new_session(cwd_override: str | None = None,
         'cwd': str(cwd),
         'messages': [],
     }
-    if model_override:
-        sess['model'] = model_override
+    if effective_model:
+        sess['model'] = effective_model
     if persona_meta:
         sess['persona'] = persona_meta
         # Stash the system prompt on the session JSON so future resumes
@@ -728,6 +733,7 @@ def persona_brief(p: dict) -> dict:
         'updatedAt':    p.get('updatedAt') or p.get('createdAt') or 0,
         'personaLen':   len(p.get('persona') or ''),
         'instrLen':     len(p.get('instructions') or ''),
+        'model':        p.get('model') or '',
     }
 
 
@@ -753,6 +759,7 @@ def persona_save(p: dict) -> dict:
     name  = (p.get('name') or '').strip()[:120] or 'Untitled'
     persona      = (p.get('persona') or '').rstrip()
     instructions = (p.get('instructions') or '').rstrip()
+    model        = (p.get('model') or '').strip()
     now = time.time()
 
     existing_idx = next((i for i, x in enumerate(items)
@@ -761,11 +768,13 @@ def persona_save(p: dict) -> dict:
         items.append({
             'id': pid, 'name': name,
             'persona': persona, 'instructions': instructions,
+            'model': model,
             'createdAt': now, 'updatedAt': now,
         })
     else:
         items[existing_idx].update({
             'name': name, 'persona': persona, 'instructions': instructions,
+            'model': model,
             'updatedAt': now,
         })
     s['personas'] = items
@@ -796,6 +805,11 @@ def set_default_persona(pid: str | None):
 DEFAULT_PERSONA = {
     'id':   'claudy',
     'name': 'Claudy',
+    # Pinned to Opus 4.7 with 1M context — Claudy's parallel-agent
+    # / web-research workflow benefits from the bigger window. Edit
+    # this in Settings → Personas → Claudy if you'd rather use a
+    # different model.
+    'model': 'claude-opus-4-7[1m]',
     'persona': (
         "You are Claudy — a friendly, brilliant 24-year-old AI engineering "
         "assistant. You're great at writing code, searching the web, "

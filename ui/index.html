@@ -765,12 +765,19 @@
     border-top-left-radius:18px;border-top-right-radius:18px;
     padding:16px 18px calc(20px + var(--safe-bot));
     box-shadow:0 -10px 40px -10px rgba(0,0,0,.6);z-index:41;
-    animation:slideup .25s cubic-bezier(.2,.9,.3,1.2) both}
+    animation:slideup .25s cubic-bezier(.2,.9,.3,1.2) both;
+    /* Lock the dialog height so flipping between tabs doesn't snap the
+       box to a different size — feels much steadier. The active pane
+       handles its own internal scroll if needed. */
+    display:flex;flex-direction:column;
+    height:min(720px,calc(100dvh - 32px))}
   @media(min-width:600px){
     .sheet{bottom:auto;top:50%;transform:translate(-50%,-50%);
       border-radius:14px;border:1px solid var(--border);
-      animation:popin .18s ease-out both}
+      animation:popin .18s ease-out both;
+      height:min(720px,calc(100vh - 80px))}
   }
+  .sheet-pane{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
   @keyframes slideup{from{transform:translate(-50%,100%)}to{transform:translate(-50%,0)}}
   @keyframes popin{from{transform:translate(-50%,-50%) scale(.94);opacity:0}
                     to{transform:translate(-50%,-50%) scale(1);opacity:1}}
@@ -898,6 +905,11 @@
   .back-btn svg{width:16px;height:16px}
   .persona-text-tall{min-height:160px;max-height:300px;resize:vertical}
   .persona-edit-view input.setting-input{flex:0 0 auto}
+  .persona-edit-actions{justify-content:flex-start;gap:8px;margin-top:12px}
+  .persona-edit-actions .spacer{flex:1}
+  .persona-edit-actions .btn-ghost.danger{color:#e25151;border-color:rgba(226,81,81,.3)}
+  .persona-edit-actions .btn-ghost.danger:hover{background:rgba(226,81,81,.08);
+    border-color:rgba(226,81,81,.5)}
 
   /* mobile drawer overlay */
   .drawer-bg{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:25;display:none}
@@ -1144,15 +1156,6 @@
 
     <h3 style="margin-top:18px">Theme</h3>
     <div class="theme-grid" id="themeGrid"></div>
-
-    <h3 style="margin-top:18px">Default model for new sessions</h3>
-    <p class="setting-help">
-      Used when you create a new session. Existing chats keep whatever
-      model they were started with — switch them per-chat with
-      <code>/model</code>.
-    </p>
-    <select id="defaultModel" class="setting-select wide"></select>
-    <p class="setting-help" id="defaultModelStatus" style="margin-top:6px"></p>
   </div>
 
   <!-- ── Personas pane ─ list view ────────────────────────────── -->
@@ -1200,12 +1203,21 @@
       <textarea id="personaInstr" class="setting-textarea persona-text-tall"
                 placeholder="Always do X. Never do Y. (paste long rule sets here)"
                 spellcheck="false"></textarea>
+      <label class="setting-label" for="personaModel">Preferred model</label>
+      <select id="personaModel" class="setting-select wide"></select>
+      <p class="setting-help">
+        New sessions started with this persona will use this model by
+        default. Pick "— server default —" to fall back to whatever the
+        server is configured with.
+      </p>
       <label class="setting-row" style="gap:6px;align-items:center;margin-top:10px">
         <input type="checkbox" id="personaMakeDefault">
         <span>Use as default for new sessions</span>
       </label>
-      <div class="modal-actions" style="margin-top:12px">
-        <button type="button" class="btn-ghost"   id="personaDelete">Delete</button>
+      <div class="modal-actions persona-edit-actions">
+        <button type="button" class="btn-ghost danger" id="personaDelete">Delete</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn-ghost"   id="personaCancel">Cancel</button>
         <button type="button" class="btn-primary" id="personaSave">Save</button>
       </div>
     </div>
@@ -1220,10 +1232,9 @@
   <label class="setting-label" for="newSessionPersona">Persona</label>
   <select id="newSessionPersona" class="setting-select wide"></select>
   <p class="setting-help">
-    The persona's <code>PERSONA.md</code> + <code>INSTRUCTIONS.md</code>
-    are silently dropped into the working directory and claude adopts
-    them — without telling you. Edit personas via the
-    <strong>👥 Personas</strong> icon in the header.
+    Each persona has its own preferred model — the new session will
+    start with whatever the persona is configured to use. Edit personas
+    in <strong>Settings → Personas</strong>.
   </p>
   <label class="setting-label" for="newSessionCwd">Working directory</label>
   <div class="setting-row">
@@ -1234,12 +1245,10 @@
             title="Pick a folder">📁 Browse…</button>
   </div>
   <p class="setting-help">
-    Where claude runs (its <code>cwd</code>). Leave blank to auto-create a
-    fresh timestamped folder, or browse to an existing project.
+    Pre-filled with the folder you used last. Change it (type or browse)
+    or clear it to auto-create a fresh timestamped folder under
+    <code>~/claude-ui/</code>.
   </p>
-  <label class="setting-label" for="newSessionModel">Model</label>
-  <select id="newSessionModel" class="setting-select wide"></select>
-  <p class="setting-help">Override just for this session. Default is set in Settings.</p>
   <div class="modal-actions">
     <button type="button" class="btn-ghost"   id="newSessionCancel">Cancel</button>
     <button type="button" class="btn-primary" id="newSessionCreate">Create</button>
@@ -1898,22 +1907,59 @@
   }
 
   // ─── streaming ───
-  // Strategy:
-  //   * Buffer text deltas into bubble.dataset.raw immediately (cheap)
-  //   * Schedule a re-parse via requestAnimationFrame so we coalesce all
-  //     deltas that arrived within one frame (~16 ms) into a single
-  //     paint. Smoother than the old setTimeout(80) which felt jerky.
-  //   * Skip the parse entirely when the buffer hasn't changed since
-  //     the last render (no point burning CPU + causing a paint).
-  //   * Auto-scroll only if the user was already near the bottom.
-  let _streamLastRendered = '';
+  // Two-layer rendering for smooth streaming:
+  //
+  //   FAST PATH — rAF-driven text append.  Each new token gets dropped
+  //   into a plain <span class=stream-text> trailer via textContent.
+  //   No markdown parse, no innerHTML rebuild, so the DOM doesn't tear
+  //   down on every token. Browser perceives this as a single text-node
+  //   update — basically free.
+  //
+  //   SLOW PATH — every MD_REPARSE_MS the bubble's whole HTML is
+  //   replaced with `md(raw)`. This is what gives us proper formatting
+  //   (lists, code blocks, tables, headers). Done at ~3 fps so the
+  //   periodic teardown is visually subtle.
+  //
+  //   On endStream we do one final md() parse + drop the cursor.
+  //
+  // This was the missing piece — previously every token triggered a
+  // full marked.js parse + DOM rebuild, which got progressively heavier
+  // as the message grew.
+  const MD_REPARSE_MS = 320;
+  let _mdReparseTimer = null;
+  let _mdSnapshot = '';     // raw text at the last full md() render
+
+  function ensureStreamTrailer(){
+    if (!streamingBubble) return null;
+    let trailer = streamingBubble.querySelector('.stream-text');
+    if (trailer) return trailer;
+    let cursor = streamingBubble.querySelector('.stream-cursor');
+    trailer = document.createElement('span');
+    trailer.className = 'stream-text';
+    if (cursor) streamingBubble.insertBefore(trailer, cursor);
+    else streamingBubble.appendChild(trailer);
+    return trailer;
+  }
 
   function flushStreamBuffer(){
     streamFlushTimer = null;
     if (!streamingBubble) return;
     const raw = streamingBubble.dataset.raw || '';
-    if (raw === _streamLastRendered) return;     // nothing new
-    _streamLastRendered = raw;
+    const trailer = ensureStreamTrailer();
+    if (!trailer) return;
+    // Only show the bytes appended since the last full md() render —
+    // anything before _mdSnapshot is already laid out as proper HTML.
+    const tail = raw.slice(_mdSnapshot.length);
+    if (trailer.textContent !== tail) trailer.textContent = tail;
+    followIfPinned();
+  }
+
+  function flushMarkdown(){
+    _mdReparseTimer = null;
+    if (!streamingBubble) return;
+    const raw = streamingBubble.dataset.raw || '';
+    if (raw === _mdSnapshot) return;
+    _mdSnapshot = raw;
     streamingBubble.innerHTML = md(raw) + '<span class="stream-cursor"></span>';
     followIfPinned();
   }
@@ -1942,17 +1988,23 @@
     wrap.appendChild(stack);
     messagesEl.appendChild(wrap);
     streamingId = id; streamingBubble = bubble;
+    _mdSnapshot = '';                  // fresh stream, no parsed snapshot yet
     followIfPinned();
   }
 
   function appendDelta(id, text){
     if (streamingId !== id || !streamingBubble) startStream(id);
-    // Cheap append — just buffer the text. Actual DOM update is coalesced
-    // to one render per animation frame (~60 fps cap on most monitors,
-    // matching the system refresh — much smoother than a fixed-ms timer).
     streamingBubble.dataset.raw = (streamingBubble.dataset.raw || '') + text;
-    if (streamFlushTimer) return;
-    streamFlushTimer = requestAnimationFrame(flushStreamBuffer);
+    // FAST PATH: typewriter-style text append on every animation frame.
+    if (!streamFlushTimer){
+      streamFlushTimer = requestAnimationFrame(flushStreamBuffer);
+    }
+    // SLOW PATH: full markdown re-render every MD_REPARSE_MS so lists /
+    // code blocks / tables format up. Cheap visually because the
+    // existing text doesn't shift much.
+    if (!_mdReparseTimer){
+      _mdReparseTimer = setTimeout(flushMarkdown, MD_REPARSE_MS);
+    }
   }
 
   function endStream(id){
@@ -1962,7 +2014,11 @@
       cancelAnimationFrame(streamFlushTimer);
       streamFlushTimer = null;
     }
-    _streamLastRendered = '';
+    if (_mdReparseTimer){
+      clearTimeout(_mdReparseTimer);
+      _mdReparseTimer = null;
+    }
+    _mdSnapshot = '';
     if (streamingBubble){
       streamingBubble.classList.remove('streaming');
       const raw = streamingBubble.dataset.raw || streamingBubble.innerText;
@@ -2475,14 +2531,13 @@
     applyMode(btn.dataset.mode);
   });
 
-  // ───── default-model picker ─────
-  // Canonical Claude Code model strings — these are exactly the values
-  // accepted by the `--model` flag (or the `/model` slash command).
-  // Sourced from the official CLI reference + models overview.
-  // Aliases (`opus`, `sonnet`, `haiku`, `opusplan`) resolve to the
-  // latest of each tier on Anthropic's API.
-  // The `[1m]` suffix on Opus 4.7 / Opus 4.6 / Sonnet 4.6 unlocks the
-  // 1M context window (Max / Team / Enterprise plans).
+  // ───── known Claude Code models ─────
+  // Canonical Claude Code model strings — exactly the values accepted
+  // by the `--model` flag (or the `/model` slash command). Aliases
+  // (`opus`/`sonnet`/`haiku`/`opusplan`) resolve to the latest of each
+  // tier on Anthropic's API. The `[1m]` suffix on Opus 4.7 / Opus 4.6
+  // / Sonnet 4.6 unlocks the 1M context window (Max / Team / Enterprise).
+  // Used by the per-persona model dropdown in the persona edit form.
   const KNOWN_MODELS = [
     // ── Aliases (resolve to latest on Anthropic API) ────────
     { id: 'opus',                   label: 'Opus  ·  alias → latest Opus' },
@@ -2503,20 +2558,8 @@
     { id: 'claude-opus-4-1',        label: 'Opus 4.1  ·  legacy' },
     { id: 'claude-sonnet-4-5',      label: 'Sonnet 4.5  ·  legacy' },
   ];
-  const DEFAULT_MODEL_KEY = 'cc.defaultModel';
-  function getDefaultModel(){
-    try { return localStorage.getItem(DEFAULT_MODEL_KEY) || ''; } catch(e) { return ''; }
-  }
-  function setDefaultModel(id){
-    try { localStorage.setItem(DEFAULT_MODEL_KEY, id || ''); } catch(e) {}
-    const status = document.getElementById('defaultModelStatus');
-    if (status){
-      status.textContent = id
-        ? 'New sessions will start with: ' + id
-        : 'Server default will be used (no override).';
-    }
-  }
   function fillModelSelect(sel, current){
+    if (!sel) return;
     sel.innerHTML = '';
     const blank = document.createElement('option');
     blank.value = ''; blank.textContent = '— server default —';
@@ -2527,13 +2570,6 @@
       if (current === m.id) o.selected = true;
       sel.appendChild(o);
     }
-  }
-  function initDefaultModelUI(){
-    const cur = getDefaultModel();
-    const sel = document.getElementById('defaultModel');
-    fillModelSelect(sel, cur);
-    setDefaultModel(cur);
-    sel.addEventListener('change', () => setDefaultModel(sel.value));
   }
 
   function openSheet(){
@@ -2562,21 +2598,36 @@
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && !$('sheet').hidden) closeSheet();
   });
-  buildThemeGrid(); loadTheme(); loadMode(); initDefaultModelUI();
+  buildThemeGrid(); loadTheme(); loadMode();
 
   // ───── new-session popup ─────
   // Replaces the old "+ New chat → instantly create" flow. Lets the user
   // pick a working directory + a model up-front before claude is spawned.
   // Server's `new` command accepts {cwd, model} so the picks are honored.
+  // Last-used cwd is sticky so users opening "+ New session" see the
+  // folder they were just in, not an empty box. They can clear it or
+  // pick a new one — whatever they save here becomes the next default.
+  const LAST_CWD_KEY = 'cc.lastCwd';
+  function getLastCwd(){
+    try { return localStorage.getItem(LAST_CWD_KEY) || ''; } catch(e) { return ''; }
+  }
+  function setLastCwd(v){
+    try { localStorage.setItem(LAST_CWD_KEY, v || ''); } catch(e) {}
+  }
+
   function openNewSession(){
     document.getElementById('newSessionBackdrop').classList.add('on');
     document.getElementById('newSessionModal').hidden = false;
-    document.getElementById('newSessionCwd').value = '';
-    fillModelSelect(document.getElementById('newSessionModel'), getDefaultModel());
-    // Refresh personas (asynchronous — populated when 'personas' arrives).
+    document.getElementById('newSessionCwd').value = getLastCwd();
     refreshPersonasUI();
     send({ type: 'personas_list' });
-    setTimeout(() => document.getElementById('newSessionCwd').focus(), 30);
+    // Focus cwd input but place cursor at the end so the prefill is
+    // ready to edit, not selected for replacement.
+    setTimeout(() => {
+      const inp = document.getElementById('newSessionCwd');
+      inp.focus();
+      inp.setSelectionRange(inp.value.length, inp.value.length);
+    }, 30);
   }
   function closeNewSession(){
     document.getElementById('newSessionBackdrop').classList.remove('on');
@@ -2587,12 +2638,13 @@
   document.getElementById('newSessionBackdrop').addEventListener('click', closeNewSession);
   document.getElementById('newSessionCreate').addEventListener('click', () => {
     const cwd = document.getElementById('newSessionCwd').value.trim();
-    const model = document.getElementById('newSessionModel').value;
     const persona = document.getElementById('newSessionPersona').value;
     const payload = { type: 'new' };
     if (cwd)     payload.cwd     = cwd;
-    if (model)   payload.model   = model;
     if (persona) payload.persona = persona;
+    // Model is no longer a popup field — the server picks it from the
+    // selected persona's `model`, falling back to the server default.
+    setLastCwd(cwd);    // remember for next time, even if blank
     if (send(payload)) closeNewSession();
   });
   // Browse → server-side native folder picker (macOS Finder via osascript,
@@ -2699,6 +2751,8 @@
     document.getElementById('personaName').value  = p ? (p.name || '') : '';
     document.getElementById('personaText').value  = p ? (p.persona || '') : '';
     document.getElementById('personaInstr').value = p ? (p.instructions || '') : '';
+    fillModelSelect(document.getElementById('personaModel'),
+                    p ? (p.model || '') : '');
     document.getElementById('personaMakeDefault').checked =
       !!(p && personasState.default === p.id);
   }
@@ -2738,6 +2792,7 @@
     const name  = document.getElementById('personaName').value.trim();
     const text  = document.getElementById('personaText').value;
     const instr = document.getElementById('personaInstr').value;
+    const model = document.getElementById('personaModel').value;
     const makeDefault = document.getElementById('personaMakeDefault').checked;
     if (!name && !text && !instr){
       showBanner('Persona is empty — nothing to save.');
@@ -2749,17 +2804,17 @@
       name: name || 'Untitled',
       persona: text,
       instructions: instr,
+      model,
       makeDefault,
     });
     showBanner('Persona saved.');
     setTimeout(hideBanner, 1500);
-    // After save, drop back to the list — server will broadcast the
-    // updated `personas` and refreshPersonasUI will repaint the rows.
     showPersonaList();
   });
+  document.getElementById('personaCancel').addEventListener('click', showPersonaList);
   document.getElementById('personaDelete').addEventListener('click', () => {
     if (!personaEditingId){
-      showPersonaList(); return;       // nothing to delete — just go back
+      showPersonaList(); return;
     }
     if (!confirm('Delete this persona? This cannot be undone.')) return;
     send({ type: 'persona_delete', id: personaEditingId });
