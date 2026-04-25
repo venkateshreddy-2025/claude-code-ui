@@ -851,32 +851,53 @@
     line-height:1.5;transition:border-color .15s}
   .setting-textarea:focus{border-color:var(--accent)}
 
-  /* Personas section inside the Settings sheet — list on top
-     (compact, horizontally-scrollable chips on narrow screens), edit
-     form below. Reuses the same setting primitives as the rest of the
-     sheet so it feels native there. */
-  .personas-grid{display:flex;flex-direction:column;gap:10px;margin-top:6px}
-  .personas-list{display:flex;flex-wrap:wrap;gap:5px;border:1px solid var(--border);
-    border-radius:10px;background:var(--sub-tint);padding:6px;
-    max-height:120px;overflow-y:auto}
-  .personas-list .pl-row{padding:5px 11px;border-radius:14px;cursor:pointer;
-    display:inline-flex;align-items:center;gap:5px;color:var(--fg-dim);font-size:12px;
-    background:rgba(255,255,255,.02);border:1px solid var(--border);
-    transition:background .12s,color .12s,border-color .12s}
-  .personas-list .pl-row:hover{background:var(--hover);color:var(--fg)}
-  .personas-list .pl-row.active{background:var(--accent);color:#0f0f15;
-    border-color:var(--accent);font-weight:600}
-  .personas-list .pl-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-    max-width:200px}
-  .personas-list .pl-default{color:var(--accent);font-size:11px}
-  .personas-list .pl-row.active .pl-default{color:#0f0f15}
-  .personas-list .pl-empty{color:var(--fg-faint);font-size:11.5px;padding:10px;
-    text-align:center;line-height:1.5;flex:1}
+  /* Settings sheet tabs */
+  .sheet-tabs{display:flex;gap:2px;background:var(--sub-tint);
+    border:1px solid var(--border);border-radius:10px;padding:3px;
+    margin-bottom:14px}
+  .sheet-tabs .stab{flex:1;padding:8px 14px;border:none;background:transparent;
+    color:var(--fg-dim);font:inherit;font-size:13px;font-weight:500;cursor:pointer;
+    border-radius:7px;transition:color .15s,background .15s}
+  .sheet-tabs .stab:hover{color:var(--fg)}
+  .sheet-tabs .stab.on{background:var(--accent);color:#0f0f15;font-weight:600}
 
-  .personas-edit{display:flex;flex-direction:column;gap:0}
-  .personas-edit .setting-textarea{min-height:90px;max-height:220px}
-  /* Prevent flex:1 inputs from stretching vertically inside the column. */
-  .personas-edit input.setting-input{flex:0 0 auto}
+  .sheet-pane{display:none}
+  .sheet-pane.on{display:block;animation:fadein .12s}
+
+  /* Personas list view */
+  .persona-list-head{display:flex;align-items:center;justify-content:space-between;
+    gap:10px;margin-bottom:6px}
+  .persona-add-btn{padding:6px 12px;height:32px;font-size:12.5px}
+  .persona-add-btn svg{width:13px;height:13px}
+  .persona-rows{display:flex;flex-direction:column;gap:4px;border:1px solid var(--border);
+    border-radius:10px;background:var(--sub-tint);padding:6px;
+    max-height:240px;overflow-y:auto;margin-top:6px}
+  .pl-row{display:flex;align-items:center;gap:8px;padding:9px 11px;border-radius:8px;
+    cursor:pointer;color:var(--fg);transition:background .12s}
+  .pl-row:hover{background:var(--hover)}
+  .pl-row.active{background:rgba(199,143,91,.12)}
+  .pl-row .pl-name{flex:1;font-size:13px;font-weight:500;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+  .pl-row .pl-default{color:var(--accent);font-size:13px;flex:0 0 auto}
+  .pl-row .pl-meta{color:var(--fg-faint);font-size:10.5px;flex:0 0 auto;
+    font-variant-numeric:tabular-nums}
+  .pl-row .pl-edit{flex:0 0 28px;width:28px;height:28px;border-radius:6px;
+    border:none;background:transparent;color:var(--fg-faint);cursor:pointer;
+    display:grid;place-items:center;transition:color .15s,background .15s}
+  .pl-row .pl-edit:hover{color:var(--accent);background:var(--hover)}
+  .pl-row .pl-edit svg{width:14px;height:14px}
+  .pl-empty{color:var(--fg-faint);font-size:12px;padding:18px;text-align:center;
+    line-height:1.5}
+
+  /* Personas edit view */
+  .persona-edit-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+  .back-btn{flex:0 0 32px;width:32px;height:32px;border-radius:8px;border:none;
+    background:transparent;color:var(--fg-dim);cursor:pointer;
+    display:grid;place-items:center;transition:color .15s,background .15s}
+  .back-btn:hover{color:var(--fg);background:var(--hover)}
+  .back-btn svg{width:16px;height:16px}
+  .persona-text-tall{min-height:160px;max-height:300px;resize:vertical}
+  .persona-edit-view input.setting-input{flex:0 0 auto}
 
   /* mobile drawer overlay */
   .drawer-bg{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:25;display:none}
@@ -1098,58 +1119,93 @@
 <!-- Floating menu shown when the ⋮ on a session row is clicked -->
 <div id="popmenu" role="menu"></div>
 
-<!-- Settings sheet — theme + appearance (light/dark) + default model -->
+<!-- Settings sheet — two tabs: Theme + Personas. Theme is the default
+     landing tab. Personas tab itself has TWO sub-views: a compact list
+     of saved personas (with edit icons + an "+ Add" button) and a
+     full-form edit view that opens when the user clicks edit. -->
 <div class="sheet-backdrop" id="sheetBackdrop"></div>
 <div class="sheet" id="sheet" hidden>
   <button class="close" id="sheetClose" aria-label="Close">×</button>
 
-  <h3>Appearance</h3>
-  <div class="seg-toggle" id="modeToggle" role="radiogroup" aria-label="Light or dark mode">
-    <button type="button" class="seg on"  data-mode="dark"
-            aria-pressed="true">🌙 Dark</button>
-    <button type="button" class="seg"     data-mode="light"
-            aria-pressed="false">☀️ Bright</button>
+  <div class="sheet-tabs" id="sheetTabs" role="tablist">
+    <button type="button" class="stab on"  data-tab="theme"    role="tab" aria-selected="true">Theme</button>
+    <button type="button" class="stab"     data-tab="personas" role="tab" aria-selected="false">Personas</button>
   </div>
 
-  <h3 style="margin-top:18px">Theme</h3>
-  <div class="theme-grid" id="themeGrid"></div>
+  <!-- ── Theme pane ───────────────────────────────────────────── -->
+  <div class="sheet-pane on" data-pane="theme">
+    <h3>Appearance</h3>
+    <div class="seg-toggle" id="modeToggle" role="radiogroup" aria-label="Light or dark mode">
+      <button type="button" class="seg on"  data-mode="dark"
+              aria-pressed="true">🌙 Dark</button>
+      <button type="button" class="seg"     data-mode="light"
+              aria-pressed="false">☀️ Bright</button>
+    </div>
 
-  <h3 style="margin-top:18px">Default model for new sessions</h3>
-  <p class="setting-help">
-    Used when you create a new session. Existing chats keep whatever model
-    they were started with — switch them per-chat with <code>/model</code>.
-  </p>
-  <select id="defaultModel" class="setting-select wide"></select>
-  <p class="setting-help" id="defaultModelStatus" style="margin-top:6px"></p>
+    <h3 style="margin-top:18px">Theme</h3>
+    <div class="theme-grid" id="themeGrid"></div>
 
-  <h3 style="margin-top:20px">Personas &amp; instructions</h3>
-  <p class="setting-help">
-    Saved personas are silently injected into new sessions as
-    <code>PERSONA.md</code> + <code>INSTRUCTIONS.md</code>. Claude reads
-    them once, adopts the role, and never tells you about them.
-  </p>
-  <div class="personas-grid">
-    <div class="personas-list" id="personasList"></div>
-    <div class="personas-edit">
+    <h3 style="margin-top:18px">Default model for new sessions</h3>
+    <p class="setting-help">
+      Used when you create a new session. Existing chats keep whatever
+      model they were started with — switch them per-chat with
+      <code>/model</code>.
+    </p>
+    <select id="defaultModel" class="setting-select wide"></select>
+    <p class="setting-help" id="defaultModelStatus" style="margin-top:6px"></p>
+  </div>
+
+  <!-- ── Personas pane ─ list view ────────────────────────────── -->
+  <div class="sheet-pane" data-pane="personas" hidden>
+    <div class="persona-list-view" id="personaListView">
+      <div class="persona-list-head">
+        <h3 style="margin:0">Personas &amp; instructions</h3>
+        <button type="button" class="btn-primary persona-add-btn" id="personaAdd">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 5v14M5 12h14"/>
+          </svg>
+          <span>Add persona</span>
+        </button>
+      </div>
+      <p class="setting-help">
+        Saved personas are silently injected into new sessions as
+        <code>PERSONA.md</code> + <code>INSTRUCTIONS.md</code>. Claude
+        reads them once, adopts the role, and never tells you about them.
+      </p>
+      <div class="persona-rows" id="personaRows"></div>
+    </div>
+
+    <!-- Edit view — opens on row/edit-icon click, closes via Back -->
+    <div class="persona-edit-view" id="personaEditView" hidden>
+      <div class="persona-edit-head">
+        <button type="button" class="back-btn" id="personaBack" title="Back to list">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+            <line x1="19" y1="12" x2="5" y2="12"/>
+            <polyline points="12 19 5 12 12 5"/>
+          </svg>
+        </button>
+        <h3 style="margin:0" id="personaEditTitle">Edit persona</h3>
+      </div>
       <label class="setting-label" for="personaName">Name</label>
       <input type="text" id="personaName" class="setting-input wide"
              placeholder="e.g. Sarcastic senior PM"
              autocomplete="off" spellcheck="false">
       <label class="setting-label" for="personaText">Persona — voice / tone / role</label>
-      <textarea id="personaText" class="setting-textarea"
+      <textarea id="personaText" class="setting-textarea persona-text-tall"
                 placeholder="You are a … (paste a long description here)"
-                rows="6" spellcheck="false"></textarea>
+                spellcheck="false"></textarea>
       <label class="setting-label" for="personaInstr">Instructions — task rules</label>
-      <textarea id="personaInstr" class="setting-textarea"
+      <textarea id="personaInstr" class="setting-textarea persona-text-tall"
                 placeholder="Always do X. Never do Y. (paste long rule sets here)"
-                rows="6" spellcheck="false"></textarea>
-      <label class="setting-row" style="gap:6px;align-items:center;margin-top:8px">
+                spellcheck="false"></textarea>
+      <label class="setting-row" style="gap:6px;align-items:center;margin-top:10px">
         <input type="checkbox" id="personaMakeDefault">
         <span>Use as default for new sessions</span>
       </label>
-      <div class="modal-actions" style="margin-top:10px">
+      <div class="modal-actions" style="margin-top:12px">
         <button type="button" class="btn-ghost"   id="personaDelete">Delete</button>
-        <button type="button" class="btn-ghost"   id="personaNew">New</button>
         <button type="button" class="btn-primary" id="personaSave">Save</button>
       </div>
     </div>
@@ -1316,13 +1372,67 @@
     if (n<1073741824) return (n/1048576).toFixed(1)+' MB';
     return (n/1073741824).toFixed(1)+' GB';
   }
+  // ─── Claude-style thinking verbs ───
+  // Rotates a fanciful gerund in the header status while the assistant
+  // is busy ("Schlepping…", "Noodling…"). Inspired by Claude.ai's own
+  // spinner words — this list is curated from the leaked Tengu spinner
+  // word set, with a few extras of our own. Gerund changes every
+  // 3-8 seconds (random) so it feels alive without being distracting.
+  const THINKING_VERBS = [
+    // Classic Tengu spinner words
+    'Pondering', 'Cogitating', 'Mulling', 'Schlepping', 'Noodling',
+    'Brewing', 'Marinating', 'Steeping', 'Percolating', 'Simmering',
+    'Crunching', 'Wrangling', 'Untangling', 'Wending', 'Cooking',
+    'Hatching', 'Tinkering', 'Conjuring', 'Concocting', 'Coalescing',
+    'Synthesizing', 'Distilling', 'Riffing', 'Cerebrating', 'Channelling',
+    'Churning', 'Clauding', 'Combobulating', 'Computing', 'Considering',
+    'Contemplating', 'Crafting', 'Creating', 'Deciphering', 'Deliberating',
+    'Determining', 'Discombobulating', 'Divining', 'Effecting', 'Elucidating',
+    'Enchanting', 'Envisioning', 'Finagling', 'Flibbertigibbeting', 'Forging',
+    'Forming', 'Frolicking', 'Generating', 'Germinating', 'Herding',
+    'Honking', 'Hustling', 'Ideating', 'Imagining', 'Incubating',
+    'Inferring', 'Jiving', 'Manifesting', 'Meandering', 'Moseying',
+    'Mustering', 'Musing', 'Perusing', 'Philosophising', 'Pontificating',
+    'Processing', 'Puttering', 'Puzzling', 'Reticulating', 'Ruminating',
+    'Scheming', 'Shimmying', 'Shucking', 'Smooshing', 'Spelunking',
+    'Spinning', 'Stewing', 'Sussing', 'Thinking', 'Transmuting',
+    'Unfurling', 'Unravelling', 'Vibing', 'Whirring', 'Wibbling',
+    'Wizarding', 'Working', 'Booping', 'Baking', 'Actioning',
+    // A few tasteful additions
+    'Plotting', 'Sketching', 'Drafting', 'Probing', 'Burrowing',
+    'Sleuthing', 'Investigating', 'Diving in', 'Threading', 'Weaving',
+  ];
+
+  let _verbTimer = null;
+  let _verbBaseLabel = 'thinking';   // fallback label if cycle starts without one
+  function pickVerb(){
+    return THINKING_VERBS[Math.floor(Math.random() * THINKING_VERBS.length)];
+  }
+  function startVerbCycle(){
+    if (_verbTimer) return;
+    const tick = () => {
+      statusText.textContent = pickVerb() + '…';
+      const next = 3000 + Math.random() * 5000;   // 3-8 s
+      _verbTimer = setTimeout(tick, next);
+    };
+    tick();
+  }
+  function stopVerbCycle(){
+    if (_verbTimer){ clearTimeout(_verbTimer); _verbTimer = null; }
+  }
+
   function setStatus(text, level){
-    statusText.textContent = text;
+    if (level === 'busy'){
+      // While busy: cycle Claude-style gerunds in the header. The first
+      // verb is set immediately (no 3-8 s wait), subsequent ones rotate.
+      _verbBaseLabel = text || 'thinking';
+      startVerbCycle();
+    } else {
+      stopVerbCycle();
+      statusText.textContent = text;
+    }
     dot.className = 'dot ' + (level || '');
-    // Bouncing dots in the header light up whenever level === 'busy', so
-    // the user has a continuous "still thinking" signal from the moment
-    // the message is sent until turn_done — INCLUDING the gaps between
-    // text blocks where claude is doing tool calls or reasoning.
+    // Bouncing dots in the header light up whenever level === 'busy'.
     const td = document.getElementById('thinkDots');
     if (td) td.classList.toggle('on', level === 'busy');
   }
@@ -1790,19 +1900,20 @@
   // ─── streaming ───
   // Strategy:
   //   * Buffer text deltas into bubble.dataset.raw immediately (cheap)
-  //   * Re-parse markdown on a timer (~80 ms / ~12 fps) — re-rendering on
-  //     every token causes DOM thrash + visible flicker, especially with
-  //     marked which rebuilds the whole subtree.
-  //   * Append a real DOM cursor (instead of CSS ::after) so it renders
-  //     correctly inside the marked output.
+  //   * Schedule a re-parse via requestAnimationFrame so we coalesce all
+  //     deltas that arrived within one frame (~16 ms) into a single
+  //     paint. Smoother than the old setTimeout(80) which felt jerky.
+  //   * Skip the parse entirely when the buffer hasn't changed since
+  //     the last render (no point burning CPU + causing a paint).
   //   * Auto-scroll only if the user was already near the bottom.
-  const STREAM_FLUSH_MS = 80;
+  let _streamLastRendered = '';
 
   function flushStreamBuffer(){
     streamFlushTimer = null;
     if (!streamingBubble) return;
     const raw = streamingBubble.dataset.raw || '';
-    // Render markdown + append our streaming cursor as the very last node.
+    if (raw === _streamLastRendered) return;     // nothing new
+    _streamLastRendered = raw;
     streamingBubble.innerHTML = md(raw) + '<span class="stream-cursor"></span>';
     followIfPinned();
   }
@@ -1836,19 +1947,22 @@
 
   function appendDelta(id, text){
     if (streamingId !== id || !streamingBubble) startStream(id);
-    // Cheap append — just buffer the text. The actual DOM update is throttled.
+    // Cheap append — just buffer the text. Actual DOM update is coalesced
+    // to one render per animation frame (~60 fps cap on most monitors,
+    // matching the system refresh — much smoother than a fixed-ms timer).
     streamingBubble.dataset.raw = (streamingBubble.dataset.raw || '') + text;
     if (streamFlushTimer) return;
-    streamFlushTimer = setTimeout(flushStreamBuffer, STREAM_FLUSH_MS);
+    streamFlushTimer = requestAnimationFrame(flushStreamBuffer);
   }
 
   function endStream(id){
     // Flush any pending text first so the final render is complete + the
     // cursor goes away cleanly.
     if (streamFlushTimer){
-      clearTimeout(streamFlushTimer);
+      cancelAnimationFrame(streamFlushTimer);
       streamFlushTimer = null;
     }
+    _streamLastRendered = '';
     if (streamingBubble){
       streamingBubble.classList.remove('streaming');
       const raw = streamingBubble.dataset.raw || streamingBubble.innerText;
@@ -2425,12 +2539,21 @@
   function openSheet(){
     $('sheet').hidden = false;
     $('sheetBackdrop').classList.add('on');
-    // Refresh personas + reset the edit form to a clean New-persona state
-    // so the sheet always opens at a sensible default.
+    // Always land on the Theme tab; the user can flip to Personas via
+    // the tab itself which fetches the latest list on open.
+    document.querySelectorAll('#sheetTabs .stab').forEach(b => {
+      const on = b.dataset.tab === 'theme';
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    document.querySelectorAll('.sheet-pane').forEach(p => {
+      const on = p.dataset.pane === 'theme';
+      p.classList.toggle('on', on);
+      p.hidden = !on;
+    });
+    // Background-refresh personas so the dropdown in the new-session
+    // popup stays in sync if the user opens it next.
     send({ type: 'personas_list' });
-    if (typeof newPersonaForm === 'function' && !personaEditingId) {
-      newPersonaForm();
-    }
   }
   function closeSheet(){$('sheet').hidden=true;$('sheetBackdrop').classList.remove('on');}
   $('settingsBtn').addEventListener('click', openSheet);
@@ -2498,28 +2621,33 @@
   let personasState = { default: null, personas: [] };
   let personaEditingId = null;
 
+  const ICON_PENCIL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4z"/></svg>';
+
   function refreshPersonasUI(){
-    // Sheet list pane.
-    const listEl = document.getElementById('personasList');
-    if (listEl){
-      listEl.innerHTML = '';
+    // Personas tab — list of rows (each with edit icon).
+    const rowsEl = document.getElementById('personaRows');
+    if (rowsEl){
+      rowsEl.innerHTML = '';
       if (!personasState.personas.length){
         const e = document.createElement('div');
         e.className = 'pl-empty';
-        e.textContent = 'No personas yet. Click "New", paste in a persona + instructions, then Save.';
-        listEl.appendChild(e);
+        e.textContent = 'No personas yet. Click "Add persona" to create one.';
+        rowsEl.appendChild(e);
       } else {
         for (const p of personasState.personas){
           const row = document.createElement('div');
-          row.className = 'pl-row' + (personaEditingId === p.id ? ' active' : '');
+          row.className = 'pl-row';
           row.dataset.id = p.id;
           const isDefault = personasState.default === p.id;
           row.innerHTML = `
             <span class="pl-name" title="${escHtml(p.name)}">${escHtml(p.name)}</span>
             ${isDefault ? '<span class="pl-default" title="Default for new sessions">★</span>' : ''}
+            <span class="pl-meta">${p.personaLen + p.instrLen} chars</span>
+            <button type="button" class="pl-edit" title="Edit" aria-label="Edit ${escHtml(p.name)}">${ICON_PENCIL}</button>
           `;
+          // Whole row OR pencil → open editor for this persona.
           row.addEventListener('click', () => loadPersonaIntoEditor(p.id));
-          listEl.appendChild(row);
+          rowsEl.appendChild(row);
         }
       }
     }
@@ -2537,7 +2665,6 @@
         o.textContent = p.name + (personasState.default === p.id ? '  (default)' : '');
         sel.appendChild(o);
       }
-      // Restore selection: previous value > stored default > none
       if (cur && personasState.personas.some(p => p.id === cur)){
         sel.value = cur;
       } else if (personasState.default){
@@ -2546,13 +2673,25 @@
     }
   }
 
+  // Personas tab navigation: list view ⇄ edit view.
+  function showPersonaList(){
+    document.getElementById('personaListView').hidden = false;
+    document.getElementById('personaEditView').hidden = true;
+    personaEditingId = null;
+    refreshPersonasUI();
+  }
+  function showPersonaEdit(titleText){
+    document.getElementById('personaListView').hidden = true;
+    document.getElementById('personaEditView').hidden = false;
+    document.getElementById('personaEditTitle').textContent = titleText || 'Edit persona';
+  }
+
   function loadPersonaIntoEditor(pid){
     const p = personasState.personas.find(x => x.id === pid);
     personaEditingId = pid;
-    refreshPersonasUI();
+    showPersonaEdit(p ? `Edit · ${p.name}` : 'Edit persona');
     // Brief metadata is what we have in personasState; the full text
-    // lives only on the server (so longer personas don't bloat every
-    // broadcast). Fetch the full record before painting the form.
+    // lives only on the server. Fetch the full record before painting.
     send({ type: 'persona_get', id: pid });
   }
 
@@ -2567,13 +2706,34 @@
   function newPersonaForm(){
     personaEditingId = null;
     applyPersonaToEditor(null);
-    document.getElementById('personaName').focus();
-    refreshPersonasUI();
+    showPersonaEdit('New persona');
+    setTimeout(() => document.getElementById('personaName').focus(), 30);
   }
 
-  // Personas are embedded in the Settings sheet now. Refresh the list
-  // each time the sheet opens (the user may have edited via another tab).
-  document.getElementById('personaNew').addEventListener('click', newPersonaForm);
+  // Tab switching inside the settings sheet.
+  document.getElementById('sheetTabs').addEventListener('click', e => {
+    const btn = e.target.closest('.stab');
+    if (!btn) return;
+    const tab = btn.dataset.tab;
+    document.querySelectorAll('#sheetTabs .stab').forEach(b => {
+      const on = b === btn;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    document.querySelectorAll('.sheet-pane').forEach(p => {
+      const on = p.dataset.pane === tab;
+      p.classList.toggle('on', on);
+      p.hidden = !on;
+    });
+    if (tab === 'personas'){
+      send({ type: 'personas_list' });
+      showPersonaList();
+    }
+  });
+
+  // Personas list view → "+ Add persona" + per-row edit.
+  document.getElementById('personaAdd').addEventListener('click', newPersonaForm);
+  document.getElementById('personaBack').addEventListener('click', showPersonaList);
   document.getElementById('personaSave').addEventListener('click', () => {
     const name  = document.getElementById('personaName').value.trim();
     const text  = document.getElementById('personaText').value;
@@ -2593,14 +2753,17 @@
     });
     showBanner('Persona saved.');
     setTimeout(hideBanner, 1500);
+    // After save, drop back to the list — server will broadcast the
+    // updated `personas` and refreshPersonasUI will repaint the rows.
+    showPersonaList();
   });
   document.getElementById('personaDelete').addEventListener('click', () => {
     if (!personaEditingId){
-      newPersonaForm(); return;       // nothing to delete — same as New
+      showPersonaList(); return;       // nothing to delete — just go back
     }
+    if (!confirm('Delete this persona? This cannot be undone.')) return;
     send({ type: 'persona_delete', id: personaEditingId });
-    personaEditingId = null;
-    applyPersonaToEditor(null);
+    showPersonaList();
   });
 
   // Server response handlers wired below in handleServerMessage.
