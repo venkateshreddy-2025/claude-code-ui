@@ -8,12 +8,18 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>Claude Code</title>
-<!-- Favicon: white "CC" on a dark-amber rounded square. Inline SVG keeps
-     the repo single-file. The block ID identifier is intentionally small
-     enough to read clearly at 16/32 px Apple/browser tab sizes. -->
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%235a3a1b'/><text x='32' y='44' font-family='-apple-system,Segoe UI,Helvetica,Arial,sans-serif' font-size='30' font-weight='700' fill='white' text-anchor='middle' letter-spacing='-1'>CC</text></svg>">
-<link rel="apple-touch-icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%235a3a1b'/><text x='32' y='44' font-family='-apple-system,Helvetica,Arial,sans-serif' font-size='30' font-weight='700' fill='white' text-anchor='middle' letter-spacing='-1'>CC</text></svg>">
+<title>Claude Code UI · chat with the claude CLI</title>
+<meta name="description" content="A clean, multi-session web UI for the Claude Code CLI. Talks directly to a long-running claude subprocess — multi-chat, full Markdown, file uploads, themes, search, personas, and one-click progress summaries. No middleware, no API keys.">
+<meta name="application-name" content="Claude Code UI">
+<meta property="og:title" content="Claude Code UI">
+<meta property="og:description" content="ChatGPT-style desktop + mobile UI for the Claude Code CLI — multi-session, themed, with personas, full Markdown, and image upload.">
+<meta property="og:type" content="website">
+<!-- Favicon: warm-amber gradient (matches user-bubble brand) with crisp
+     white "CC" — reads cleanly on both dark and light browser chrome.
+     Inline SVG keeps the repo single-file. Two link tags so iOS Safari
+     uses the same artwork for the home-screen icon. -->
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%23c78f5b'/><stop offset='1' stop-color='%23e0a06a'/></linearGradient></defs><rect width='64' height='64' rx='14' fill='url(%23g)'/><text x='32' y='44' font-family='-apple-system,Segoe UI,Helvetica,Arial,sans-serif' font-size='30' font-weight='700' fill='white' text-anchor='middle' letter-spacing='-1'>CC</text></svg>">
+<link rel="apple-touch-icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%23c78f5b'/><stop offset='1' stop-color='%23e0a06a'/></linearGradient></defs><rect width='64' height='64' rx='14' fill='url(%23g)'/><text x='32' y='44' font-family='-apple-system,Helvetica,Arial,sans-serif' font-size='30' font-weight='700' fill='white' text-anchor='middle' letter-spacing='-1'>CC</text></svg>">
 <!-- marked.js — full Markdown renderer (CommonMark + GFM extensions: tables,
      fenced code, strikethrough, task lists). Loaded SYNCHRONOUSLY (no defer)
      so it's available when the inline app script below runs and renders the
@@ -845,30 +851,30 @@
     line-height:1.5;transition:border-color .15s}
   .setting-textarea:focus{border-color:var(--accent)}
 
-  /* Personas sheet — bigger modal with list on left, edit form on right.
-     On phones it stacks (list on top). */
-  .personas-modal{width:min(900px,calc(100% - 24px));max-height:88vh;
-    display:flex;flex-direction:column;padding:20px 22px 18px}
-  .personas-grid{display:grid;grid-template-columns:240px 1fr;gap:18px;
-    flex:1;min-height:0;overflow:hidden}
-  @media(max-width:700px){.personas-grid{grid-template-columns:1fr;gap:12px}}
-  .personas-list{overflow-y:auto;border:1px solid var(--border);border-radius:10px;
-    background:var(--sub-tint);padding:6px;display:flex;flex-direction:column;gap:2px}
-  .personas-list .pl-row{padding:9px 11px;border-radius:7px;cursor:pointer;
-    display:flex;align-items:center;gap:8px;color:var(--fg-dim);
-    transition:background .12s,color .12s}
+  /* Personas section inside the Settings sheet — list on top
+     (compact, horizontally-scrollable chips on narrow screens), edit
+     form below. Reuses the same setting primitives as the rest of the
+     sheet so it feels native there. */
+  .personas-grid{display:flex;flex-direction:column;gap:10px;margin-top:6px}
+  .personas-list{display:flex;flex-wrap:wrap;gap:5px;border:1px solid var(--border);
+    border-radius:10px;background:var(--sub-tint);padding:6px;
+    max-height:120px;overflow-y:auto}
+  .personas-list .pl-row{padding:5px 11px;border-radius:14px;cursor:pointer;
+    display:inline-flex;align-items:center;gap:5px;color:var(--fg-dim);font-size:12px;
+    background:rgba(255,255,255,.02);border:1px solid var(--border);
+    transition:background .12s,color .12s,border-color .12s}
   .personas-list .pl-row:hover{background:var(--hover);color:var(--fg)}
-  .personas-list .pl-row.active{background:var(--hover);color:var(--fg);
-    box-shadow:inset 3px 0 0 var(--accent)}
-  .personas-list .pl-name{flex:1;font-size:13px;font-weight:500;
-    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-  .personas-list .pl-default{color:var(--accent);font-size:13px;flex:0 0 16px}
-  .personas-list .pl-empty{color:var(--fg-faint);font-size:12px;padding:14px;
-    text-align:center;line-height:1.5}
+  .personas-list .pl-row.active{background:var(--accent);color:#0f0f15;
+    border-color:var(--accent);font-weight:600}
+  .personas-list .pl-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    max-width:200px}
+  .personas-list .pl-default{color:var(--accent);font-size:11px}
+  .personas-list .pl-row.active .pl-default{color:#0f0f15}
+  .personas-list .pl-empty{color:var(--fg-faint);font-size:11.5px;padding:10px;
+    text-align:center;line-height:1.5;flex:1}
 
-  .personas-edit{display:flex;flex-direction:column;gap:0;overflow-y:auto;
-    padding-right:4px}
-  .personas-edit .setting-textarea{min-height:140px;max-height:360px}
+  .personas-edit{display:flex;flex-direction:column;gap:0}
+  .personas-edit .setting-textarea{min-height:90px;max-height:220px}
   /* Prevent flex:1 inputs from stretching vertically inside the column. */
   .personas-edit input.setting-input{flex:0 0 auto}
 
@@ -937,17 +943,6 @@
         <span class="spinner" aria-hidden="true"></span>
         <span id="spawnChipText">starting…</span>
       </span>
-      <button class="header-action" id="personasBtn" type="button"
-              title="Personas + instructions" aria-label="Personas">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-             stroke-linecap="round" stroke-linejoin="round">
-          <!-- Two-people / persona icon. -->
-          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
-          <circle cx="9" cy="7" r="4"/>
-          <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
-          <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-        </svg>
-      </button>
       <button class="header-action" id="saveProgressBtn" type="button"
               title="Save progress (Markdown summary via opus 4.6 1M)"
               aria-label="Save progress">
@@ -1126,23 +1121,15 @@
   </p>
   <select id="defaultModel" class="setting-select wide"></select>
   <p class="setting-help" id="defaultModelStatus" style="margin-top:6px"></p>
-</div>
 
-<!-- Personas sheet — opened by the 👥 icon in the header. List on the
-     left, edit form on the right. Defaults star sits next to each row. -->
-<div class="modal-backdrop" id="personasBackdrop"></div>
-<div class="modal personas-modal" id="personasModal" hidden>
-  <button class="close" id="personasClose" aria-label="Close">×</button>
-  <h3>Personas &amp; instructions</h3>
+  <h3 style="margin-top:20px">Personas &amp; instructions</h3>
   <p class="setting-help">
     Saved personas are silently injected into new sessions as
     <code>PERSONA.md</code> + <code>INSTRUCTIONS.md</code>. Claude reads
     them once, adopts the role, and never tells you about them.
   </p>
   <div class="personas-grid">
-    <div class="personas-list" id="personasList">
-      <!-- rows filled by JS -->
-    </div>
+    <div class="personas-list" id="personasList"></div>
     <div class="personas-edit">
       <label class="setting-label" for="personaName">Name</label>
       <input type="text" id="personaName" class="setting-input wide"
@@ -1151,16 +1138,16 @@
       <label class="setting-label" for="personaText">Persona — voice / tone / role</label>
       <textarea id="personaText" class="setting-textarea"
                 placeholder="You are a … (paste a long description here)"
-                rows="8" spellcheck="false"></textarea>
+                rows="6" spellcheck="false"></textarea>
       <label class="setting-label" for="personaInstr">Instructions — task rules</label>
       <textarea id="personaInstr" class="setting-textarea"
                 placeholder="Always do X. Never do Y. (paste long rule sets here)"
-                rows="8" spellcheck="false"></textarea>
-      <label class="setting-row" style="gap:6px;align-items:center">
+                rows="6" spellcheck="false"></textarea>
+      <label class="setting-row" style="gap:6px;align-items:center;margin-top:8px">
         <input type="checkbox" id="personaMakeDefault">
         <span>Use as default for new sessions</span>
       </label>
-      <div class="modal-actions">
+      <div class="modal-actions" style="margin-top:10px">
         <button type="button" class="btn-ghost"   id="personaDelete">Delete</button>
         <button type="button" class="btn-ghost"   id="personaNew">New</button>
         <button type="button" class="btn-primary" id="personaSave">Save</button>
@@ -2435,7 +2422,16 @@
     sel.addEventListener('change', () => setDefaultModel(sel.value));
   }
 
-  function openSheet(){$('sheet').hidden=false;$('sheetBackdrop').classList.add('on');}
+  function openSheet(){
+    $('sheet').hidden = false;
+    $('sheetBackdrop').classList.add('on');
+    // Refresh personas + reset the edit form to a clean New-persona state
+    // so the sheet always opens at a sensible default.
+    send({ type: 'personas_list' });
+    if (typeof newPersonaForm === 'function' && !personaEditingId) {
+      newPersonaForm();
+    }
+  }
   function closeSheet(){$('sheet').hidden=true;$('sheetBackdrop').classList.remove('on');}
   $('settingsBtn').addEventListener('click', openSheet);
   $('sheetClose').addEventListener('click', closeSheet);
@@ -2575,20 +2571,8 @@
     refreshPersonasUI();
   }
 
-  function openPersonas(){
-    document.getElementById('personasBackdrop').classList.add('on');
-    document.getElementById('personasModal').hidden = false;
-    send({ type: 'personas_list' });   // refresh the list
-    if (!personaEditingId) newPersonaForm();
-  }
-  function closePersonas(){
-    document.getElementById('personasBackdrop').classList.remove('on');
-    document.getElementById('personasModal').hidden = true;
-  }
-  document.getElementById('personasBtn').addEventListener('click', openPersonas);
-  document.getElementById('personasClose').addEventListener('click', closePersonas);
-  document.getElementById('personasBackdrop').addEventListener('click', closePersonas);
-
+  // Personas are embedded in the Settings sheet now. Refresh the list
+  // each time the sheet opens (the user may have edited via another tab).
   document.getElementById('personaNew').addEventListener('click', newPersonaForm);
   document.getElementById('personaSave').addEventListener('click', () => {
     const name  = document.getElementById('personaName').value.trim();
