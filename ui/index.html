@@ -500,7 +500,10 @@
     opacity:0;transition:opacity .15s;width:auto}
   .msg.user .msg-actions{align-self:flex-end;justify-content:flex-end}
   .msg.bot  .msg-actions{align-self:flex-start;justify-content:flex-start}
-  .msg:hover .msg-actions,.msg .msg-actions.always{opacity:1}
+  .msg:hover .msg-actions{opacity:1}
+  /* Note: previously the most recent bot bubble kept its action bar
+     always visible (`.always` class). Now Copy + Fork only appear on
+     hover for every message — quieter, less padding-noise. */
   .msg-actions button{height:22px;padding:0 7px;border-radius:6px;border:1px solid var(--border);
     background:rgba(255,255,255,.02);color:var(--fg-dim);cursor:pointer;font:inherit;
     font-size:10.5px;display:inline-flex;align-items:center;gap:4px;
@@ -834,6 +837,41 @@
   .btn-primary{background:var(--accent);border-color:var(--accent);color:#0f0f15;font-weight:600}
   .btn-primary:hover{filter:brightness(1.08)}
 
+  .setting-textarea{
+    background:var(--bg-3);border:1px solid var(--border);color:var(--fg);
+    border-radius:8px;padding:10px 12px;font:inherit;font-size:13px;outline:none;
+    width:100%;resize:vertical;min-height:120px;
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Inter",system-ui,sans-serif;
+    line-height:1.5;transition:border-color .15s}
+  .setting-textarea:focus{border-color:var(--accent)}
+
+  /* Personas sheet — bigger modal with list on left, edit form on right.
+     On phones it stacks (list on top). */
+  .personas-modal{width:min(900px,calc(100% - 24px));max-height:88vh;
+    display:flex;flex-direction:column;padding:20px 22px 18px}
+  .personas-grid{display:grid;grid-template-columns:240px 1fr;gap:18px;
+    flex:1;min-height:0;overflow:hidden}
+  @media(max-width:700px){.personas-grid{grid-template-columns:1fr;gap:12px}}
+  .personas-list{overflow-y:auto;border:1px solid var(--border);border-radius:10px;
+    background:var(--sub-tint);padding:6px;display:flex;flex-direction:column;gap:2px}
+  .personas-list .pl-row{padding:9px 11px;border-radius:7px;cursor:pointer;
+    display:flex;align-items:center;gap:8px;color:var(--fg-dim);
+    transition:background .12s,color .12s}
+  .personas-list .pl-row:hover{background:var(--hover);color:var(--fg)}
+  .personas-list .pl-row.active{background:var(--hover);color:var(--fg);
+    box-shadow:inset 3px 0 0 var(--accent)}
+  .personas-list .pl-name{flex:1;font-size:13px;font-weight:500;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+  .personas-list .pl-default{color:var(--accent);font-size:13px;flex:0 0 16px}
+  .personas-list .pl-empty{color:var(--fg-faint);font-size:12px;padding:14px;
+    text-align:center;line-height:1.5}
+
+  .personas-edit{display:flex;flex-direction:column;gap:0;overflow-y:auto;
+    padding-right:4px}
+  .personas-edit .setting-textarea{min-height:140px;max-height:360px}
+  /* Prevent flex:1 inputs from stretching vertically inside the column. */
+  .personas-edit input.setting-input{flex:0 0 auto}
+
   /* mobile drawer overlay */
   .drawer-bg{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:25;display:none}
   .drawer-bg.on{display:block;animation:fadein .15s}
@@ -899,6 +937,17 @@
         <span class="spinner" aria-hidden="true"></span>
         <span id="spawnChipText">starting…</span>
       </span>
+      <button class="header-action" id="personasBtn" type="button"
+              title="Personas + instructions" aria-label="Personas">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <!-- Two-people / persona icon. -->
+          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+          <circle cx="9" cy="7" r="4"/>
+          <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
+          <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+        </svg>
+      </button>
       <button class="header-action" id="saveProgressBtn" type="button"
               title="Save progress (Markdown summary via opus 4.6 1M)"
               aria-label="Save progress">
@@ -1079,11 +1128,60 @@
   <p class="setting-help" id="defaultModelStatus" style="margin-top:6px"></p>
 </div>
 
+<!-- Personas sheet — opened by the 👥 icon in the header. List on the
+     left, edit form on the right. Defaults star sits next to each row. -->
+<div class="modal-backdrop" id="personasBackdrop"></div>
+<div class="modal personas-modal" id="personasModal" hidden>
+  <button class="close" id="personasClose" aria-label="Close">×</button>
+  <h3>Personas &amp; instructions</h3>
+  <p class="setting-help">
+    Saved personas are silently injected into new sessions as
+    <code>PERSONA.md</code> + <code>INSTRUCTIONS.md</code>. Claude reads
+    them once, adopts the role, and never tells you about them.
+  </p>
+  <div class="personas-grid">
+    <div class="personas-list" id="personasList">
+      <!-- rows filled by JS -->
+    </div>
+    <div class="personas-edit">
+      <label class="setting-label" for="personaName">Name</label>
+      <input type="text" id="personaName" class="setting-input wide"
+             placeholder="e.g. Sarcastic senior PM"
+             autocomplete="off" spellcheck="false">
+      <label class="setting-label" for="personaText">Persona — voice / tone / role</label>
+      <textarea id="personaText" class="setting-textarea"
+                placeholder="You are a … (paste a long description here)"
+                rows="8" spellcheck="false"></textarea>
+      <label class="setting-label" for="personaInstr">Instructions — task rules</label>
+      <textarea id="personaInstr" class="setting-textarea"
+                placeholder="Always do X. Never do Y. (paste long rule sets here)"
+                rows="8" spellcheck="false"></textarea>
+      <label class="setting-row" style="gap:6px;align-items:center">
+        <input type="checkbox" id="personaMakeDefault">
+        <span>Use as default for new sessions</span>
+      </label>
+      <div class="modal-actions">
+        <button type="button" class="btn-ghost"   id="personaDelete">Delete</button>
+        <button type="button" class="btn-ghost"   id="personaNew">New</button>
+        <button type="button" class="btn-primary" id="personaSave">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- New-session popup — opens from "+ New session" with path + model. -->
 <div class="modal-backdrop" id="newSessionBackdrop"></div>
 <div class="modal" id="newSessionModal" hidden>
   <button class="close" id="newSessionClose" aria-label="Close">×</button>
   <h3>New session</h3>
+  <label class="setting-label" for="newSessionPersona">Persona</label>
+  <select id="newSessionPersona" class="setting-select wide"></select>
+  <p class="setting-help">
+    The persona's <code>PERSONA.md</code> + <code>INSTRUCTIONS.md</code>
+    are silently dropped into the working directory and claude adopts
+    them — without telling you. Edit personas via the
+    <strong>👥 Personas</strong> icon in the header.
+  </p>
   <label class="setting-label" for="newSessionCwd">Working directory</label>
   <div class="setting-row">
     <input type="text" id="newSessionCwd" class="setting-input"
@@ -1823,7 +1921,12 @@
   function connect(){
     setStatus('connecting…');
     ws = new WebSocket(WS_URL);
-    ws.onopen = () => { reconnectAttempts = 0; };
+    ws.onopen = () => {
+      reconnectAttempts = 0;
+      // Prefetch personas so the new-session popup's dropdown is
+      // pre-populated even on the first click.
+      try { ws.send(JSON.stringify({ type: 'personas_list' })); } catch(e) {}
+    };
     ws.onclose = () => {
       online = false;
       setStatus('disconnected', 'warn');
@@ -1978,6 +2081,24 @@
         showBanner('Summarize failed: ' + (m.message || 'unknown'));
         setTimeout(hideBanner, 5000);
         break;
+      case 'personas': {
+        // Authoritative list from the server. Refresh both the editor
+        // sheet list AND the new-session popup dropdown.
+        personasState = {
+          default: m.default || null,
+          personas: m.personas || [],
+        };
+        // If the server just saved a persona we were editing, keep the
+        // form pointed at it.
+        if (m.savedId) personaEditingId = m.savedId;
+        refreshPersonasUI();
+        break;
+      }
+      case 'persona': {
+        // Full record for the editor form (per persona_get).
+        if (m.persona) applyPersonaToEditor(m.persona);
+        break;
+      }
       case 'dir_picked': {
         // Server's native folder dialog returned a path (or empty if
         // the user cancelled). Restore the Browse button + paste the
@@ -2333,6 +2454,9 @@
     document.getElementById('newSessionModal').hidden = false;
     document.getElementById('newSessionCwd').value = '';
     fillModelSelect(document.getElementById('newSessionModel'), getDefaultModel());
+    // Refresh personas (asynchronous — populated when 'personas' arrives).
+    refreshPersonasUI();
+    send({ type: 'personas_list' });
     setTimeout(() => document.getElementById('newSessionCwd').focus(), 30);
   }
   function closeNewSession(){
@@ -2345,9 +2469,11 @@
   document.getElementById('newSessionCreate').addEventListener('click', () => {
     const cwd = document.getElementById('newSessionCwd').value.trim();
     const model = document.getElementById('newSessionModel').value;
+    const persona = document.getElementById('newSessionPersona').value;
     const payload = { type: 'new' };
-    if (cwd)   payload.cwd   = cwd;
-    if (model) payload.model = model;
+    if (cwd)     payload.cwd     = cwd;
+    if (model)   payload.model   = model;
+    if (persona) payload.persona = persona;
     if (send(payload)) closeNewSession();
   });
   // Browse → server-side native folder picker (macOS Finder via osascript,
@@ -2367,6 +2493,133 @@
   // The sidebar's "+ New session" button (#newBtn) calls openNewSession
   // directly via its existing handler — see the "// ───── new session ─────"
   // block earlier in this file.
+
+  // ───── personas + instructions ─────
+  // Live state — refreshed via WS 'personas' broadcasts. The header
+  // button (#personasBtn) opens the editor sheet; the new-session popup
+  // pulls from this list to show the persona dropdown (defaulting to
+  // the user's chosen default persona).
+  let personasState = { default: null, personas: [] };
+  let personaEditingId = null;
+
+  function refreshPersonasUI(){
+    // Sheet list pane.
+    const listEl = document.getElementById('personasList');
+    if (listEl){
+      listEl.innerHTML = '';
+      if (!personasState.personas.length){
+        const e = document.createElement('div');
+        e.className = 'pl-empty';
+        e.textContent = 'No personas yet. Click "New", paste in a persona + instructions, then Save.';
+        listEl.appendChild(e);
+      } else {
+        for (const p of personasState.personas){
+          const row = document.createElement('div');
+          row.className = 'pl-row' + (personaEditingId === p.id ? ' active' : '');
+          row.dataset.id = p.id;
+          const isDefault = personasState.default === p.id;
+          row.innerHTML = `
+            <span class="pl-name" title="${escHtml(p.name)}">${escHtml(p.name)}</span>
+            ${isDefault ? '<span class="pl-default" title="Default for new sessions">★</span>' : ''}
+          `;
+          row.addEventListener('click', () => loadPersonaIntoEditor(p.id));
+          listEl.appendChild(row);
+        }
+      }
+    }
+    // New-session popup dropdown (kept fresh between opens).
+    const sel = document.getElementById('newSessionPersona');
+    if (sel){
+      const cur = sel.value;
+      sel.innerHTML = '';
+      const none = document.createElement('option');
+      none.value = ''; none.textContent = '— no persona —';
+      sel.appendChild(none);
+      for (const p of personasState.personas){
+        const o = document.createElement('option');
+        o.value = p.id;
+        o.textContent = p.name + (personasState.default === p.id ? '  (default)' : '');
+        sel.appendChild(o);
+      }
+      // Restore selection: previous value > stored default > none
+      if (cur && personasState.personas.some(p => p.id === cur)){
+        sel.value = cur;
+      } else if (personasState.default){
+        sel.value = personasState.default;
+      }
+    }
+  }
+
+  function loadPersonaIntoEditor(pid){
+    const p = personasState.personas.find(x => x.id === pid);
+    personaEditingId = pid;
+    refreshPersonasUI();
+    // Brief metadata is what we have in personasState; the full text
+    // lives only on the server (so longer personas don't bloat every
+    // broadcast). Fetch the full record before painting the form.
+    send({ type: 'persona_get', id: pid });
+  }
+
+  function applyPersonaToEditor(p){
+    document.getElementById('personaName').value  = p ? (p.name || '') : '';
+    document.getElementById('personaText').value  = p ? (p.persona || '') : '';
+    document.getElementById('personaInstr').value = p ? (p.instructions || '') : '';
+    document.getElementById('personaMakeDefault').checked =
+      !!(p && personasState.default === p.id);
+  }
+
+  function newPersonaForm(){
+    personaEditingId = null;
+    applyPersonaToEditor(null);
+    document.getElementById('personaName').focus();
+    refreshPersonasUI();
+  }
+
+  function openPersonas(){
+    document.getElementById('personasBackdrop').classList.add('on');
+    document.getElementById('personasModal').hidden = false;
+    send({ type: 'personas_list' });   // refresh the list
+    if (!personaEditingId) newPersonaForm();
+  }
+  function closePersonas(){
+    document.getElementById('personasBackdrop').classList.remove('on');
+    document.getElementById('personasModal').hidden = true;
+  }
+  document.getElementById('personasBtn').addEventListener('click', openPersonas);
+  document.getElementById('personasClose').addEventListener('click', closePersonas);
+  document.getElementById('personasBackdrop').addEventListener('click', closePersonas);
+
+  document.getElementById('personaNew').addEventListener('click', newPersonaForm);
+  document.getElementById('personaSave').addEventListener('click', () => {
+    const name  = document.getElementById('personaName').value.trim();
+    const text  = document.getElementById('personaText').value;
+    const instr = document.getElementById('personaInstr').value;
+    const makeDefault = document.getElementById('personaMakeDefault').checked;
+    if (!name && !text && !instr){
+      showBanner('Persona is empty — nothing to save.');
+      setTimeout(hideBanner, 2500); return;
+    }
+    send({
+      type: 'persona_save',
+      id: personaEditingId,
+      name: name || 'Untitled',
+      persona: text,
+      instructions: instr,
+      makeDefault,
+    });
+    showBanner('Persona saved.');
+    setTimeout(hideBanner, 1500);
+  });
+  document.getElementById('personaDelete').addEventListener('click', () => {
+    if (!personaEditingId){
+      newPersonaForm(); return;       // nothing to delete — same as New
+    }
+    send({ type: 'persona_delete', id: personaEditingId });
+    personaEditingId = null;
+    applyPersonaToEditor(null);
+  });
+
+  // Server response handlers wired below in handleServerMessage.
 
   // ───── save progress (Markdown summary via opus 4.6 1M) ─────
   // Spawns a SEPARATE claude subprocess on the server side so the active

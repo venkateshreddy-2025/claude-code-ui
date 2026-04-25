@@ -389,7 +389,8 @@ async def start_subprocess(resume_id: str | None = None, cwd: str | None = None,
 
 
 async def new_session(cwd_override: str | None = None,
-                       model_override: str | None = None):
+                       model_override: str | None = None,
+                       persona_id: str | None = None):
     """Create a new session. Optional overrides come from the New-session
     popup in the UI:
 
@@ -398,6 +399,9 @@ async def new_session(cwd_override: str | None = None,
       the default ~/claude-ui/<timestamp>/ folder.
     * model_override: model id to pin to this session (also persisted on
       the session JSON so future resumes use the same model).
+    * persona_id: id of a saved persona. If set, we materialise
+      PERSONA.md + INSTRUCTIONS.md into the cwd and pass a
+      system-prompt blob that tells claude to silently adopt them.
     """
     sid = str(uuid.uuid4())
     if cwd_override:
@@ -407,6 +411,15 @@ async def new_session(cwd_override: str | None = None,
         stamp_fs = time.strftime('%Y-%m-%d_%H-%M-%S')
         cwd = CWD_ROOT / stamp_fs
         cwd.mkdir(parents=True, exist_ok=True)
+
+    sys_prompt = None
+    persona_meta = None
+    if persona_id:
+        p = persona_full(persona_id)
+        if p:
+            sys_prompt = materialise_persona_files(p, cwd)
+            persona_meta = {'id': p.get('id'), 'name': p.get('name')}
+
     sess = {
         'id': sid,
         'title': 'New chat',
@@ -418,13 +431,21 @@ async def new_session(cwd_override: str | None = None,
     }
     if model_override:
         sess['model'] = model_override
+    if persona_meta:
+        sess['persona'] = persona_meta
+        # Stash the system prompt on the session JSON so future resumes
+        # of this chat keep the persona without needing the persona
+        # store on disk.
+        if sys_prompt:
+            sess['systemPrompt'] = sys_prompt
     save_session(sess)
     upsert_index_entry(sess)
     state.active_id = sid
     set_active(sid)
     await broadcast({'type': 'spawning',
                      'sessionId': sid, 'title': 'New chat'})
-    await start_subprocess(resume_id=None, cwd=str(cwd))
+    await start_subprocess(resume_id=None, cwd=str(cwd),
+                            system_prompt=sys_prompt)
     await broadcast(state_snapshot())
 
 
@@ -672,6 +693,132 @@ def search_messages(query: str, role: str = 'all', path_filter: str = '',
 
 
 SUMMARY_MODEL = os.environ.get('CC_SUMMARY_MODEL', 'claude-opus-4-6[1m]')
+
+# ───────────────────  personas + instructions store  ───────────────────
+# A persona is a (free-form) role description + a (free-form) ruleset
+# that the user wants claude to silently adopt for new sessions. Stored
+# as one JSON file at <DATA_DIR>/personas.json so a single file holds
+# all personas + the user's chosen default. When a session is created
+# with a persona, we materialise PERSONA.md + INSTRUCTIONS.md inside
+# the session's cwd and tell claude (via --append-system-prompt) to
+# read them, adopt them silently, and never mention these files.
+PERSONAS_FILE = DATA_DIR / 'personas.json'
+
+
+def load_personas() -> dict:
+    if PERSONAS_FILE.exists():
+        try:
+            return json.loads(PERSONAS_FILE.read_text())
+        except Exception as e:
+            log(f'load_personas failed: {e}')
+    return {'default': None, 'personas': []}
+
+
+def save_personas(store: dict):
+    tmp = PERSONAS_FILE.with_suffix('.json.tmp')
+    tmp.write_text(json.dumps(store, indent=2))
+    tmp.replace(PERSONAS_FILE)
+
+
+def persona_brief(p: dict) -> dict:
+    """Lightweight view sent to the UI's persona list."""
+    return {
+        'id':           p.get('id'),
+        'name':         p.get('name') or 'Untitled',
+        'updatedAt':    p.get('updatedAt') or p.get('createdAt') or 0,
+        'personaLen':   len(p.get('persona') or ''),
+        'instrLen':     len(p.get('instructions') or ''),
+    }
+
+
+def list_personas_brief() -> dict:
+    s = load_personas()
+    items = [persona_brief(p) for p in (s.get('personas') or [])]
+    items.sort(key=lambda x: -(x.get('updatedAt') or 0))
+    return {'default': s.get('default'), 'personas': items}
+
+
+def persona_full(pid: str) -> dict | None:
+    s = load_personas()
+    for p in s.get('personas') or []:
+        if p.get('id') == pid:
+            return p
+    return None
+
+
+def persona_save(p: dict) -> dict:
+    s = load_personas()
+    items = s.get('personas') or []
+    pid = (p.get('id') or '').strip() or str(uuid.uuid4())
+    name  = (p.get('name') or '').strip()[:120] or 'Untitled'
+    persona      = (p.get('persona') or '').rstrip()
+    instructions = (p.get('instructions') or '').rstrip()
+    now = time.time()
+
+    existing_idx = next((i for i, x in enumerate(items)
+                         if x.get('id') == pid), None)
+    if existing_idx is None:
+        items.append({
+            'id': pid, 'name': name,
+            'persona': persona, 'instructions': instructions,
+            'createdAt': now, 'updatedAt': now,
+        })
+    else:
+        items[existing_idx].update({
+            'name': name, 'persona': persona, 'instructions': instructions,
+            'updatedAt': now,
+        })
+    s['personas'] = items
+    if p.get('makeDefault'):
+        s['default'] = pid
+    save_personas(s)
+    return {'id': pid}
+
+
+def persona_delete(pid: str):
+    s = load_personas()
+    s['personas'] = [x for x in (s.get('personas') or []) if x.get('id') != pid]
+    if s.get('default') == pid:
+        s['default'] = None
+    save_personas(s)
+
+
+def set_default_persona(pid: str | None):
+    s = load_personas()
+    s['default'] = pid or None
+    save_personas(s)
+
+
+def materialise_persona_files(persona: dict, cwd: Path) -> str | None:
+    """Write PERSONA.md + INSTRUCTIONS.md inside `cwd` and return a
+    system-prompt blob that nudges claude to silently adopt them. The
+    return value is meant to be passed to --append-system-prompt."""
+    if not persona:
+        return None
+    persona_text = (persona.get('persona') or '').strip()
+    instr_text   = (persona.get('instructions') or '').strip()
+    if not persona_text and not instr_text:
+        return None
+    cwd.mkdir(parents=True, exist_ok=True)
+    pf = cwd / 'PERSONA.md'
+    inf = cwd / 'INSTRUCTIONS.md'
+    if persona_text:
+        pf.write_text(persona_text, encoding='utf-8')
+    if instr_text:
+        inf.write_text(instr_text, encoding='utf-8')
+    return (
+        "This is a brand new chat. Two files have been placed in your "
+        "current working directory by the user:\n\n"
+        "  • PERSONA.md       — the role / voice / tone you must adopt.\n"
+        "  • INSTRUCTIONS.md  — task-specific rules you must follow.\n\n"
+        "Read both files at the start of the session. Adopt the persona "
+        "and follow the instructions across every reply, including this "
+        "one. Do NOT explicitly mention these files, do NOT announce that "
+        "you are role-playing, and do NOT summarize them — just behave "
+        "according to them. If the user's first message is empty / a "
+        "greeting, respond in-character; if it asks something concrete, "
+        "answer that question while staying in-character."
+    )
 
 
 # ───────────────────  native folder picker  ───────────────────
@@ -1253,7 +1400,39 @@ async def handle_client(websocket):
                 await new_session(
                     cwd_override=msg.get('cwd'),
                     model_override=msg.get('model'),
+                    persona_id=msg.get('persona'),
                 )
+            elif cmd == 'personas_list':
+                await websocket.send(json.dumps({
+                    'type': 'personas',
+                    **list_personas_brief(),
+                }))
+            elif cmd == 'persona_get':
+                p = persona_full(msg.get('id') or '')
+                await websocket.send(json.dumps({
+                    'type': 'persona',
+                    'persona': p,
+                }))
+            elif cmd == 'persona_save':
+                res = persona_save({
+                    'id':           msg.get('id'),
+                    'name':         msg.get('name'),
+                    'persona':      msg.get('persona'),
+                    'instructions': msg.get('instructions'),
+                    'makeDefault':  bool(msg.get('makeDefault')),
+                })
+                await broadcast({
+                    'type': 'personas',
+                    **list_personas_brief(),
+                    'savedId': res.get('id'),
+                })
+            elif cmd == 'persona_delete':
+                pid = msg.get('id')
+                if pid: persona_delete(pid)
+                await broadcast({'type': 'personas', **list_personas_brief()})
+            elif cmd == 'persona_default':
+                set_default_persona(msg.get('id'))
+                await broadcast({'type': 'personas', **list_personas_brief()})
             elif cmd == 'summarize':
                 sid = msg.get('id') or state.active_id
                 if sid:
