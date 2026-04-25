@@ -1962,27 +1962,33 @@
   }
 
   // ─── streaming ───
-  // Two-layer rendering for smooth streaming:
   //
-  //   FAST PATH — rAF-driven text append.  Each new token gets dropped
-  //   into a plain <span class=stream-text> trailer via textContent.
-  //   No markdown parse, no innerHTML rebuild, so the DOM doesn't tear
-  //   down on every token. Browser perceives this as a single text-node
-  //   update — basically free.
+  // Tokens come off the wire one or two characters at a time, which
+  // looks twitchy if we paint each one. Better: hold each delta until
+  // we hit a NATURAL BOUNDARY (a newline) OR a fallback timeout
+  // expires, then render whatever's accumulated as a single chunk.
+  // The eye reads it as "one short line at a time" — much less jittery
+  // than letter-by-letter.
+  //
+  // Two layers:
+  //
+  //   FAST PATH — text-only chunk flush. The pending bytes since the
+  //   last md() render get dropped into a <span class=stream-text>
+  //   trailer via textContent. Triggered by either:
+  //     (a) the latest delta contained a newline (paragraph break,
+  //         list-item break, fenced code boundary, …), or
+  //     (b) STREAM_CHUNK_MS has passed since the last flush.
   //
   //   SLOW PATH — every MD_REPARSE_MS the bubble's whole HTML is
-  //   replaced with `md(raw)`. This is what gives us proper formatting
-  //   (lists, code blocks, tables, headers). Done at ~3 fps so the
-  //   periodic teardown is visually subtle.
+  //   replaced with `md(raw)`, properly formatting lists / code /
+  //   tables. Slower cadence (~3 fps) so the periodic DOM rebuild
+  //   stays visually invisible.
   //
-  //   On endStream we do one final md() parse + drop the cursor.
-  //
-  // This was the missing piece — previously every token triggered a
-  // full marked.js parse + DOM rebuild, which got progressively heavier
-  // as the message grew.
-  const MD_REPARSE_MS = 320;
+  //   On endStream a final md() parse runs + the cursor is removed.
+  const STREAM_CHUNK_MS = 120;   // max ms between text chunk flushes
+  const MD_REPARSE_MS   = 360;   // markdown re-parse cadence (~3 fps)
   let _mdReparseTimer = null;
-  let _mdSnapshot = '';     // raw text at the last full md() render
+  let _mdSnapshot     = '';      // raw text at the last full md() render
 
   function ensureStreamTrailer(){
     if (!streamingBubble) return null;
@@ -2002,7 +2008,7 @@
     const raw = streamingBubble.dataset.raw || '';
     const trailer = ensureStreamTrailer();
     if (!trailer) return;
-    // Only show the bytes appended since the last full md() render —
+    // Only show bytes appended since the last full md() render —
     // anything before _mdSnapshot is already laid out as proper HTML.
     const tail = raw.slice(_mdSnapshot.length);
     if (trailer.textContent !== tail) trailer.textContent = tail;
@@ -2050,9 +2056,15 @@
   function appendDelta(id, text){
     if (streamingId !== id || !streamingBubble) startStream(id);
     streamingBubble.dataset.raw = (streamingBubble.dataset.raw || '') + text;
-    // FAST PATH: typewriter-style text append on every animation frame.
-    if (!streamFlushTimer){
-      streamFlushTimer = requestAnimationFrame(flushStreamBuffer);
+    // FAST PATH: flush on a natural boundary (newline) for instant
+    // chunked reveal, otherwise fall back to a STREAM_CHUNK_MS timer
+    // so unbounded prose still appears within a perceptual beat.
+    const hasBoundary = text.indexOf('\n') !== -1;
+    if (hasBoundary){
+      if (streamFlushTimer){ clearTimeout(streamFlushTimer); streamFlushTimer = null; }
+      flushStreamBuffer();
+    } else if (!streamFlushTimer){
+      streamFlushTimer = setTimeout(flushStreamBuffer, STREAM_CHUNK_MS);
     }
     // SLOW PATH: full markdown re-render every MD_REPARSE_MS so lists /
     // code blocks / tables format up. Cheap visually because the
@@ -2066,7 +2078,7 @@
     // Flush any pending text first so the final render is complete + the
     // cursor goes away cleanly.
     if (streamFlushTimer){
-      cancelAnimationFrame(streamFlushTimer);
+      clearTimeout(streamFlushTimer);
       streamFlushTimer = null;
     }
     if (_mdReparseTimer){
