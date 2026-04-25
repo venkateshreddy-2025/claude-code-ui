@@ -176,6 +176,32 @@
   .session-item button.dots:hover{background:rgba(255,255,255,.08);color:var(--fg)}
   .session-item button.dots.starred{color:var(--accent)}
 
+  /* Parallel-streaming indicators on the sidebar.
+     - .live: a worker is actively streaming for this chat (visible
+       always, even when active, so the user knows claude is still
+       responding even if they switched away).
+     - .unread: chat has new content the user hasn't focused yet.
+       A small accent-coloured dot in the title row. */
+  .session-item.live  .title-block::after,
+  .session-item.unread .title-block::after{
+    content:"";display:inline-block;width:6px;height:6px;border-radius:50%;
+    background:var(--accent);margin-left:6px;vertical-align:middle;
+    box-shadow:0 0 0 0 var(--accent);
+  }
+  .session-item.live  .title-block::after{
+    animation:cc-live-pulse 1.4s ease-in-out infinite;
+  }
+  /* When the chat is BOTH live and active, the dot is just a steady
+     accent dot — no pulsing ring (the chat is in front of the user). */
+  .session-item.active.live .title-block::after{animation:none}
+  @keyframes cc-live-pulse{
+    0%,100%{box-shadow:0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent);}
+    50%   {box-shadow:0 0 0 5px color-mix(in srgb, var(--accent) 0%, transparent);}
+  }
+  /* Unread = brighter title text so the chat row pulls focus. */
+  .session-item.unread .title{color:var(--fg);font-weight:500}
+  .session-item.unread:not(.active){background:rgba(255,255,255,.025)}
+
   /* Floating popmenu for session-item right-side actions */
   #popmenu{position:fixed;z-index:60;min-width:160px;background:var(--bg-2);
     border:1px solid var(--border);border-radius:10px;padding:6px;
@@ -1338,20 +1364,49 @@
   // ───── state ─────
   let ws = null;
   let online = false;
-  let busy = false;
   let activeId = null;
   let sessions = [];           // [{id,title,createdAt,lastActiveAt}]
-  let messages = [];
-  let pid = null;
   let cwd = '~';
   let reconnectAttempts = 0;
-  let streamingId = null;      // server-side assistant message id
+  let streamingId = null;      // server-side assistant message id (DOM-only — for the focused chat)
   let streamingBubble = null;
   let turnHadAssistant = false; // tracks whether the in-flight turn produced any text
   let lastSentText = '';        // for slash-command system-note hint
   let streamFlushTimer = null;  // throttle handle for markdown re-rendering
   let userAtBottom = true;      // is the scroll position pinned to the bottom?
   const stagedFiles = new Map(); // localId -> { fileId?, name, mimeType, size, previewUrl, content?, status }
+
+  // Per-session client state. Each chat keeps its OWN messages buffer,
+  // its busy flag, and a `current` in-progress assistant message
+  // (everything streamed since assistant_start). This is what makes
+  // the UI hold all chats live in parallel — the DOM only ever shows
+  // the focused chat, but every chat's bytes keep accumulating in
+  // memory regardless of focus.
+  //
+  //   chats[sid] = {
+  //     messages: [...],
+  //     busy: bool,
+  //     current: {id, text} | null,
+  //     unread: bool,
+  //     turnHadAssistant: bool,
+  //   }
+  const chats = new Map();
+  function getChat(sid){
+    if (!sid) return null;
+    let c = chats.get(sid);
+    if (!c){
+      c = {messages: [], busy: false, current: null, unread: false, turnHadAssistant: false};
+      chats.set(sid, c);
+    }
+    return c;
+  }
+  function activeChat(){ return activeId ? getChat(activeId) : null; }
+  // Compatibility shims for code that still reads/writes `messages` /
+  // `busy` directly. They route to the focused chat's state.
+  function getMessages(){ const c = activeChat(); return c ? c.messages : []; }
+  function isBusy(){ const c = activeChat(); return !!(c && c.busy); }
+  // pid is per-worker on the server now — we don't surface it in the UI.
+  let pid = null;
 
   // ───── helpers ─────
   function escapeHTML(s){return s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
@@ -1602,8 +1657,14 @@
   const TRASH_ICON   = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
 
   function buildSessionItem(s){
+    const c = chats.get(s.id);
+    const isUnread = !!(c && c.unread);
+    const isLive   = !!(c && (c.busy || c.current));
     const item = document.createElement('div');
-    item.className = 'session-item' + (s.id === activeId ? ' active' : '');
+    item.className = 'session-item'
+      + (s.id === activeId ? ' active' : '')
+      + (isUnread          ? ' unread' : '')
+      + (isLive            ? ' live'   : '');
     item.dataset.id = s.id;
 
     // Title is an inline-editable input (display-only until focused).
@@ -1954,11 +2015,23 @@
 
   function renderAllMessages(){
     clearMessages();
-    if (!messages.length){
+    const c = activeChat();
+    const msgs = c ? c.messages : [];
+    if (!msgs.length){
       emptyPane();
       return;
     }
-    for (const m of messages) renderMessage(m);
+    for (const m of msgs) renderMessage(m);
+    // If the focused chat has an in-progress assistant stream, paint it
+    // immediately from our buffered text so the user sees the current
+    // state when they switch back to a chat that's still streaming.
+    if (c && c.current && c.current.id){
+      startStream(c.current.id);
+      if (c.current.text) appendDelta(c.current.id, c.current.text);
+    } else if (c && c.busy){
+      // Worker is busy but hasn't emitted any text yet — show dots.
+      showTyping(true);
+    }
   }
 
   // ─── streaming ───
@@ -2093,7 +2166,7 @@
       // running tools between text blocks), keep a blinking cursor at
       // the end so the typewriter effect persists. The cursor goes away
       // for real on `turn_done` via finishStreamingCursors().
-      const stillThinking = busy;
+      const stillThinking = isBusy();
       streamingBubble.innerHTML = md(raw)
         + (stillThinking ? '<span class="stream-cursor pending"></span>' : '');
       const wrap = streamingBubble.closest('.msg');
@@ -2186,36 +2259,71 @@
 
   function setOnline(on){
     online = on;
-    setStatus(busy ? 'thinking…' : (on ? 'online' : 'disconnected'),
-              busy ? 'busy' : (on ? 'live' : 'warn'));
+    const b = isBusy();
+    setStatus(b ? 'thinking…' : (on ? 'online' : 'disconnected'),
+              b ? 'busy' : (on ? 'live' : 'warn'));
     autosize();
   }
 
+  // Mark a non-active session as having new content. Idempotent — the
+  // unread dot is binary (something happened / nothing happened), so we
+  // don't over-render the sidebar on every delta.
+  function markUnread(sid){
+    if (!sid || sid === activeId) return;
+    const c = getChat(sid); if (!c) return;
+    if (!c.unread){
+      c.unread = true;
+      renderSessions();
+    }
+  }
+
   function handleServerMessage(m){
+    // Most stream events carry a sessionId so we can route them to the
+    // right per-session buffer. `state` and `sessions` are global UI
+    // events without a per-session tag.
+    const sid = m.sessionId || null;
+    const focused = sid && sid === activeId;
     switch (m.type){
       case 'state': {
         sessions = m.sessions || [];
-        messages = m.messages || [];
-        pid = m.pid;
-        busy = !!m.busy;
         cwd  = m.cwd || cwd;
+        const newActive = m.activeId;
+        const c = getChat(newActive) || {messages: [], busy: false, current: null, unread: false, turnHadAssistant: false};
+        // Server is authoritative for the active chat's persisted log.
+        c.messages = m.messages || [];
+        // Sync each running worker's busy + current into our per-chat
+        // buffers so background streams resume cleanly when we switch.
+        const workers = m.workers || {};
+        for (const [wsid, w] of Object.entries(workers)){
+          const wc = getChat(wsid);
+          wc.busy = !!w.busy;
+          if (w.current && w.current.id){
+            // Server has an in-progress text buffer for this worker —
+            // adopt it as ours so a switch shows where the stream was.
+            if (!wc.current || wc.current.id !== w.current.id){
+              wc.current = {id: w.current.id, text: w.current.text || ''};
+            } else if ((w.current.text || '').length > (wc.current.text || '').length){
+              wc.current.text = w.current.text;
+            }
+          } else {
+            wc.current = null;
+          }
+        }
         showSpawning(false);
 
-        // Display sidebar cwd label using session-specific cwd if available
-        const sessForCwd = sessions.find(s => s.id === m.activeId);
+        const sessForCwd = sessions.find(s => s.id === newActive);
         const showCwd = (sessForCwd && sessForCwd.cwd) || cwd;
         cwdLabel.textContent = showCwd.replace(/^\/Users\/[^/]+/, '~') || '~';
         cwdLabel.title = 'Working directory: ' + showCwd;
-        setActive(m.activeId);
-        renderAllMessages();
-        showTyping(false);
-        if (m.current && m.current.text){
-          startStream(m.current.id);
-          appendDelta(m.current.id, m.current.text);
-        } else if (busy){
-          // We reconnected mid-turn but haven't seen any deltas yet — show dots
-          showTyping(true);
+        // Switching focus → clear the unread indicator for the chat we
+        // just brought to the front.
+        if (newActive){
+          const ac = getChat(newActive);
+          if (ac && ac.unread){ ac.unread = false; }
         }
+        setActive(newActive);
+        renderAllMessages();         // also restores in-progress stream
+        showTyping(false);
         setOnline(true);
         hideBanner();
         focusComposer();
@@ -2225,58 +2333,117 @@
       case 'user': {
         const msg = m.msg;
         if (!msg) break;
-        // Already saw the server-canonical version
-        if (msg.id && messagesEl.querySelector('.msg.user[data-id="'+msg.id+'"]')) break;
-        // Reconcile against any optimistic 'pending-…' placeholder with same text.
-        // Server rewrites caption-less attachment uploads (similar to lite UI),
-        // so match on raw text we stored on dataset.text.
-        const txt = (msg.text || '').trim();
-        const ph = [...messagesEl.querySelectorAll('.msg.user[data-id^="pending-"]')]
-          .find(el => (el.dataset.text || '').trim() === txt);
-        if (ph) ph.remove();
-        messages.push(msg);
-        renderMessage(msg);
+        // Persist the user message on the target session's buffer
+        // regardless of which chat is focused.
+        if (sid){
+          const c = getChat(sid);
+          if (msg.id && !c.messages.some(x => x.id === msg.id)){
+            c.messages.push(msg);
+          } else if (!msg.id){
+            c.messages.push(msg);
+          }
+        }
+        if (focused){
+          // Already saw the server-canonical version in the DOM
+          if (msg.id && messagesEl.querySelector('.msg.user[data-id="'+msg.id+'"]')) break;
+          const txt = (msg.text || '').trim();
+          const ph = [...messagesEl.querySelectorAll('.msg.user[data-id^="pending-"]')]
+            .find(el => (el.dataset.text || '').trim() === txt);
+          if (ph) ph.remove();
+          renderMessage(msg);
+        } else {
+          markUnread(sid);
+        }
         break;
       }
-      case 'assistant_start':
-        turnHadAssistant = true;
-        showTyping(false);            // first text content_block → swap dots for streaming bubble
-        startStream(m.id);
-        busy = true; setStatus('thinking…','busy');
-        break;
-      case 'assistant_delta': appendDelta(m.id, m.text||''); break;
-      case 'assistant_end':   endStream(m.id); break;
-      case 'turn_done':
-        endStream();
-        showTyping(false);
-        busy = false;
-        finishStreamingCursors();
-        if (m.sessions) { sessions = m.sessions; renderSessions(); refreshHeaderTitle(); }
-        // If the turn produced no text response and the user's message was
-        // a slash command, claude likely handled it silently (e.g., /model
-        // changes the model with no chat output). Surface a small hint so
-        // the UI doesn't look stuck.
-        if (!turnHadAssistant && lastSentText.startsWith('/')){
-          const note = document.createElement('div');
-          note.className = 'sys-note';
-          note.innerHTML = '<span class="ico">⚙︎</span><span>Slash command handled silently — no text response. Type another message to continue.</span>';
-          messagesEl.appendChild(note);
-          requestAnimationFrame(()=>{ $('scrollarea').scrollTop = 1e9; });
+      case 'assistant_start': {
+        if (!sid) break;
+        const c = getChat(sid);
+        c.busy = true;
+        c.turnHadAssistant = true;
+        c.current = {id: m.id, text: ''};
+        if (focused){
+          turnHadAssistant = true;
+          showTyping(false);
+          startStream(m.id);
+          setStatus('thinking…','busy');
+        } else {
+          markUnread(sid);
         }
-        turnHadAssistant = false;
-        lastSentText = '';
-        setOnline(true);
-        focusComposer();
         break;
-      case 'session_ended':
-        endStream();
-        showTyping(false);
-        showSpawning(false);
-        pid = null; busy = false;
-        finishStreamingCursors();
-        setOnline(true);
-        focusComposer();
+      }
+      case 'assistant_delta': {
+        if (!sid) break;
+        const c = getChat(sid);
+        if (!c.current || c.current.id !== m.id){
+          c.current = {id: m.id, text: ''};
+        }
+        c.current.text += (m.text || '');
+        if (focused){
+          appendDelta(m.id, m.text || '');
+        } else {
+          markUnread(sid);
+        }
         break;
+      }
+      case 'assistant_end': {
+        if (!sid) break;
+        const c = getChat(sid);
+        if (c.current && c.current.text){
+          // Persist as a finalised message so a switch later shows it.
+          if (!c.messages.some(x => x.id === m.id)){
+            c.messages.push({role:'assistant', text: c.current.text,
+                             id: m.id, ts: Date.now()/1000});
+          }
+        }
+        c.current = null;
+        if (focused){
+          endStream(m.id);
+        }
+        break;
+      }
+      case 'turn_done': {
+        if (sid){
+          const c = getChat(sid);
+          c.busy = false;
+          c.current = null;
+        }
+        if (m.sessions) { sessions = m.sessions; renderSessions(); refreshHeaderTitle(); }
+        if (focused || !sid){
+          endStream();
+          showTyping(false);
+          finishStreamingCursors();
+          if (!turnHadAssistant && lastSentText.startsWith('/')){
+            const note = document.createElement('div');
+            note.className = 'sys-note';
+            note.innerHTML = '<span class="ico">⚙︎</span><span>Slash command handled silently — no text response. Type another message to continue.</span>';
+            messagesEl.appendChild(note);
+            requestAnimationFrame(()=>{ $('scrollarea').scrollTop = 1e9; });
+          }
+          turnHadAssistant = false;
+          lastSentText = '';
+          setOnline(true);
+          focusComposer();
+        }
+        break;
+      }
+      case 'session_ended': {
+        if (sid){
+          const c = getChat(sid);
+          c.busy = false;
+          c.current = null;
+        }
+        if (focused || !sid){
+          endStream();
+          showTyping(false);
+          showSpawning(false);
+          pid = null;
+          finishStreamingCursors();
+          setOnline(true);
+          focusComposer();
+        }
+        break;
+      }
       case 'upload_ok': {
         for (const [localId, e] of stagedFiles){
           if (e.status === 'uploading' && e.name === m.name && e.size === m.size){
@@ -2292,7 +2459,11 @@
       }
       case 'search_results': onSearchResults(m); break;
       case 'search_detail':  onSearchDetail(m);  break;
-      case 'spawning': showSpawning(true, m.title || 'starting…'); break;
+      case 'spawning':
+        // Only show the "starting…" overlay if this is the chat we're
+        // focused on. Background spawns happen invisibly.
+        if (!sid || focused) showSpawning(true, m.title || 'starting…');
+        break;
       case 'summarizing':
         // Server confirms it's started the summarize subprocess. We
         // already toggled the UI optimistically when the user clicked
@@ -2485,15 +2656,21 @@
       name: e.name, mimeType: e.mimeType, size: e.size,
       previewUrl: e.previewUrl,   // optimistic only — server doesn't read this
     }));
-    if (!send({type:'send', text, attachments})) return;
+    // Send to the focused chat — server defaults to active_id when no
+    // id is provided, but we pass it explicitly for clarity.
+    if (!send({type:'send', id: activeId, text, attachments})) return;
     lastSentText = text;
     turnHadAssistant = false;
+    if (activeId){
+      const c = getChat(activeId);
+      c.busy = true;
+      c.turnHadAssistant = false;
+    }
     input.value = ''; autosize();
     // Show the typing indicator immediately — the empty gap between submit
     // and the first stream token (claude warming up, tool call, etc.) is the
     // most confusing part of the UX. Hide it as soon as deltas start.
     showTyping(true);
-    busy = true;
     setStatus('thinking…', 'busy');
 
     // Drain ready chips (not uploading ones — those finish later)

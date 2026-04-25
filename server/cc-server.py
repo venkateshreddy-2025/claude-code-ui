@@ -128,17 +128,61 @@ MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB after base64 decode
 IMAGE_MIMES = {'image/png', 'image/jpeg', 'image/gif', 'image/webp'}
 
 # ───────────────────  state  ───────────────────
+# Parallel-workers model: each session that the user has touched gets
+# its own `Worker` (subprocess + reader task + busy/current state).
+# Switching sessions in the UI just flips `state.active_id`; the
+# workers keep running in the background so streams from non-focused
+# chats finish in parallel and surface as "unread" in the sidebar.
+#
+# A worker is created lazily — first time the user sends a message to
+# a session we don't have a worker for, we spawn one. Workers can be
+# explicitly stopped (delete session, /stop) but switching never kills
+# them.
+class Worker:
+    def __init__(self, sid: str):
+        self.sid = sid
+        self.proc: asyncio.subprocess.Process | None = None
+        self.pid: int | None = None
+        self.busy: bool = False
+        self.current = None              # in-progress assistant message
+        self.reader_task: asyncio.Task | None = None
+        # Resilience: if claude keeps crashing on `--resume <sid>` (the
+        # session memory is corrupt or got out of sync), we count fails
+        # in a rolling window and fall back to a fresh spawn that
+        # rebuilds context from our JSON via --append-system-prompt.
+        self.recent_failures: list[float] = []
+        self.fallback_armed: bool = False  # True once we've decided to
+                                            # stop using --resume for this sid
+
+
 class State:
     def __init__(self):
         self.active_id: str | None = None
-        self.pid: int | None = None
-        self.proc: asyncio.subprocess.Process | None = None
-        self.busy: bool = False
-        self.current = None        # in-progress assistant message
         self.clients: set = set()
-        self.reader_task: asyncio.Task | None = None
+        self.workers: dict[str, Worker] = {}
+
+    def worker_for(self, sid: str) -> Worker:
+        w = self.workers.get(sid)
+        if w is None:
+            w = Worker(sid)
+            self.workers[sid] = w
+        return w
+
 
 state = State()
+
+
+def workers_summary() -> dict:
+    """Per-session live worker info for the UI's sidebar (busy badges,
+    in-progress streams, etc.)."""
+    out = {}
+    for sid, w in state.workers.items():
+        out[sid] = {
+            'pid':     w.pid,
+            'busy':    w.busy,
+            'current': w.current,
+        }
+    return out
 
 
 def log(*a):
@@ -237,6 +281,8 @@ def set_active(sid: str | None):
 
 # ───────────────────  current session  ───────────────────
 def current_session() -> dict | None:
+    """The session currently focused in the UI. Doesn't reflect which
+    workers are running — those are tracked on `state.workers`."""
     return load_session(state.active_id) if state.active_id else None
 
 
@@ -255,8 +301,11 @@ def derive_title_from_message(text: str) -> str:
     return title or 'New chat'
 
 
-def append_message(msg: dict):
-    sess = current_session()
+def append_message(sid: str, msg: dict):
+    """Append a message to session `sid`'s persisted JSON. The sid is
+    explicit (not implicit on state.active_id) so background workers
+    for non-focused sessions still write to the right file."""
+    sess = load_session(sid)
     if sess is None:
         return
     sess.setdefault('messages', []).append(msg)
@@ -297,6 +346,9 @@ async def broadcast(msg: dict):
 
 
 def state_snapshot() -> dict:
+    """The active session's full message log + a per-worker map of
+    {pid, busy, current}. The UI uses `workers` to drive the sidebar's
+    busy badges, in-progress streams, and unread counters."""
     sess = current_session()
     msgs = (sess or {}).get('messages', [])
     return {
@@ -304,57 +356,91 @@ def state_snapshot() -> dict:
         'activeId': state.active_id,
         'sessions': list_sessions_brief(),
         'messages': msgs,
-        'pid': state.pid,
-        'busy': state.busy,
-        'current': state.current,
+        'workers': workers_summary(),
         'cwd': (sess or {}).get('cwd') or DEFAULT_CWD,
     }
 
 
-# ───────────────────  claude subprocess  ───────────────────
-async def stop_subprocess(broadcast_end: bool = True):
-    if state.proc is None:
+# ───────────────────  parallel claude workers  ───────────────────
+# One Worker per session that's currently active in the background.
+# Workers are independent — one finishing doesn't affect another, and
+# switching the UI focus doesn't disturb any of them.
+RECENT_FAIL_WINDOW_S = 30      # rolling window for crash detection
+RECENT_FAIL_THRESHOLD = 2      # this many crashes within the window
+                                # → arm the resume-fallback for this sid
+
+
+async def stop_worker(sid: str, broadcast_end: bool = True):
+    """Terminate the worker subprocess for `sid`, if any. Keeps the
+    Worker entry in `state.workers` so future sends lazy-respawn cleanly
+    (its `fallback_armed` + `recent_failures` state survives)."""
+    w = state.workers.get(sid)
+    if w is None or w.proc is None:
         return
-    log(f'stopping claude pid={state.pid}')
+    log(f'stopping claude sid={sid[:8]} pid={w.pid}')
     try:
-        state.proc.terminate()
+        w.proc.terminate()
         try:
-            await asyncio.wait_for(state.proc.wait(), 5)
+            await asyncio.wait_for(w.proc.wait(), 5)
         except asyncio.TimeoutError:
-            state.proc.kill()
+            w.proc.kill()
     except ProcessLookupError:
         pass
-    state.proc = None
-    state.pid = None
-    state.busy = False
-    state.current = None
-    if state.reader_task:
-        state.reader_task.cancel()
-        state.reader_task = None
+    w.proc = None
+    w.pid = None
+    w.busy = False
+    w.current = None
+    if w.reader_task:
+        w.reader_task.cancel()
+        w.reader_task = None
     if broadcast_end:
-        await broadcast({'type': 'session_ended'})
+        await broadcast({'type': 'session_ended', 'sessionId': sid})
 
 
-async def start_subprocess(resume_id: str | None = None, cwd: str | None = None,
-                            system_prompt: str | None = None):
-    """Start claude for the current active session. If resume_id is set,
-    --resume that session id so prior turns are reloaded. cwd defaults to
-    the session's stored working directory. system_prompt, if provided,
-    is appended via --append-system-prompt (used by forked sessions)."""
-    if state.active_id is None:
-        log('start_subprocess: no active session')
-        return
-    await stop_subprocess(broadcast_end=False)
+def _arm_fallback_if_unstable(w: Worker):
+    """Track recent crashes; if we hit RECENT_FAIL_THRESHOLD inside
+    RECENT_FAIL_WINDOW_S, switch to the safer spawn mode (no --resume,
+    rebuild context from JSON via --append-system-prompt instead)."""
+    now = time.time()
+    cutoff = now - RECENT_FAIL_WINDOW_S
+    w.recent_failures = [t for t in w.recent_failures if t >= cutoff]
+    w.recent_failures.append(now)
+    if len(w.recent_failures) >= RECENT_FAIL_THRESHOLD and not w.fallback_armed:
+        w.fallback_armed = True
+        log(f'  ⚠ session {w.sid[:8]} unstable on --resume — '
+            f'falling back to fresh spawn + system-prompt context')
 
-    if cwd is None:
-        sess = current_session()
-        cwd = (sess or {}).get('cwd') or DEFAULT_CWD
-    if system_prompt is None:
-        sess = current_session()
-        if sess and sess.get('systemPrompt'):
-            system_prompt = sess['systemPrompt']
 
-    sess_model = (current_session() or {}).get('model') or MODEL_DEFAULT
+async def start_worker(sid: str, *, force_fresh: bool = False) -> Worker | None:
+    """Spawn (or respawn) the claude subprocess for session `sid`. If a
+    worker already exists for this sid AND its proc is alive, it's left
+    alone — sends from other tabs land on it harmlessly.
+
+    `force_fresh=True` skips the --resume path even if the session id
+    looks healthy. Useful for the resilience fallback after repeated
+    crashes."""
+    sess = load_session(sid)
+    if sess is None:
+        log(f'start_worker: unknown session {sid}')
+        return None
+
+    w = state.worker_for(sid)
+    # Already running? Nothing to do.
+    if w.proc is not None and w.proc.returncode is None:
+        return w
+
+    cwd = sess.get('cwd') or DEFAULT_CWD
+    sess_model = sess.get('model') or MODEL_DEFAULT
+
+    # If the session has a stored systemPrompt (forked / persona-pinned),
+    # always use it. Otherwise build a resume context blob from recent
+    # messages — this is our reboot/crash safety net.
+    system_prompt = sess.get('systemPrompt') or build_resume_system_prompt(sess)
+
+    # Decide whether to use --resume <sid> (fast path: claude has its
+    # own session memory) or fresh spawn (slow path: we rebuild context
+    # via the system-prompt blob).
+    use_resume = (not force_fresh) and (not w.fallback_armed)
 
     args = [
         CLAUDE_BIN, '-p',
@@ -367,25 +453,34 @@ async def start_subprocess(resume_id: str | None = None, cwd: str | None = None,
     ]
     if system_prompt:
         args += ['--append-system-prompt', system_prompt]
-    if resume_id:
-        args += ['--resume', resume_id]
+    if use_resume:
+        args += ['--resume', sid]
     else:
-        args += ['--session-id', state.active_id]
+        args += ['--session-id', sid]
 
-    log(f'spawning claude (active={state.active_id} resume={resume_id} cwd={cwd})')
-    state.proc = await asyncio.create_subprocess_exec(
-        *args,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL,
-        env=scrubbed_env(),
-        cwd=cwd,
-    )
-    state.pid = state.proc.pid
-    state.busy = False
-    state.current = None
-    log(f'  → pid {state.pid}')
-    state.reader_task = asyncio.create_task(claude_reader())
+    log(f'spawning claude sid={sid[:8]} resume={use_resume} cwd={cwd} '
+        f'(fallback_armed={w.fallback_armed})')
+    try:
+        w.proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=scrubbed_env(),
+            cwd=cwd,
+        )
+    except Exception as e:
+        log(f'  ✗ spawn failed: {e}')
+        w.proc = None; w.pid = None
+        await broadcast({'type': 'session_ended', 'sessionId': sid,
+                          'error': str(e)})
+        return None
+    w.pid = w.proc.pid
+    w.busy = False
+    w.current = None
+    log(f'  → pid {w.pid}')
+    w.reader_task = asyncio.create_task(claude_reader(w))
+    return w
 
 
 async def new_session(cwd_override: str | None = None,
@@ -449,8 +544,8 @@ async def new_session(cwd_override: str | None = None,
     set_active(sid)
     await broadcast({'type': 'spawning',
                      'sessionId': sid, 'title': 'New chat'})
-    await start_subprocess(resume_id=None, cwd=str(cwd),
-                            system_prompt=sys_prompt)
+    # New session — first spawn never uses --resume (no memory yet).
+    await start_worker(sid, force_fresh=True)
     await broadcast(state_snapshot())
 
 
@@ -474,30 +569,28 @@ def build_resume_system_prompt(sess: dict, last_n: int = 200) -> str | None:
 
 
 async def switch_session(sid: str):
+    """Switch the UI's focused session. PARALLEL-WORKERS rule: this
+    never kills any running worker. Streams in other sessions keep
+    going in the background."""
     sess = load_session(sid)
     if not sess:
         log(f'switch: unknown session {sid}')
         return
     state.active_id = sid
     set_active(sid)
-    # Tell every connected client we're spinning up so the UI can show a
-    # loader. The state snapshot that lands a beat later carries the new
-    # PID and clears the loader.
-    await broadcast({'type': 'spawning',
-                     'sessionId': sid,
-                     'title': sess.get('title') or 'New chat'})
-    # Always feed the JSON history along with --resume. --resume uses
-    # claude's own session memory (fast path); the JSON dump is a
-    # safety net for when that memory is gone (e.g. after reboot).
-    sys_prompt = sess.get('systemPrompt') or build_resume_system_prompt(sess)
-    await start_subprocess(resume_id=sid, cwd=sess.get('cwd'),
-                           system_prompt=sys_prompt)
+    # No spawn here — worker is lazy-created on first send to this sid.
+    # If a worker is already running for this sid (because the user was
+    # streaming to it earlier), the state snapshot carries its current
+    # in-progress message so the UI can pick up exactly where it left.
     await broadcast(state_snapshot())
 
 
 async def delete_session(sid: str):
+    # Stop the worker if one is running for this sid.
+    await stop_worker(sid, broadcast_end=False)
+    state.workers.pop(sid, None)
+
     if state.active_id == sid:
-        await stop_subprocess(broadcast_end=False)
         state.active_id = None
         set_active(None)
     f = session_file(sid)
@@ -508,6 +601,8 @@ async def delete_session(sid: str):
     remove_index_entry(sid)
     items = list_sessions_brief()
     if items:
+        # Just switch focus — do NOT spawn the new session's worker
+        # automatically (that's lazy on first send).
         await switch_session(items[0]['id'])
     else:
         await broadcast(state_snapshot())
@@ -579,7 +674,9 @@ async def fork_session(source_id: str, last_n: int = 200):
 
     state.active_id = sid
     set_active(sid)
-    await start_subprocess(resume_id=None, cwd=str(cwd), system_prompt=sys_blob)
+    await broadcast({'type': 'spawning',
+                     'sessionId': sid, 'title': fork_title})
+    await start_worker(sid, force_fresh=True)
     await broadcast(state_snapshot())
 
 
@@ -1159,10 +1256,16 @@ def expand_match(session_id: str, msg_id: str, context_chars: int = 600) -> dict
     return None
 
 
-# ───────────────────  claude stdout reader  ───────────────────
-async def claude_reader():
-    proc = state.proc
+# ───────────────────  claude stdout reader (per-worker)  ───────────────────
+async def claude_reader(w: Worker):
+    """Pump events out of `w.proc.stdout`. Every WS event we emit gets
+    tagged with `sessionId: w.sid` so the UI can route to per-session
+    state buffers, regardless of which chat is in focus."""
+    proc = w.proc
+    sid  = w.sid
     in_text_block = False
+    short_run = (time.time(), 4.0)   # if proc dies <4s after start, count as crash
+
     try:
         while proc and proc.returncode is None:
             line = await proc.stdout.readline()
@@ -1185,11 +1288,12 @@ async def claude_reader():
                     block = ev.get('content_block', {}) or {}
                     if block.get('type') == 'text':
                         in_text_block = True
-                        if state.current is None:
-                            state.current = {'id': str(uuid.uuid4()),
-                                             'text': '', 'started_at': time.time()}
+                        if w.current is None:
+                            w.current = {'id': str(uuid.uuid4()),
+                                         'text': '', 'started_at': time.time()}
                             await broadcast({'type': 'assistant_start',
-                                             'id': state.current['id']})
+                                             'sessionId': sid,
+                                             'id': w.current['id']})
                     else:
                         in_text_block = False
                 elif ev_type == 'content_block_delta':
@@ -1197,42 +1301,51 @@ async def claude_reader():
                         delta = ev.get('delta', {}) or {}
                         if delta.get('type') == 'text_delta':
                             chunk = delta.get('text', '') or ''
-                            if chunk and state.current:
-                                state.current['text'] += chunk
+                            if chunk and w.current:
+                                w.current['text'] += chunk
                                 await broadcast({'type': 'assistant_delta',
-                                                 'id': state.current['id'],
+                                                 'sessionId': sid,
+                                                 'id': w.current['id'],
                                                  'text': chunk})
                 elif ev_type == 'content_block_stop':
                     in_text_block = False
                 elif ev_type == 'message_stop':
-                    if state.current and state.current.get('text'):
+                    if w.current and w.current.get('text'):
                         msg = {'role': 'assistant',
-                               'text': state.current['text'],
+                               'text': w.current['text'],
                                'ts': time.time(),
-                               'id': state.current['id']}
-                        append_message(msg)
+                               'id': w.current['id']}
+                        append_message(sid, msg)
                         await broadcast({'type': 'assistant_end',
-                                         'id': state.current['id']})
-                    state.current = None
+                                         'sessionId': sid,
+                                         'id': w.current['id']})
+                    w.current = None
                 continue
 
             if t == 'result':
-                state.busy = False
-                if state.current and state.current.get('text'):
+                w.busy = False
+                if w.current and w.current.get('text'):
                     msg = {'role': 'assistant',
-                           'text': state.current['text'],
+                           'text': w.current['text'],
                            'ts': time.time(),
-                           'id': state.current['id']}
-                    append_message(msg)
+                           'id': w.current['id']}
+                    append_message(sid, msg)
                     await broadcast({'type': 'assistant_end',
-                                     'id': state.current['id']})
-                state.current = None
+                                     'sessionId': sid,
+                                     'id': w.current['id']})
+                w.current = None
+                # Successful turn — clear the recent-failures counter so
+                # one bad spawn early on doesn't permanently arm the
+                # fallback for a now-healthy session.
+                w.recent_failures.clear()
                 await broadcast({'type': 'turn_done',
+                                 'sessionId': sid,
                                  'sessions': list_sessions_brief()})
                 continue
 
             if t == 'assistant':
-                if state.current is not None:
+                # Fallback path when partial events are missing
+                if w.current is not None:
                     continue
                 blocks = obj.get('message', {}).get('content', []) or []
                 full_text = ''.join(b.get('text', '') for b in blocks if b.get('type') == 'text')
@@ -1240,24 +1353,34 @@ async def claude_reader():
                     mid = str(uuid.uuid4())
                     msg = {'role': 'assistant', 'text': full_text,
                            'ts': time.time(), 'id': mid}
-                    append_message(msg)
-                    await broadcast({'type': 'assistant_start', 'id': mid})
-                    await broadcast({'type': 'assistant_delta', 'id': mid, 'text': full_text})
-                    await broadcast({'type': 'assistant_end', 'id': mid})
+                    append_message(sid, msg)
+                    await broadcast({'type': 'assistant_start', 'sessionId': sid, 'id': mid})
+                    await broadcast({'type': 'assistant_delta', 'sessionId': sid, 'id': mid, 'text': full_text})
+                    await broadcast({'type': 'assistant_end', 'sessionId': sid, 'id': mid})
 
     except asyncio.CancelledError:
         pass
     except Exception as e:
-        log('reader error:', e)
-        await broadcast({'type': 'error', 'message': f'reader: {e}'})
+        log(f'reader error sid={sid[:8]}: {e}')
+        await broadcast({'type': 'error', 'sessionId': sid,
+                         'message': f'reader: {e}'})
     finally:
-        if state.proc and state.proc.returncode is not None:
-            log(f'claude exited (code {state.proc.returncode})')
-            state.proc = None
-            state.pid = None
-            state.busy = False
-            state.current = None
-            await broadcast({'type': 'session_ended'})
+        if w.proc and w.proc.returncode is not None:
+            rc = w.proc.returncode
+            elapsed = time.time() - short_run[0]
+            log(f'claude exited sid={sid[:8]} code={rc} elapsed={elapsed:.1f}s')
+            # If claude died within a few seconds of spawning AND we
+            # were trying --resume, the session memory is probably
+            # corrupt. Arm the fallback so the next spawn skips --resume.
+            if rc != 0 and elapsed < short_run[1]:
+                _arm_fallback_if_unstable(w)
+            w.proc = None
+            w.pid = None
+            w.busy = False
+            w.current = None
+            w.reader_task = None
+            await broadcast({'type': 'session_ended', 'sessionId': sid,
+                              'exitCode': rc})
 
 
 # ───────────────────  send (with attachments)  ───────────────────
@@ -1303,12 +1426,26 @@ async def handle_upload(payload: dict) -> dict:
     }
 
 
-async def send_to_claude(text: str, attachments: list[dict]):
-    if state.active_id is None:
-        await new_session()
+async def send_to_session(sid: str, text: str, attachments: list[dict]):
+    """Send a turn to the claude worker for `sid`. If no worker is
+    running, lazy-spawn one. Persists the user message + broadcasts a
+    sessionId-tagged 'user' event regardless of UI focus."""
+    sess = load_session(sid)
+    if sess is None:
+        log(f'send: unknown session {sid}')
+        return
 
-    if state.proc is None or state.proc.returncode is not None:
-        await start_subprocess(resume_id=state.active_id)
+    # Lazy-spawn the worker if needed.
+    w = state.workers.get(sid)
+    if w is None or w.proc is None or w.proc.returncode is not None:
+        await broadcast({'type': 'spawning',
+                         'sessionId': sid,
+                         'title': sess.get('title') or 'New chat'})
+        w = await start_worker(sid)
+        if w is None:
+            await broadcast({'type': 'error', 'sessionId': sid,
+                             'message': 'failed to start claude'})
+            return
 
     msg_id = str(uuid.uuid4())
     user_msg = {
@@ -1321,9 +1458,9 @@ async def send_to_claude(text: str, attachments: list[dict]):
             for a in attachments
         ]
 
-    append_message(user_msg)
-    state.busy = True
-    await broadcast({'type': 'user', 'msg': user_msg})
+    append_message(sid, user_msg)
+    w.busy = True
+    await broadcast({'type': 'user', 'sessionId': sid, 'msg': user_msg})
 
     content = []
     if text:
@@ -1367,11 +1504,12 @@ async def send_to_claude(text: str, attachments: list[dict]):
         'message': {'role': 'user', 'content': content},
     }
     try:
-        state.proc.stdin.write((json.dumps(payload) + '\n').encode('utf-8'))
-        await state.proc.stdin.drain()
+        w.proc.stdin.write((json.dumps(payload) + '\n').encode('utf-8'))
+        await w.proc.stdin.drain()
     except Exception as e:
-        log('write error:', e)
-        await broadcast({'type': 'error', 'message': f'send failed: {e}'})
+        log(f'write error sid={sid[:8]}: {e}')
+        await broadcast({'type': 'error', 'sessionId': sid,
+                         'message': f'send failed: {e}'})
 
 
 # ───────────────────  HTTP static + uploads  ───────────────────
@@ -1482,10 +1620,14 @@ async def handle_client(websocket):
             cmd = msg.get('type')
 
             if cmd == 'send':
+                # `id` is optional — UI can target a specific session
+                # even when not focused, so background chats keep working
+                # while user is reading another one.
+                sid = msg.get('id') or state.active_id
                 text = (msg.get('text') or '').strip()
                 attachments = msg.get('attachments') or []
-                if text or attachments:
-                    await send_to_claude(text, attachments)
+                if sid and (text or attachments):
+                    await send_to_session(sid, text, attachments)
             elif cmd == 'new':
                 await new_session(
                     cwd_override=msg.get('cwd'),
@@ -1587,7 +1729,8 @@ async def handle_client(websocket):
             elif cmd == 'state':
                 await websocket.send(json.dumps(state_snapshot()))
             elif cmd == 'stop':
-                await stop_subprocess()
+                sid = msg.get('id') or state.active_id
+                if sid: await stop_worker(sid)
             else:
                 log('unknown cmd:', cmd)
 
@@ -1637,7 +1780,11 @@ async def main():
         await stop_event.wait()
 
     log('shutting down')
-    await stop_subprocess(broadcast_end=False)
+    # Stop every running worker so we exit cleanly. Iterate over a snapshot
+    # of the keys because stop_worker mutates the dict.
+    for sid in list(state.workers.keys()):
+        try: await stop_worker(sid, broadcast_end=False)
+        except Exception as e: log('shutdown stop_worker error:', sid, e)
 
 
 if __name__ == '__main__':
