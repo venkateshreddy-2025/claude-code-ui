@@ -307,7 +307,10 @@
     /* white-space inherits from .bubble */}
   @keyframes in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
   .msg.user{justify-content:flex-end}
-  .msg.bot{justify-content:flex-start;gap:10px}
+  .msg.bot{justify-content:flex-start;gap:0}
+  /* Bot avatar removed — no .ava in bot bubbles. The bubble itself is
+     the only visual element. Keeping the layout symmetric with user
+     bubbles makes the chat read like a flat dialogue. */
   .msg .ava{width:28px;height:28px;border-radius:7px;flex:0 0 28px;
     background:linear-gradient(135deg,var(--accent),var(--accent-2));
     display:grid;place-items:center;color:#fff;font-weight:600;font-size:10.5px}
@@ -881,7 +884,7 @@
           <line x1="3" y1="18" x2="21" y2="18"/>
         </svg>
       </button>
-      <div class="avatar">CC</div>
+      <!-- No "CC" avatar in the header — the chat title is enough. -->
       <div class="who">
         <div class="name" id="titleLabel">Claude Code</div>
         <div class="status">
@@ -1072,12 +1075,7 @@
     Used when you create a new session. Existing chats keep whatever model
     they were started with — switch them per-chat with <code>/model</code>.
   </p>
-  <div class="setting-row">
-    <select id="defaultModel" class="setting-select"></select>
-    <input type="text" id="defaultModelCustom" class="setting-input"
-           placeholder="…or type a model name"
-           autocomplete="off" spellcheck="false">
-  </div>
+  <select id="defaultModel" class="setting-select wide"></select>
   <p class="setting-help" id="defaultModelStatus" style="margin-top:6px"></p>
 </div>
 
@@ -1087,13 +1085,16 @@
   <button class="close" id="newSessionClose" aria-label="Close">×</button>
   <h3>New session</h3>
   <label class="setting-label" for="newSessionCwd">Working directory</label>
-  <input type="text" id="newSessionCwd" class="setting-input wide"
-         placeholder="default: ~/claude-ui/&lt;timestamp&gt;/"
-         autocomplete="off" spellcheck="false">
+  <div class="setting-row">
+    <input type="text" id="newSessionCwd" class="setting-input"
+           placeholder="default: ~/claude-ui/&lt;timestamp&gt;/"
+           autocomplete="off" spellcheck="false">
+    <button type="button" class="btn-ghost" id="newSessionBrowse"
+            title="Pick a folder">📁 Browse…</button>
+  </div>
   <p class="setting-help">
     Where claude runs (its <code>cwd</code>). Leave blank to auto-create a
-    fresh timestamped folder, or paste an absolute path to start in an
-    existing project.
+    fresh timestamped folder, or browse to an existing project.
   </p>
   <label class="setting-label" for="newSessionModel">Model</label>
   <select id="newSessionModel" class="setting-select wide"></select>
@@ -1645,10 +1646,9 @@
     if (msg.id) wrap.dataset.id = msg.id;
     wrap.dataset.text = msg.text || '';
 
-    if (msg.role !== 'user'){
-      const ava = document.createElement('div'); ava.className='ava'; ava.textContent='CC';
-      wrap.appendChild(ava);
-    }
+    // No "CC" avatar on bot bubbles — keeps the chat clean and reads like
+    // a single dialogue. Bot bubbles are still visually distinguished by
+    // their bot-specific bubble background + alignment.
 
     // Stack: bubble + (toggle) + meta + actions, all aligned to one side.
     const stack = document.createElement('div');
@@ -1729,8 +1729,7 @@
     wrap.className = 'msg bot';
     wrap.dataset.id = id;
     wrap.dataset.text = '';
-    const ava = document.createElement('div'); ava.className='ava'; ava.textContent='CC';
-    wrap.appendChild(ava);
+    // No avatar — see comment in renderMessage().
 
     const stack = document.createElement('div');
     stack.className = 'bubble-stack';
@@ -1979,6 +1978,20 @@
         showBanner('Summarize failed: ' + (m.message || 'unknown'));
         setTimeout(hideBanner, 5000);
         break;
+      case 'dir_picked': {
+        // Server's native folder dialog returned a path (or empty if
+        // the user cancelled). Restore the Browse button + paste the
+        // path into the new-session popup if the popup is open.
+        const btn = document.getElementById('newSessionBrowse');
+        if (btn){ btn.disabled = false; btn.textContent = '📁 Browse…'; }
+        const cwdInput = document.getElementById('newSessionCwd');
+        if (cwdInput && m.path) cwdInput.value = m.path;
+        if (m.error){
+          showBanner('Folder picker: ' + m.error);
+          setTimeout(hideBanner, 4000);
+        }
+        break;
+      }
       case 'error':
         showBanner('Error: ' + (m.message||'unknown'));
         setTimeout(hideBanner, 5000);
@@ -2241,16 +2254,32 @@
   });
 
   // ───── default-model picker ─────
-  // The current model list. Edit one place — also used by the
-  // new-session popup. The user can also type a custom model in the
-  // free-text input next to the dropdown for anything not on this list.
+  // Canonical Claude Code model strings — these are exactly the values
+  // accepted by the `--model` flag (or the `/model` slash command).
+  // Sourced from the official CLI reference + models overview.
+  // Aliases (`opus`, `sonnet`, `haiku`, `opusplan`) resolve to the
+  // latest of each tier on Anthropic's API.
+  // The `[1m]` suffix on Opus 4.7 / Opus 4.6 / Sonnet 4.6 unlocks the
+  // 1M context window (Max / Team / Enterprise plans).
   const KNOWN_MODELS = [
-    { id: 'claude-opus-4-6[1m]',  label: 'Opus 4.6 — 1M context' },
-    { id: 'claude-opus-4-6',      label: 'Opus 4.6' },
-    { id: 'claude-opus-4-1',      label: 'Opus 4.1' },
-    { id: 'claude-sonnet-4-5',    label: 'Sonnet 4.5' },
-    { id: 'claude-sonnet-4-1',    label: 'Sonnet 4.1' },
-    { id: 'claude-haiku-4-5',     label: 'Haiku 4.5' },
+    // ── Aliases (resolve to latest on Anthropic API) ────────
+    { id: 'opus',                   label: 'Opus  ·  alias → latest Opus' },
+    { id: 'sonnet',                 label: 'Sonnet  ·  alias → latest Sonnet' },
+    { id: 'haiku',                  label: 'Haiku  ·  alias → latest Haiku' },
+    { id: 'opusplan',               label: 'Opus + plan  ·  Opus reasons, Sonnet executes' },
+    // ── 1M-context variants ─────────────────────────────────
+    { id: 'claude-opus-4-7[1m]',    label: 'Opus 4.7  ·  1M context' },
+    { id: 'claude-opus-4-6[1m]',    label: 'Opus 4.6  ·  1M context' },
+    { id: 'claude-sonnet-4-6[1m]',  label: 'Sonnet 4.6  ·  1M context' },
+    // ── Pinned latest ───────────────────────────────────────
+    { id: 'claude-opus-4-7',        label: 'Opus 4.7' },
+    { id: 'claude-sonnet-4-6',      label: 'Sonnet 4.6' },
+    { id: 'claude-haiku-4-5',       label: 'Haiku 4.5' },
+    // ── Pinned legacy (still available) ─────────────────────
+    { id: 'claude-opus-4-6',        label: 'Opus 4.6  ·  legacy' },
+    { id: 'claude-opus-4-5',        label: 'Opus 4.5  ·  legacy' },
+    { id: 'claude-opus-4-1',        label: 'Opus 4.1  ·  legacy' },
+    { id: 'claude-sonnet-4-5',      label: 'Sonnet 4.5  ·  legacy' },
   ];
   const DEFAULT_MODEL_KEY = 'cc.defaultModel';
   function getDefaultModel(){
@@ -2270,37 +2299,19 @@
     const blank = document.createElement('option');
     blank.value = ''; blank.textContent = '— server default —';
     sel.appendChild(blank);
-    let matched = false;
     for (const m of KNOWN_MODELS){
       const o = document.createElement('option');
-      o.value = m.id; o.textContent = m.label + ' (' + m.id + ')';
-      if (current === m.id){ o.selected = true; matched = true; }
-      sel.appendChild(o);
-    }
-    if (current && !matched){
-      // Custom value the user typed earlier — preserve it as the selected option.
-      const o = document.createElement('option');
-      o.value = current; o.textContent = current + ' (custom)'; o.selected = true;
+      o.value = m.id; o.textContent = m.label;
+      if (current === m.id) o.selected = true;
       sel.appendChild(o);
     }
   }
   function initDefaultModelUI(){
     const cur = getDefaultModel();
     const sel = document.getElementById('defaultModel');
-    const inp = document.getElementById('defaultModelCustom');
     fillModelSelect(sel, cur);
-    inp.value = '';
     setDefaultModel(cur);
-    sel.addEventListener('change', () => {
-      setDefaultModel(sel.value);
-      inp.value = '';
-    });
-    inp.addEventListener('change', () => {
-      const v = inp.value.trim();
-      if (!v) return;
-      setDefaultModel(v);
-      fillModelSelect(sel, v);
-    });
+    sel.addEventListener('change', () => setDefaultModel(sel.value));
   }
 
   function openSheet(){$('sheet').hidden=false;$('sheetBackdrop').classList.add('on');}
@@ -2339,6 +2350,20 @@
     if (model) payload.model = model;
     if (send(payload)) closeNewSession();
   });
+  // Browse → server-side native folder picker (macOS Finder via osascript,
+  // Linux zenity / kdialog if available, Windows COM dialog). The picked
+  // POSIX path is broadcast back as {type:'dir_picked', path}.
+  document.getElementById('newSessionBrowse').addEventListener('click', () => {
+    const btn = document.getElementById('newSessionBrowse');
+    btn.disabled = true; btn.textContent = '📁 Opening Finder…';
+    send({ type: 'pick_dir' });
+    // Safety: re-enable in 30 s in case the user dismisses the picker
+    // and the server's response gets eaten somewhere.
+    setTimeout(() => {
+      btn.disabled = false;
+      btn.textContent = '📁 Browse…';
+    }, 30000);
+  });
   // The sidebar's "+ New session" button (#newBtn) calls openNewSession
   // directly via its existing handler — see the "// ───── new session ─────"
   // block earlier in this file.
@@ -2359,15 +2384,17 @@
     const saveBtn = document.getElementById('saveProgressBtn');
     if (saveBtn) saveBtn.disabled = summarizing;
     if (summarizing){
-      showBanner('Saving progress — summarizing with Opus 4.6 (1M)…');
+      showBanner('Saving progress…');
     } else {
       hideBanner();
     }
   }
   document.getElementById('saveProgressBtn').addEventListener('click', () => {
     if (summarizing) return;
-    if (!activeId){ showBanner('No active chat to summarize.'); setTimeout(hideBanner, 3000); return; }
-    if (!confirm('Save progress?\n\nThis spawns a separate Opus 4.6 (1M) subprocess to summarize the current chat into a Markdown file in this session\'s working directory. The chat will be disabled until the summary is ready.')) return;
+    if (!activeId){
+      showBanner('No active chat to summarize.');
+      setTimeout(hideBanner, 3000); return;
+    }
     setSummarizing(true);
     send({ type: 'summarize', id: activeId });
   });

@@ -674,6 +674,95 @@ def search_messages(query: str, role: str = 'all', path_filter: str = '',
 SUMMARY_MODEL = os.environ.get('CC_SUMMARY_MODEL', 'claude-opus-4-6[1m]')
 
 
+# ───────────────────  native folder picker  ───────────────────
+# When the user clicks "Browse…" in the new-session popup, the UI sends
+# {type:'pick_dir'}. We open the OS-native folder dialog on the server
+# (because the browser doesn't have access to absolute server-side paths)
+# and broadcast the chosen POSIX path back as {type:'dir_picked', path}.
+async def pick_dir() -> dict:
+    """Show a native folder dialog. Best-effort across macOS, Linux,
+    Windows. Returns {path} on success or {error} on failure / cancel."""
+    plat = sys.platform
+    if plat == 'darwin':
+        # AppleScript: System Events ensures the dialog comes to front
+        # even when called from a launchd daemon.
+        script = (
+            'tell application "System Events"\n'
+            '  activate\n'
+            '  try\n'
+            '    set chosenFolder to choose folder with prompt '
+            '"Choose working directory for new session"\n'
+            '    return POSIX path of chosenFolder\n'
+            '  on error number -128\n'
+            '    return "__cancelled__"\n'
+            '  end try\n'
+            'end tell\n'
+        )
+        proc = await asyncio.create_subprocess_exec(
+            'osascript', '-e', script,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+        except asyncio.TimeoutError:
+            try: proc.kill()
+            except Exception: pass
+            return {'error': 'folder picker timed out'}
+        if proc.returncode != 0:
+            err = (stderr or b'').decode('utf-8', errors='replace').strip()
+            return {'error': err or 'osascript failed'}
+        out = (stdout or b'').decode('utf-8', errors='replace').strip()
+        if not out or out == '__cancelled__':
+            return {'cancelled': True}
+        # Strip trailing slash that AppleScript appends to directory paths.
+        return {'path': out.rstrip('/')}
+    if plat.startswith('linux'):
+        for picker_args in (
+            ['zenity', '--file-selection', '--directory',
+             '--title=Choose working directory'],
+            ['kdialog', '--getexistingdirectory', os.path.expanduser('~'),
+             '--title', 'Choose working directory'],
+        ):
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *picker_args,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            except FileNotFoundError:
+                continue
+            try:
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=120)
+            except asyncio.TimeoutError:
+                try: proc.kill()
+                except Exception: pass
+                continue
+            out = (stdout or b'').decode('utf-8', errors='replace').strip()
+            if out:
+                return {'path': out}
+            return {'cancelled': True}
+        return {'error': 'install zenity or kdialog for the folder picker'}
+    if plat == 'win32':
+        ps = (
+            'Add-Type -AssemblyName System.Windows.Forms;'
+            '$f=New-Object System.Windows.Forms.FolderBrowserDialog;'
+            '$f.Description="Choose working directory";'
+            'if ($f.ShowDialog() -eq "OK") { Write-Output $f.SelectedPath }'
+        )
+        proc = await asyncio.create_subprocess_exec(
+            'powershell', '-NoProfile', '-Command', ps,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await proc.communicate()
+        out = (stdout or b'').decode('utf-8', errors='replace').strip()
+        if out:
+            return {'path': out}
+        return {'cancelled': True}
+    return {'error': f'unsupported platform: {plat}'}
+
+
 async def summarize_session(sid: str):
     """Spawn a SEPARATE claude subprocess (separate from the active
     session's claude) to generate a Markdown summary of the conversation,
@@ -1169,6 +1258,16 @@ async def handle_client(websocket):
                 sid = msg.get('id') or state.active_id
                 if sid:
                     asyncio.create_task(summarize_session(sid))
+            elif cmd == 'pick_dir':
+                # Run in a task so the WS pump isn't blocked while the
+                # native dialog is open.
+                async def _run_pick(ws=websocket):
+                    res = await pick_dir()
+                    payload = {'type': 'dir_picked'}
+                    payload.update(res)
+                    try: await ws.send(json.dumps(payload))
+                    except Exception: pass
+                asyncio.create_task(_run_pick())
             elif cmd == 'switch':
                 sid = msg.get('id')
                 if sid: await switch_session(sid)
