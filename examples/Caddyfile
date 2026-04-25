@@ -1,0 +1,72 @@
+# Example Caddyfile — only needed if you want HTTPS + basic auth + a
+# custom domain in front of cc-server.py.
+#
+# For local-only use, you don't need Caddy at all — just run
+# `python3 server/cc-server.py` and open http://localhost:8765/.
+#
+# This file shows two common setups:
+#   1. localhost:8443 with self-signed TLS + basic auth, mounted at root
+#   2. localhost:8443 mounted at /cc/ (useful when sharing the same host
+#      with other services)
+#
+# Generate the basic-auth hash with:
+#   caddy hash-password --plaintext 'YOUR_PASSWORD'
+
+# ── Setup 1: mounted at root ───────────────────────────────────────────
+# Run cc-server with CC_SERVE_STATIC=0 CC_PATH_PREFIX="" so it only
+# handles /ws — Caddy serves the UI + uploads from disk directly.
+:8443 {
+    tls internal
+
+    basic_auth /* {
+        # Replace with your bcrypt hash (see comment above).
+        you $2y$12$REPLACEMEREPLACEMEREPLACEMEREPLACEMEREPLACEMEREPLACEMEREPL
+    }
+
+    # WebSocket → cc-server.py
+    handle /ws {
+        reverse_proxy 127.0.0.1:8765
+    }
+
+    # User uploads (served from disk so they survive page reloads)
+    handle_path /uploads/* {
+        # Match CC_DATA_DIR/cc-uploads/ on the cc-server side.
+        root * /Users/YOU/.claude-code-ui/cc-uploads
+        file_server
+    }
+
+    # Static UI — point this at the cloned repo's ui/ directory
+    # (or copy the file to a stable location).
+    handle {
+        root * /Users/YOU/claude-code-ui/ui
+        try_files {path} /index.html
+        file_server
+    }
+}
+
+# ── Setup 2: mounted at /cc/ ───────────────────────────────────────────
+# Run cc-server with CC_SERVE_STATIC=0 CC_PATH_PREFIX=/cc so the upload
+# URLs it emits include the /cc prefix.
+#
+# :8443 {
+#     tls internal
+#     basic_auth /cc/* {
+#         you $2y$12$...
+#     }
+#
+#     handle /cc/ws {
+#         reverse_proxy 127.0.0.1:8765
+#     }
+#     handle_path /cc/uploads/* {
+#         root * /Users/YOU/.claude-code-ui/cc-uploads
+#         file_server
+#     }
+#     handle_path /cc/* {
+#         root * /Users/YOU/claude-code-ui/ui
+#         try_files {path} /index.html
+#         file_server
+#     }
+#     handle /cc {
+#         redir /cc/ permanent
+#     }
+# }

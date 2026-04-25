@@ -1,0 +1,1797 @@
+<!doctype html>
+<html lang="en" data-theme="amber">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0a0a0d">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Claude Code</title>
+<!-- marked.js — full Markdown renderer (CommonMark + GFM extensions: tables,
+     fenced code, strikethrough, task lists). Loaded SYNCHRONOUSLY (no defer)
+     so it's available when the inline app script below runs and renders the
+     initial chat history. ~50 KB, served from a CDN with a 1-week cache. -->
+<script src="https://cdn.jsdelivr.net/npm/marked@13.0.3/marked.min.js"></script>
+<style>
+  /* ───── reset + tokens ───── */
+  *,*::before,*::after{box-sizing:border-box}
+  html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#0a0a0d;color:#e7e7ea;
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Inter",system-ui,sans-serif;
+    font-size:16px;line-height:1.45;-webkit-font-smoothing:antialiased;
+    -webkit-tap-highlight-color:transparent}
+  :root{
+    --bg:#0a0a0d; --bg-2:#0f0f14; --bg-3:#1b1b22;
+    --fg:#e7e7ea; --fg-dim:#9b9ba3; --fg-faint:#5d5d66;
+    --accent:#c78f5b; --accent-2:#e0a06a;
+    --bubble-user-a:#c78f5b; --bubble-user-b:#e0a06a;
+    --bubble-bot:#1b1b22; --border:#26262e; --border-soft:#1f1f26;
+    --side-w:268px;
+    --safe-top:env(safe-area-inset-top,0px);
+    --safe-bot:env(safe-area-inset-bottom,0px);
+    --safe-left:env(safe-area-inset-left,0px);
+    /* Wider conversation column — uses most of the space on desktops while
+       still keeping bubbles a sensible reading width on big monitors. */
+    --col:1280px;
+  }
+  html[data-theme="amber"]   {--accent:#c78f5b;--accent-2:#e0a06a;--bubble-user-a:#c78f5b;--bubble-user-b:#e0a06a}
+  html[data-theme="ember"]   {--accent:#ff5a3c;--accent-2:#ff8a3d;--bubble-user-a:#ff5a3c;--bubble-user-b:#ff8a3d}
+  html[data-theme="ocean"]   {--accent:#3b82f6;--accent-2:#06b6d4;--bubble-user-a:#3b82f6;--bubble-user-b:#06b6d4}
+  html[data-theme="forest"]  {--accent:#10b981;--accent-2:#22c55e;--bubble-user-a:#10b981;--bubble-user-b:#22c55e}
+  html[data-theme="violet"]  {--accent:#8b5cf6;--accent-2:#a855f7;--bubble-user-a:#8b5cf6;--bubble-user-b:#a855f7}
+  html[data-theme="rose"]    {--accent:#f43f5e;--accent-2:#fb7185;--bubble-user-a:#f43f5e;--bubble-user-b:#fb7185}
+  html[data-theme="sunset"]  {--accent:#f97316;--accent-2:#ec4899;--bubble-user-a:#f97316;--bubble-user-b:#ec4899}
+  html[data-theme="mint"]    {--accent:#14b8a6;--accent-2:#5eead4;--bubble-user-a:#14b8a6;--bubble-user-b:#5eead4}
+  html[data-theme="magenta"] {--accent:#d946ef;--accent-2:#ec4899;--bubble-user-a:#d946ef;--bubble-user-b:#ec4899}
+  html[data-theme="slate"]   {--accent:#64748b;--accent-2:#94a3b8;--bubble-user-a:#64748b;--bubble-user-b:#94a3b8}
+
+  /* ───── layout ───── */
+  #app{display:grid;grid-template-columns:1fr;height:100dvh;
+    transition:grid-template-columns .25s cubic-bezier(.4,0,.2,1)}
+  @media(min-width:900px){#app{grid-template-columns:var(--side-w) 1fr}}
+  /* Collapsed sidebar (desktop only) → main pane uses the full window */
+  @media(min-width:900px){#app.side-collapsed{grid-template-columns:0 1fr}}
+  #app.side-collapsed #sidebar{transform:translateX(-100%);overflow:hidden}
+
+  /* ───── sidebar ───── */
+  #sidebar{display:flex;flex-direction:column;height:100dvh;
+    background:var(--bg-2);border-right:1px solid var(--border);
+    padding-top:var(--safe-top);padding-left:var(--safe-left);
+    transition:transform .25s cubic-bezier(.4,.0,.2,1);position:relative}
+  @media(max-width:899.98px){
+    #sidebar{position:fixed;top:0;left:0;width:min(86vw,320px);z-index:30;
+      transform:translateX(-100%);box-shadow:0 0 40px rgba(0,0,0,.5)}
+    #sidebar.open{transform:translateX(0)}
+  }
+  .side-top{padding:14px 12px 10px;border-bottom:1px solid var(--border-soft);
+    display:flex;flex-direction:column;gap:8px}
+  .new-btn{display:flex;align-items:center;gap:8px;background:linear-gradient(135deg,var(--accent),var(--accent-2));
+    color:#fff;border:none;border-radius:10px;padding:10px 12px;font:inherit;font-size:14px;
+    font-weight:500;cursor:pointer;transition:transform .12s, box-shadow .15s;
+    box-shadow:0 6px 16px -8px rgba(0,0,0,.5)}
+  .new-btn:hover{box-shadow:0 8px 20px -8px rgba(0,0,0,.6)}
+  .new-btn:active{transform:scale(.98)}
+  .new-btn svg{width:16px;height:16px;flex:0 0 16px}
+  .side-search{display:none}  /* placeholder for future */
+
+  .session-list{flex:1;overflow-y:auto;padding:8px 8px 12px;
+    scrollbar-width:thin;scrollbar-color:#2c2c33 transparent}
+  .session-list::-webkit-scrollbar{width:6px}
+  .session-list::-webkit-scrollbar-thumb{background:#2c2c33;border-radius:3px}
+
+  .session-item{display:flex;align-items:center;gap:6px;padding:8px 8px 8px 10px;border-radius:8px;
+    cursor:pointer;color:var(--fg-dim);transition:background .12s, color .12s;
+    margin-bottom:2px;position:relative}
+  .session-item:hover{background:rgba(255,255,255,.04);color:var(--fg)}
+  .session-item.active{background:rgba(255,255,255,.06);color:var(--fg)}
+  .session-item.active::before{content:"";position:absolute;left:-2px;top:8px;bottom:8px;
+    width:3px;background:var(--accent);border-radius:2px}
+  .session-item .title-block{flex:1;display:flex;flex-direction:column;gap:1px;min-width:0}
+  .session-item .title{font-size:13.5px;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap;line-height:1.35;background:transparent;border:none;color:inherit;
+    font-family:inherit;outline:none;padding:0;min-width:0}
+  .session-item .title:focus{outline:1px solid var(--accent);outline-offset:2px;border-radius:3px;
+    overflow:visible;text-overflow:clip}
+  .session-item .when{font-size:10px;color:var(--fg-faint);overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap}
+  .session-item .actions{display:flex;align-items:center;gap:2px;flex:0 0 auto;
+    opacity:0;transition:opacity .12s}
+  .session-item:hover .actions,.session-item.active .actions{opacity:1}
+  .session-item button.dots{width:26px;height:26px;border-radius:6px;border:none;
+    background:transparent;color:var(--fg-faint);cursor:pointer;
+    display:grid;place-items:center;padding:0;font-size:18px;line-height:.5;
+    transition:color .12s, background .12s}
+  .session-item button.dots:hover{background:rgba(255,255,255,.08);color:var(--fg)}
+  .session-item button.dots.starred{color:var(--accent)}
+
+  /* Floating popmenu for session-item right-side actions */
+  #popmenu{position:fixed;z-index:60;min-width:160px;background:var(--bg-2);
+    border:1px solid var(--border);border-radius:10px;padding:6px;
+    box-shadow:0 12px 40px -12px rgba(0,0,0,.6);display:none}
+  #popmenu.on{display:block}
+  #popmenu button{display:flex;align-items:center;gap:8px;width:100%;
+    background:transparent;border:none;color:var(--fg);font:inherit;font-size:13px;
+    padding:7px 10px;border-radius:7px;cursor:pointer;text-align:left}
+  #popmenu button:hover{background:rgba(255,255,255,.06)}
+  #popmenu button.danger{color:#ff7170}
+  #popmenu button.danger:hover{background:rgba(255,90,90,.12)}
+  #popmenu button svg{width:14px;height:14px;flex:0 0 14px}
+  #popmenu .pop-sep{height:1px;background:var(--border-soft);margin:4px 0}
+
+  /* Sidebar drag-to-resize handle (desktop only — drawer on mobile) */
+  .side-resize{position:absolute;top:0;right:-3px;width:6px;height:100%;
+    cursor:col-resize;z-index:10;background:transparent}
+  @media(max-width:899.98px){.side-resize{display:none}}
+  .side-resize::after{content:"";position:absolute;top:50%;right:1px;width:2px;height:36px;
+    background:var(--border);border-radius:1px;transform:translateY(-50%);transition:background .12s}
+  .side-resize:hover::after,body.is-resizing .side-resize::after{background:var(--accent)}
+  body.is-resizing{cursor:col-resize;user-select:none}
+  body.is-resizing *{user-select:none!important;pointer-events:none}
+  body.is-resizing .side-resize{pointer-events:auto}
+
+  .empty-list{padding:24px 12px;text-align:center;color:var(--fg-faint);font-size:12.5px;
+    line-height:1.6}
+
+  .side-bottom{border-top:1px solid var(--border-soft);padding:10px 12px calc(12px + var(--safe-bot));
+    display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--fg-dim)}
+  .side-bottom .cwd{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    font-family:"SF Mono",Menlo,monospace;font-size:11px;color:var(--fg-dim)}
+  .icon-btn{flex:0 0 28px;width:28px;height:28px;border:none;background:transparent;
+    color:var(--fg-dim);border-radius:6px;cursor:pointer;display:grid;place-items:center;
+    transition:color .15s, background .15s}
+  .icon-btn:hover{color:var(--fg);background:rgba(255,255,255,.06)}
+  .icon-btn svg{width:15px;height:15px}
+
+  /* ───── main pane ───── */
+  #main{display:flex;flex-direction:column;height:100dvh;min-width:0}
+  /* header */
+  header{display:flex;align-items:center;gap:10px;
+    padding:calc(var(--safe-top) + 10px) 14px 10px;
+    background:linear-gradient(180deg,rgba(10,10,13,.92),rgba(10,10,13,.6));
+    backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px);
+    border-bottom:1px solid var(--border); position:sticky;top:0;z-index:5}
+  .menu-btn{flex:0 0 36px;width:36px;height:36px;border:none;background:transparent;
+    color:var(--fg-dim);border-radius:8px;cursor:pointer;display:grid;place-items:center;
+    transition:color .15s, background .15s}
+  /* Always visible — on desktop it collapses/expands the sidebar; on mobile
+     it opens/closes the slide-over drawer. */
+  .menu-btn:hover{color:var(--fg);background:rgba(255,255,255,.06)}
+  .menu-btn svg{width:20px;height:20px;transition:transform .25s}
+  /* Tilt the icon when collapsed so the affordance is obvious */
+  #app.side-collapsed .menu-btn svg{transform:rotate(90deg)}
+
+  .avatar{width:32px;height:32px;border-radius:8px;flex:0 0 32px;
+    background:linear-gradient(135deg,var(--accent),var(--accent-2));
+    display:grid;place-items:center;color:#fff;font-weight:600;font-size:12px;
+    letter-spacing:.02em;
+    box-shadow:0 6px 18px -8px rgba(0,0,0,.5)}
+  .who{display:flex;flex-direction:column;line-height:1.15;flex:1;min-width:0}
+  .who .name{font-weight:600;font-size:14.5px;letter-spacing:-.005em;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .who .status{font-size:11.5px;color:var(--fg-dim);display:flex;align-items:center;gap:6px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dot{width:7px;height:7px;border-radius:50%;background:#5d5d66;flex:0 0 7px;transition:background .25s}
+  .dot.live{background:#34d076;animation:pulse 2s ease-in-out infinite}
+  .dot.warn{background:#f5a524}
+  .dot.err{background:#f5374f}
+  .dot.busy{background:var(--accent)}
+  @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(52,208,118,.5)}50%{box-shadow:0 0 0 6px rgba(52,208,118,0)}}
+
+  /* ───── messages ───── */
+  main#scrollarea{flex:1;overflow-y:auto;overflow-x:hidden;position:relative;
+    -webkit-overflow-scrolling:touch}
+  main#scrollarea::-webkit-scrollbar{width:8px}
+  main#scrollarea::-webkit-scrollbar-thumb{background:#2c2c33;border-radius:4px}
+  /* Honor the OS "reduce motion" preference — kill smooth scrolling for
+     people who get motion-sick. We programatically choose between instant
+     and smooth depending on context (initial load vs streaming). */
+  @media(prefers-reduced-motion:reduce){
+    main#scrollarea{scroll-behavior:auto}
+  }
+  .msg-list{max-width:var(--col);margin:0 auto;padding:18px 14px 14px}
+  @media(min-width:600px){.msg-list{padding:24px 28px 18px}}
+
+  .empty-pane{padding:60px 24px;text-align:center;color:var(--fg-faint);font-size:14px;
+    line-height:1.6;display:flex;flex-direction:column;align-items:center;gap:16px}
+  .empty-pane .big-avatar{width:64px;height:64px;border-radius:14px;
+    background:linear-gradient(135deg,var(--accent),var(--accent-2));
+    display:grid;place-items:center;color:#fff;font-weight:600;font-size:22px;
+    letter-spacing:.02em;box-shadow:0 12px 30px -10px rgba(0,0,0,.5)}
+  .empty-pane h2{font-size:20px;font-weight:600;color:var(--fg);margin:0}
+  .empty-pane p{margin:0;max-width:380px}
+  .empty-pane code{background:#1a1c20;padding:2px 6px;border-radius:4px;font-size:12.5px;
+    color:var(--fg-dim)}
+
+  .msg{display:flex;margin:8px 0;animation:in .25s ease-out both;align-items:flex-end;gap:8px;
+    /* white-space inherits from .bubble */}
+  @keyframes in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+  .msg.user{justify-content:flex-end}
+  .msg.bot{justify-content:flex-start;gap:10px}
+  .msg .ava{width:28px;height:28px;border-radius:7px;flex:0 0 28px;
+    background:linear-gradient(135deg,var(--accent),var(--accent-2));
+    display:grid;place-items:center;color:#fff;font-weight:600;font-size:10.5px}
+  /* Stack the bubble + meta + actions vertically so the timestamp sits
+     UNDER the bubble (not flexbox-aligned next to it). Gives a cleaner,
+     more iMessage-like rhythm. */
+  .bubble-stack{display:flex;flex-direction:column;min-width:0;max-width:min(78%,820px)}
+  .msg.user .bubble-stack{align-items:flex-end}
+  .msg.bot  .bubble-stack{align-items:flex-start}
+  .bubble{max-width:100%;padding:10px 14px;border-radius:18px;
+    word-wrap:break-word;overflow-wrap:anywhere;
+    font-size:15px;line-height:1.5;letter-spacing:-.005em}
+  /* Plain (non-markdown) text bubbles keep newlines visible.
+     Markdown bubbles strip the pre-wrap so <p> spacing kicks in cleanly. */
+  .bubble.plain{white-space:pre-wrap}
+  .msg.user .bubble{background:linear-gradient(135deg,var(--bubble-user-a),var(--bubble-user-b));
+    color:#fff;border-bottom-right-radius:6px;
+    box-shadow:0 6px 20px -8px rgba(0,0,0,.4)}
+  .msg.bot .bubble{background:var(--bubble-bot);color:var(--fg);
+    border-bottom-left-radius:6px;border:1px solid var(--border)}
+  .meta{font-size:9.5px;color:var(--fg-faint);
+    margin:3px 2px 0;letter-spacing:.02em;font-variant-numeric:tabular-nums;
+    text-transform:lowercase}
+  .msg.user .meta{align-self:flex-end}
+  .msg.bot  .meta{align-self:flex-start}
+
+  .bubble code{background:#0d0d12;border:1px solid var(--border);padding:1px 5px;
+    border-radius:4px;font-family:"SF Mono",Menlo,Monaco,Consolas,monospace;font-size:13px}
+  .bubble pre{background:#0d0d12;border:1px solid var(--border);padding:10px 12px;
+    border-radius:8px;overflow-x:auto;margin:6px 0;font-size:13px;line-height:1.45}
+  .bubble pre code{background:none;border:none;padding:0;font-size:13px}
+  /* Inline blinking caret appended at end of streaming text. Kept inside
+     a real DOM node (instead of ::after) so it renders correctly when the
+     markdown library wraps content in <p> / <pre> blocks. */
+  .stream-cursor{display:inline-block;width:7px;height:1em;background:var(--fg-dim);
+    margin-left:2px;vertical-align:text-bottom;animation:blink 1.05s step-start infinite;
+    border-radius:1px;opacity:.85}
+  @keyframes blink{50%{opacity:0}}
+
+  /* Floating "jump to latest" button — only visible while user is scrolled
+     up AND new content arrives. Lets them keep reading old turns without
+     getting yanked downward on every token. */
+  #jumpBottom{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);
+    background:var(--bg-3);color:var(--fg);border:1px solid var(--border);
+    border-radius:20px;padding:7px 14px;font:inherit;font-size:12.5px;cursor:pointer;
+    box-shadow:0 8px 20px -8px rgba(0,0,0,.5);display:none;
+    align-items:center;gap:6px;z-index:6;opacity:0;
+    transition:opacity .2s, transform .2s}
+  #jumpBottom.on{display:inline-flex;opacity:1;transform:translateX(-50%) translateY(0)}
+  #jumpBottom svg{width:14px;height:14px}
+  #jumpBottom:hover{background:#22222a;border-color:#3a3a44}
+
+  /* ─── Markdown body inside bubbles ───
+     Tighter vertical rhythm — 0.4em → 0.18em margins, kills the "double-spaced
+     essay" feel.  Headers tinted with theme accent so they pop visually.
+     Tables get a tinted header row + alternating body rows. */
+  .bubble h1,.bubble h2,.bubble h3,.bubble h4,.bubble h5,.bubble h6{
+    margin:.35em 0 .12em;line-height:1.2;font-weight:600;letter-spacing:-.01em;color:var(--accent)}
+  .bubble h1{font-size:1.35em;border-bottom:1px solid var(--border);padding-bottom:.15em;margin-top:.2em}
+  .bubble h2{font-size:1.18em;color:var(--accent-2)}
+  .bubble h3{font-size:1.08em;color:var(--accent)}
+  .bubble h4{font-size:1em;color:var(--accent-2)}
+  .bubble h5,.bubble h6{font-size:.95em;color:var(--fg-dim);font-weight:600;text-transform:uppercase;letter-spacing:.05em}
+  .bubble p{margin:.22em 0}
+  .bubble p:first-child,.bubble h1:first-child,.bubble h2:first-child,
+  .bubble h3:first-child,.bubble h4:first-child,
+  .bubble ul:first-child,.bubble ol:first-child,
+  .bubble pre:first-child,.bubble blockquote:first-child,
+  .bubble table:first-child{margin-top:0}
+  .bubble p:last-child,.bubble ul:last-child,.bubble ol:last-child,
+  .bubble pre:last-child,.bubble blockquote:last-child,
+  .bubble table:last-child{margin-bottom:0}
+  .bubble ul,.bubble ol{margin:.18em 0;padding-left:1.3em}
+  .bubble li{margin:.05em 0}
+  .bubble li > p{margin:.1em 0}
+  .bubble li::marker{color:var(--accent-2)}
+  .bubble li input[type="checkbox"]{margin:0 6px 0 -2px;vertical-align:middle;accent-color:var(--accent)}
+  .bubble blockquote{margin:.25em 0;padding:.25em 0 .25em .7em;
+    border-left:3px solid var(--accent);color:var(--fg-dim);
+    background:rgba(255,255,255,.025);border-radius:0 6px 6px 0}
+  .bubble hr{border:none;border-top:1px solid var(--border);margin:.5em 0}
+  .bubble a{color:var(--accent);text-decoration:underline;text-underline-offset:2px}
+  .bubble a:hover{color:var(--accent-2)}
+  .bubble strong{color:var(--accent-2);font-weight:600}
+  .bubble em{font-style:italic;color:var(--fg)}
+  .bubble del,.bubble s{color:var(--fg-faint)}
+  /* code blocks */
+  .bubble code{background:#0d0d12;border:1px solid var(--border);padding:1px 5px;
+    border-radius:4px;font-family:"SF Mono",Menlo,Monaco,Consolas,monospace;font-size:13px;
+    color:var(--accent-2)}
+  .bubble pre{background:#0a0a0e;border:1px solid var(--border);padding:10px 12px;
+    border-radius:8px;overflow-x:auto;margin:.35em 0;font-size:13px;line-height:1.45}
+  .bubble pre code{background:none;border:none;padding:0;color:var(--fg)}
+  /* tables */
+  .bubble table{border-collapse:collapse;margin:.4em 0;font-size:13.5px;
+    display:block;overflow-x:auto;max-width:100%;
+    border-radius:6px;border:1px solid var(--border)}
+  .bubble thead{background:linear-gradient(180deg,rgba(199,143,91,.12),rgba(199,143,91,.06))}
+  /* themed header tint — uses --accent at low opacity. The hardcoded RGB
+     above approximates "amber"; for other themes the rgba() falls back to
+     the default accent so the contrast is good enough across the board. */
+  .bubble th,.bubble td{border-bottom:1px solid var(--border);padding:6px 10px;
+    text-align:left;vertical-align:top}
+  .bubble th{font-weight:600;color:var(--accent);text-transform:uppercase;
+    font-size:11.5px;letter-spacing:.04em;padding:8px 10px}
+  .bubble td{color:var(--fg)}
+  .bubble tr:last-child td{border-bottom:none}
+  .bubble tr:nth-child(even) td{background:rgba(255,255,255,.02)}
+  /* in user (gradient) bubbles, swap colors so they don't clash with the bright bg */
+  .msg.user .bubble h1,.msg.user .bubble h2,.msg.user .bubble h3,
+  .msg.user .bubble h4,.msg.user .bubble h5,.msg.user .bubble h6,
+  .msg.user .bubble strong,.msg.user .bubble li::marker,.msg.user .bubble th,
+  .msg.user .bubble a{color:#fff;border-color:rgba(255,255,255,.3)}
+  .msg.user .bubble code{background:rgba(0,0,0,.22);border-color:rgba(255,255,255,.18);color:#fff}
+  .msg.user .bubble pre{background:rgba(0,0,0,.22);border-color:rgba(255,255,255,.18);color:#fff}
+  .msg.user .bubble pre code{color:#fff}
+  .msg.user .bubble blockquote{border-left-color:rgba(255,255,255,.6);color:#fff;
+    background:rgba(0,0,0,.1)}
+  .msg.user .bubble table,.msg.user .bubble th,.msg.user .bubble td{border-color:rgba(255,255,255,.25)}
+  .msg.user .bubble thead{background:rgba(0,0,0,.18)}
+  .msg.user .bubble tr:nth-child(even) td{background:rgba(0,0,0,.08)}
+
+  /* Mobile-first tweaks — reduce font sizes + padding so chat stays
+     readable on phone-narrow screens without horizontal scroll. */
+  @media(max-width:600px){
+    .bubble{font-size:14.5px;padding:9px 12px}
+    .bubble h1{font-size:1.2em}
+    .bubble h2{font-size:1.1em}
+    .bubble h3{font-size:1.04em}
+    .bubble pre{font-size:12px;padding:8px 10px}
+    .bubble code{font-size:12px}
+    .bubble table{font-size:12.5px}
+    .bubble th,.bubble td{padding:5px 8px}
+    .bubble-stack{max-width:84%}
+    .msg-list{padding:14px 10px 10px}
+    .msg.bot{gap:7px}
+    .msg .ava{width:24px;height:24px;font-size:9.5px;flex:0 0 24px}
+    .meta{font-size:9px}
+  }
+
+  /* mic button + listening state */
+  button.mic{flex:0 0 36px;height:36px;border:none;border-radius:50%;color:var(--fg-dim);
+    background:transparent;display:grid;place-items:center;cursor:pointer;
+    transition:color .15s, background .15s, transform .12s}
+  button.mic:hover{color:var(--fg);background:rgba(255,255,255,.06)}
+  button.mic svg{width:18px;height:18px}
+  button.mic.listening{color:#ff5a5a;background:rgba(255,90,90,.15);
+    animation:micpulse 1.6s ease-in-out infinite}
+  @keyframes micpulse{
+    0%,100%{box-shadow:0 0 0 0 rgba(255,90,90,.4)}
+    50%   {box-shadow:0 0 0 6px rgba(255,90,90,0)}
+  }
+
+  /* small system note inside the chat (e.g. "slash command silently handled") */
+  .sys-note{display:flex;align-items:center;gap:8px;color:var(--fg-faint);
+    font-size:12px;font-style:italic;margin:6px 0 6px 38px;padding:6px 10px;
+    background:rgba(255,255,255,.02);border-radius:8px;border:1px dashed var(--border);
+    max-width:520px}
+  .sys-note .ico{font-size:13px}
+
+  /* "Claude is thinking" typing indicator — shows immediately after send,
+     hides when first delta arrives or the turn ends. */
+  .typing{display:none;align-items:flex-end;gap:10px;margin:8px 0;padding:0 4px;
+    animation:in .25s ease-out both}
+  .typing.on{display:flex}
+  .typing .ava{width:28px;height:28px;border-radius:7px;flex:0 0 28px;
+    background:linear-gradient(135deg,var(--accent),var(--accent-2));
+    display:grid;place-items:center;color:#fff;font-weight:600;font-size:10.5px}
+  .typing .dots{background:var(--bubble-bot);border:1px solid var(--border);
+    border-radius:18px;border-bottom-left-radius:6px;padding:12px 16px;display:flex;gap:5px}
+  .typing .dots span{width:6px;height:6px;background:var(--fg-dim);border-radius:50%;
+    animation:bounce 1.3s ease-in-out infinite}
+  .typing .dots span:nth-child(2){animation-delay:.15s}
+  .typing .dots span:nth-child(3){animation-delay:.30s}
+  @keyframes bounce{0%,80%,100%{transform:translateY(0);opacity:.4}40%{transform:translateY(-5px);opacity:1}}
+
+  /* per-message action toolbar (copy, fork, etc.)
+     Important: align-self ensures the bar shrinks to fit its buttons —
+     without this it would stretch across the whole bubble-stack and look
+     like there's empty padding on the right. */
+  .msg-actions{display:inline-flex;gap:4px;margin:2px 0 0;padding:0;
+    opacity:0;transition:opacity .15s;width:auto}
+  .msg.user .msg-actions{align-self:flex-end;justify-content:flex-end}
+  .msg.bot  .msg-actions{align-self:flex-start;justify-content:flex-start}
+  .msg:hover .msg-actions,.msg .msg-actions.always{opacity:1}
+  .msg-actions button{height:22px;padding:0 7px;border-radius:6px;border:1px solid var(--border);
+    background:rgba(255,255,255,.02);color:var(--fg-dim);cursor:pointer;font:inherit;
+    font-size:10.5px;display:inline-flex;align-items:center;gap:4px;
+    transition:color .15s,background .15s,border-color .15s}
+  .msg-actions button:hover{color:var(--fg);background:rgba(255,255,255,.06);border-color:#3a3a44}
+  .msg-actions button.flash{color:#34d076;border-color:#34d076}
+  .msg-actions button svg{width:10.5px;height:10.5px}
+
+  /* expand/collapse for very long user messages */
+  .bubble.collapsed{max-height:14em;overflow:hidden;position:relative}
+  .bubble.collapsed::after{content:"";position:absolute;left:0;right:0;bottom:0;height:3em;
+    background:linear-gradient(to bottom, transparent, var(--bubble-user-b))}
+  .bubble.collapsed.bot::after{background:linear-gradient(to bottom, transparent, var(--bubble-bot))}
+  .toggle-collapse{display:inline-block;margin-top:4px;color:var(--fg-dim);font-size:11.5px;
+    cursor:pointer;text-decoration:underline;text-decoration-style:dotted}
+  .toggle-collapse:hover{color:var(--fg)}
+
+  /* attachments inside user bubbles + lightbox.
+     Images are clamped to a friendly inline size (max 320 px tall, max 100%
+     wide) and are clickable to open a fullscreen lightbox showing the
+     original. The cursor + tooltip make the affordance obvious. */
+  .att-img{display:block;max-width:min(420px,100%);max-height:320px;border-radius:10px;
+    margin:4px 0 6px;cursor:zoom-in;background:#000;
+    object-fit:cover;transition:transform .12s}
+  .att-img:hover{transform:scale(1.01)}
+  .att-doc{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:9px;
+    background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.15);margin:4px 0 6px;
+    font-size:12.5px;color:#fff;text-decoration:none}
+  .att-doc .di{width:28px;height:28px;border-radius:6px;display:grid;place-items:center;
+    background:rgba(255,255,255,.15);flex:0 0 28px}
+  .att-doc .dn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .att-doc .ds{font-size:10.5px;opacity:.85;display:block}
+
+  /* Fullscreen image preview. Click the dimmed backdrop or the × to close.
+     The actual <img> uses the file's natural pixel size (capped to viewport)
+     so the user can inspect the upload at full resolution. */
+  #lightbox{position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:50;display:none;
+    align-items:center;justify-content:center;padding:24px;cursor:zoom-out;
+    flex-direction:column;gap:14px}
+  #lightbox.on{display:flex}
+  #lightbox img{max-width:100%;max-height:calc(100% - 64px);border-radius:8px;
+    box-shadow:0 24px 60px -16px rgba(0,0,0,.6)}
+  #lightbox .lb-bar{position:absolute;top:14px;right:14px;display:flex;gap:8px}
+  #lightbox .lb-btn{background:rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.18);
+    color:#fff;border-radius:8px;padding:7px 12px;font:inherit;font-size:12.5px;
+    cursor:pointer;display:inline-flex;align-items:center;gap:6px;backdrop-filter:blur(8px)}
+  #lightbox .lb-btn:hover{background:rgba(255,255,255,.12)}
+  #lightbox .lb-btn svg{width:13px;height:13px}
+  #lightbox .lb-meta{position:absolute;bottom:18px;left:50%;transform:translateX(-50%);
+    color:rgba(255,255,255,.7);font-size:12px;pointer-events:none}
+
+  /* ───── composer ───── */
+  footer{padding:8px 12px calc(10px + var(--safe-bot));
+    background:linear-gradient(0deg,rgba(10,10,13,.96),rgba(10,10,13,.7));
+    backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px);
+    border-top:1px solid var(--border);
+    display:flex;flex-direction:column;align-items:center;gap:8px}
+  .composer-wrap{width:100%;max-width:var(--col);display:flex;flex-direction:column;gap:6px}
+
+  .tray{display:none;flex-wrap:wrap;gap:6px}
+  .tray.on{display:flex}
+  .chip{display:flex;align-items:center;gap:8px;background:var(--bg-3);
+    border:1px solid var(--border);border-radius:14px;padding:4px 4px 4px 10px;
+    max-width:240px;font-size:12px}
+  .chip .chip-thumb{width:32px;height:32px;border-radius:8px;object-fit:cover;background:#000;flex:0 0 32px}
+  .chip .chip-icon{width:32px;height:32px;border-radius:8px;display:grid;place-items:center;
+    background:rgba(255,255,255,.08);font-size:14px;flex:0 0 32px}
+  .chip .chip-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px}
+  .chip .chip-x{width:22px;height:22px;display:grid;place-items:center;border-radius:50%;
+    background:rgba(255,255,255,.08);border:none;color:var(--fg-dim);cursor:pointer;font-size:13px;
+    line-height:1;padding:0}
+  .chip .chip-spinner{width:14px;height:14px;border:2px solid rgba(255,255,255,.2);
+    border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  form{display:flex;align-items:flex-end;gap:6px;background:var(--bg-3);
+    border:1px solid var(--border);border-radius:24px;padding:5px 5px 5px 6px;
+    transition:border-color .15s;width:100%}
+  form:focus-within{border-color:var(--accent)}
+  button.attach{flex:0 0 36px;height:36px;border:none;border-radius:50%;color:var(--fg-dim);
+    background:transparent;display:grid;place-items:center;cursor:pointer;
+    transition:color .15s, background .15s}
+  button.attach:hover{color:var(--fg);background:rgba(255,255,255,.06)}
+  button.attach svg{width:18px;height:18px}
+  textarea{flex:1;background:none;border:none;color:var(--fg);font:inherit;
+    font-size:15px;line-height:1.5;resize:none;outline:none;
+    min-height:24px;max-height:240px;padding:6px 4px;overflow-y:auto}
+  textarea::placeholder{color:var(--fg-faint)}
+  button.send{flex:0 0 36px;height:36px;border:none;border-radius:50%;color:#fff;
+    background:linear-gradient(135deg,var(--accent),var(--accent-2));
+    display:grid;place-items:center;cursor:pointer;
+    transition:transform .12s ease, opacity .15s}
+  button.send:active{transform:scale(.94)}
+  button.send:disabled{opacity:.35;cursor:not-allowed}
+  button.send svg{width:18px;height:18px;transform:translate(1px,-1px)}
+
+  #banner{display:none;padding:9px 14px;background:#3a1f12;color:#ffb89e;font-size:12.5px;
+    border-bottom:1px solid #5a2a14;text-align:center}
+  #banner.on{display:block}
+
+  /* ───── sheet (settings) ───── */
+  .sheet-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:40;
+    display:none;animation:fadein .15s ease-out}
+  .sheet-backdrop.on{display:block}
+  @keyframes fadein{from{opacity:0}to{opacity:1}}
+  .sheet{position:fixed;left:50%;bottom:0;transform:translateX(-50%);
+    width:100%;max-width:520px;background:var(--bg-2);
+    border-top:1px solid var(--border);
+    border-top-left-radius:18px;border-top-right-radius:18px;
+    padding:16px 18px calc(20px + var(--safe-bot));
+    box-shadow:0 -10px 40px -10px rgba(0,0,0,.6);z-index:41;
+    animation:slideup .25s cubic-bezier(.2,.9,.3,1.2) both}
+  @media(min-width:600px){
+    .sheet{bottom:auto;top:50%;transform:translate(-50%,-50%);
+      border-radius:14px;border:1px solid var(--border);
+      animation:popin .18s ease-out both}
+  }
+  @keyframes slideup{from{transform:translate(-50%,100%)}to{transform:translate(-50%,0)}}
+  @keyframes popin{from{transform:translate(-50%,-50%) scale(.94);opacity:0}
+                    to{transform:translate(-50%,-50%) scale(1);opacity:1}}
+  .sheet h3{margin:0 0 10px;font-size:13px;text-transform:uppercase;letter-spacing:.08em;
+    color:var(--fg-dim);font-weight:600}
+  .sheet .close{position:absolute;top:8px;right:10px;width:32px;height:32px;border:none;
+    background:transparent;color:var(--fg-dim);font-size:20px;line-height:1;
+    border-radius:50%;cursor:pointer;display:grid;place-items:center}
+  .sheet .close:hover{color:var(--fg);background:rgba(255,255,255,.05)}
+  .theme-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:8px}
+  .swatch{aspect-ratio:1;border-radius:12px;cursor:pointer;border:2px solid transparent;
+    background:linear-gradient(135deg,var(--sw-a),var(--sw-b));
+    box-shadow:0 6px 16px -8px rgba(0,0,0,.6);transition:transform .12s, border-color .15s}
+  .swatch:hover{transform:translateY(-2px)}
+  .swatch:active{transform:scale(.94)}
+  .swatch.active{border-color:var(--fg)}
+  .swatch-label{font-size:10.5px;color:var(--fg-faint);text-align:center;margin-top:4px;
+    text-transform:capitalize}
+  .theme-row{display:flex;flex-direction:column;align-items:center;gap:0}
+  .theme-row .swatch{width:100%}
+
+  /* mobile drawer overlay */
+  .drawer-bg{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:25;display:none}
+  .drawer-bg.on{display:block;animation:fadein .15s}
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- ────────  sidebar  ──────── -->
+  <aside id="sidebar">
+    <div class="side-top">
+      <button class="new-btn" id="newBtn" title="Start a new chat">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 5v14M5 12h14"/>
+        </svg>
+        <span>New chat</span>
+      </button>
+    </div>
+    <!-- starred sessions render as a pinned section above the main list -->
+    <div id="starredHeader" hidden style="padding:10px 14px 4px;font-size:10.5px;text-transform:uppercase;
+      letter-spacing:.08em;color:var(--fg-faint);font-weight:600">Starred</div>
+    <div class="session-list" id="starredList" style="flex:0 0 auto;border-bottom:1px solid var(--border-soft);max-height:35vh"></div>
+    <div id="recentHeader" hidden style="padding:10px 14px 4px;font-size:10.5px;text-transform:uppercase;
+      letter-spacing:.08em;color:var(--fg-faint);font-weight:600">Recent</div>
+    <div class="session-list" id="sessionList"></div>
+    <!-- drag handle for resizing the sidebar (desktop only) -->
+    <div class="side-resize" id="sideResize" title="Drag to resize"></div>
+    <div class="side-bottom">
+      <span class="cwd" id="cwdLabel" title="Working directory for new chats">~</span>
+      <button class="icon-btn" id="settingsBtn" title="Theme + settings" aria-label="Settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
+    </div>
+  </aside>
+
+  <!-- ────────  main pane  ──────── -->
+  <section id="main">
+    <header>
+      <button class="menu-btn" id="menuBtn" aria-label="Toggle sidebar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <line x1="3" y1="6"  x2="21" y2="6"/>
+          <line x1="3" y1="12" x2="21" y2="12"/>
+          <line x1="3" y1="18" x2="21" y2="18"/>
+        </svg>
+      </button>
+      <div class="avatar">CC</div>
+      <div class="who">
+        <div class="name" id="titleLabel">Claude Code</div>
+        <div class="status">
+          <span class="dot" id="dot"></span>
+          <span id="statusText">connecting…</span>
+        </div>
+      </div>
+    </header>
+    <div id="banner"></div>
+    <main id="scrollarea">
+      <div class="msg-list" id="messages"></div>
+      <div class="msg-list" style="padding-top:0;padding-bottom:0">
+        <div class="typing" id="typing">
+          <div class="ava">CC</div>
+          <div class="dots"><span></span><span></span><span></span></div>
+        </div>
+      </div>
+      <button id="jumpBottom" type="button" aria-label="Jump to latest">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="5" x2="12" y2="19"/>
+          <polyline points="5 12 12 19 19 12"/>
+        </svg>
+        <span>Jump to latest</span>
+      </button>
+    </main>
+    <footer>
+      <div class="composer-wrap">
+        <div class="tray" id="tray"></div>
+        <form id="form">
+          <button class="attach" id="attach" type="button" aria-label="Attach file">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+            </svg>
+          </button>
+          <button class="mic" id="micBtn" type="button" aria-label="Voice input"
+            title="Click to dictate (uses macOS / browser native speech-to-text)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" y1="19" x2="12" y2="23"/>
+              <line x1="8" y1="23" x2="16" y2="23"/>
+            </svg>
+          </button>
+          <input type="file" id="fileInput" hidden multiple
+            accept="image/*,application/pdf,text/*,application/json,application/zip,application/octet-stream">
+          <textarea id="input" rows="1" placeholder="Message Claude…" autocomplete="off"
+            autocorrect="on" autocapitalize="sentences" enterkeyhint="send"></textarea>
+          <button class="send" id="send" type="submit" aria-label="Send" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+              stroke-linecap="round" stroke-linejoin="round">
+              <line x1="5" y1="12" x2="19" y2="12"/>
+              <polyline points="12 5 19 12 12 19"/>
+            </svg>
+          </button>
+        </form>
+      </div>
+    </footer>
+  </section>
+</div>
+
+<div class="drawer-bg" id="drawerBg"></div>
+<div id="lightbox">
+  <div class="lb-bar">
+    <a class="lb-btn" id="lightboxOpen" target="_blank" rel="noopener" title="Open in new tab">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round">
+        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+        <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+      </svg><span>Open</span>
+    </a>
+    <button class="lb-btn" id="lightboxClose" title="Close (Esc)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round">
+        <line x1="18" y1="6"  x2="6"  y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+      </svg><span>Close</span>
+    </button>
+  </div>
+  <img id="lightboxImg" alt="">
+  <div class="lb-meta" id="lightboxMeta"></div>
+</div>
+
+<!-- Floating menu shown when the ⋮ on a session row is clicked -->
+<div id="popmenu" role="menu"></div>
+
+<!-- Settings sheet (theme picker) -->
+<div class="sheet-backdrop" id="sheetBackdrop"></div>
+<div class="sheet" id="sheet" hidden>
+  <button class="close" id="sheetClose" aria-label="Close">×</button>
+  <h3>Theme</h3>
+  <div class="theme-grid" id="themeGrid"></div>
+</div>
+
+<script>
+(() => {
+  // WebSocket URL is derived from the page URL so the same UI works whether
+  // it's served at https://host/, /cc/, or any other prefix. The server
+  // accepts the WS upgrade on /ws (relative to wherever it's mounted).
+  const WS_URL = (() => {
+    const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+    // Trim trailing slash so we always get exactly one between host and "ws".
+    let base = (location.pathname || '/').replace(/\/+$/, '');
+    if (base === '' || base.endsWith('/index.html')) base = base.replace(/\/index\.html$/, '');
+    return proto + location.host + base + '/ws';
+  })();
+  const $ = id => document.getElementById(id);
+
+  // ───── DOM refs ─────
+  const appEl = $('app');
+  const sidebar = $('sidebar'), drawerBg = $('drawerBg');
+  const sessionList = $('sessionList');
+  const starredList = $('starredList');
+  const starredHeader = $('starredHeader');
+  const recentHeader = $('recentHeader');
+  const cwdLabel = $('cwdLabel');
+  const titleLabel = $('titleLabel');
+  const dot = $('dot'), statusText = $('statusText');
+  const banner = $('banner');
+  const messagesEl = $('messages');
+  const typingEl = $('typing');
+  const input = $('input'), sendBtn = $('send'), form = $('form');
+  const attachBtn = $('attach'), fileInput = $('fileInput'), tray = $('tray');
+  const lightbox = $('lightbox'), lightboxImg = $('lightboxImg');
+
+  // ───── state ─────
+  let ws = null;
+  let online = false;
+  let busy = false;
+  let activeId = null;
+  let sessions = [];           // [{id,title,createdAt,lastActiveAt}]
+  let messages = [];
+  let pid = null;
+  let cwd = '~';
+  let reconnectAttempts = 0;
+  let streamingId = null;      // server-side assistant message id
+  let streamingBubble = null;
+  let turnHadAssistant = false; // tracks whether the in-flight turn produced any text
+  let lastSentText = '';        // for slash-command system-note hint
+  let streamFlushTimer = null;  // throttle handle for markdown re-rendering
+  let userAtBottom = true;      // is the scroll position pinned to the bottom?
+  const stagedFiles = new Map(); // localId -> { fileId?, name, mimeType, size, previewUrl, content?, status }
+
+  // ───── helpers ─────
+  function escapeHTML(s){return s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+
+  // Configure marked once it's loaded. GFM = headers, tables, fenced code,
+  // strikethrough, task lists. `breaks: true` makes single newlines render
+  // as <br> which matches user expectations from chat tools.
+  function configureMarked(){
+    if (!window.marked) return;
+    try {
+      window.marked.setOptions({ gfm: true, breaks: true });
+    } catch(e) {}
+  }
+  configureMarked();
+  if (document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', configureMarked);
+  }
+
+  // Tiny fallback renderer (used if marked never loaded — e.g. offline).
+  function tinyMd(text){
+    let t = escapeHTML(text);
+    t = t.replace(/```([\s\S]*?)```/g,(m,c)=>'<pre><code>'+c.trim()+'</code></pre>');
+    t = t.replace(/`([^`\n]+)`/g,'<code>$1</code>');
+    t = t.replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>');
+    t = t.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g,'<em>$1</em>');
+    t = t.replace(/(https?:\/\/[^\s<]+)/g,'<a href="$1" target="_blank" rel="noopener">$1</a>');
+    return t;
+  }
+  // Public renderer — uses marked if available, falls back to tinyMd.
+  function md(text){
+    if (window.marked && typeof window.marked.parse === 'function'){
+      try {
+        return window.marked.parse(text || '');
+      } catch(e) {
+        console.warn('marked failed, falling back:', e);
+      }
+    }
+    return tinyMd(text || '');
+  }
+  function fmtTime(ts){
+    if (!ts) return '';
+    const d = new Date(ts*1000);
+    const today = new Date(); today.setHours(0,0,0,0);
+    const that  = new Date(d); that.setHours(0,0,0,0);
+    const tStr  = d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});
+    if (that.getTime() === today.getTime()) return tStr;
+    // Different day → include short date so old turns are dateable.
+    return d.toLocaleDateString([],{month:'short',day:'numeric'}) + ' · ' + tStr;
+  }
+  function fmtRel(ts){
+    if (!ts) return '';
+    const now = Date.now()/1000;
+    const diff = now - ts;
+    if (diff < 60) return 'now';
+    if (diff < 3600) return Math.floor(diff/60) + 'm';
+    if (diff < 86400) return Math.floor(diff/3600) + 'h';
+    if (diff < 86400*7) return Math.floor(diff/86400) + 'd';
+    return new Date(ts*1000).toLocaleDateString([],{month:'short',day:'numeric'});
+  }
+  function fmtBytes(n){
+    if (!n||n<1024) return (n||0)+' B';
+    if (n<1048576) return (n/1024).toFixed(1)+' KB';
+    if (n<1073741824) return (n/1048576).toFixed(1)+' MB';
+    return (n/1073741824).toFixed(1)+' GB';
+  }
+  function setStatus(text, level){
+    statusText.textContent = text;
+    dot.className = 'dot ' + (level || '');
+  }
+  function showBanner(text){banner.textContent=text;banner.classList.add('on');}
+  function hideBanner(){banner.classList.remove('on');}
+
+  function showTyping(on){
+    typingEl.classList.toggle('on', !!on);
+    if (on) followIfPinned();
+  }
+
+  // ─── scroll behaviour ───
+  // Auto-scroll only when the user was already at (or very close to) the
+  // bottom. If they've scrolled up to re-read an earlier turn, the page
+  // doesn't yank them downward on every streaming token.
+  // A "Jump to latest" button surfaces when new content arrives off-screen.
+  const NEAR_BOTTOM_PX = 80;
+  const scrollArea = $('scrollarea');
+
+  function isNearBottom(){
+    return scrollArea.scrollHeight - scrollArea.scrollTop - scrollArea.clientHeight < NEAR_BOTTOM_PX;
+  }
+  function followIfPinned(){
+    if (!userAtBottom) {
+      $('jumpBottom').classList.add('on');
+      return;
+    }
+    // Use instant scroll during streaming (rapid updates make smooth
+    // scrolling stutter); smooth for one-off jumps elsewhere.
+    requestAnimationFrame(()=>{
+      scrollArea.scrollTop = scrollArea.scrollHeight;
+    });
+  }
+  function jumpToBottom(smooth){
+    if (smooth){
+      scrollArea.scrollTo({ top: scrollArea.scrollHeight, behavior: 'smooth' });
+    } else {
+      scrollArea.scrollTop = scrollArea.scrollHeight;
+    }
+    userAtBottom = true;
+    $('jumpBottom').classList.remove('on');
+  }
+  scrollArea.addEventListener('scroll', () => {
+    userAtBottom = isNearBottom();
+    if (userAtBottom) $('jumpBottom').classList.remove('on');
+  }, { passive: true });
+  $('jumpBottom').addEventListener('click', () => jumpToBottom(true));
+
+  // Auto-focus the composer when it makes sense — fresh page, switch, new chat,
+  // empty session. Don't steal focus when the user is mid-edit elsewhere.
+  function focusComposer(){
+    if (document.activeElement && document.activeElement !== document.body
+        && document.activeElement !== input){
+      const tag = document.activeElement.tagName;
+      // If they're typing in a session-title rename input, leave them alone.
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    }
+    // On mobile keep the keyboard from popping up on every state change —
+    // only focus when the window is wider than ~768 px (a tablet+).
+    if (window.matchMedia('(min-width: 768px)').matches) input.focus();
+  }
+
+  // ───── sidebar: drawer on mobile, collapsible + resizable on desktop ─────
+  function openDrawer(){sidebar.classList.add('open');drawerBg.classList.add('on');}
+  function closeDrawer(){sidebar.classList.remove('open');drawerBg.classList.remove('on');}
+  function toggleSidebar(){
+    if (window.matchMedia('(min-width: 900px)').matches){
+      const collapsed = appEl.classList.toggle('side-collapsed');
+      try { localStorage.setItem('cc.sideCollapsed', collapsed ? '1' : '0'); } catch(e) {}
+    } else {
+      if (sidebar.classList.contains('open')) closeDrawer(); else openDrawer();
+    }
+  }
+  $('menuBtn').addEventListener('click', toggleSidebar);
+  drawerBg.addEventListener('click', closeDrawer);
+  try {
+    if (localStorage.getItem('cc.sideCollapsed') === '1' &&
+        window.matchMedia('(min-width: 900px)').matches){
+      appEl.classList.add('side-collapsed');
+    }
+  } catch(e) {}
+
+  // Drag-to-resize sidebar (desktop only). Persists width in localStorage so
+  // the user gets the same width back on reload.
+  const SIDE_MIN = 200, SIDE_MAX = 480;
+  function setSideWidth(px){
+    const clamped = Math.max(SIDE_MIN, Math.min(SIDE_MAX, px));
+    document.documentElement.style.setProperty('--side-w', clamped + 'px');
+    try { localStorage.setItem('cc.sideW', String(clamped)); } catch(e) {}
+  }
+  try {
+    const saved = parseInt(localStorage.getItem('cc.sideW') || '0', 10);
+    if (saved >= SIDE_MIN && saved <= SIDE_MAX) setSideWidth(saved);
+  } catch(e) {}
+  const sideResize = $('sideResize');
+  if (sideResize){
+    sideResize.addEventListener('mousedown', e => {
+      // Don't start resize when collapsed (no width to drag) or on mobile
+      if (appEl.classList.contains('side-collapsed')) return;
+      if (!window.matchMedia('(min-width: 900px)').matches) return;
+      e.preventDefault();
+      document.body.classList.add('is-resizing');
+      const startX = e.clientX;
+      const startW = sidebar.getBoundingClientRect().width;
+      const onMove = ev => setSideWidth(startW + (ev.clientX - startX));
+      const onUp   = () => {
+        document.body.classList.remove('is-resizing');
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup',   onUp);
+      };
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup',   onUp);
+    });
+    sideResize.addEventListener('dblclick', () => setSideWidth(268)); // reset
+  }
+
+  // ───── sessions list ─────
+  // SVG icons used in session-item action buttons
+  const STAR_OUTLINE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>';
+  const STAR_FILL    = '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>';
+  const PENCIL_ICON  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>';
+  const TRASH_ICON   = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
+
+  function buildSessionItem(s){
+    const item = document.createElement('div');
+    item.className = 'session-item' + (s.id === activeId ? ' active' : '');
+    item.dataset.id = s.id;
+
+    // Title is an inline-editable input (display-only until focused).
+    // Title block = bigger title + tiny relative time underneath
+    const titleBlock = document.createElement('div');
+    titleBlock.className = 'title-block';
+
+    const title = document.createElement('input');
+    title.className = 'title';
+    title.type = 'text';
+    title.value = s.title || 'New chat';
+    title.readOnly = true;
+    title.addEventListener('mousedown', e => { if (title.readOnly) e.preventDefault(); });
+    title.addEventListener('dblclick', () => beginRename(title, s.id));
+    title.addEventListener('blur', () => commitRename(title, s.id));
+    title.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); title.blur(); }
+      if (e.key === 'Escape') { title.value = s.title || 'New chat'; title.blur(); }
+    });
+
+    const when = document.createElement('span');
+    when.className = 'when';
+    const ts = s.lastActiveAt || s.createdAt;
+    if (ts){
+      const d = new Date(ts * 1000);
+      when.textContent = fmtRel(ts) + ' · ' + d.toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'});
+    }
+    titleBlock.appendChild(title);
+    titleBlock.appendChild(when);
+
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+
+    // Single ⋮ "more" button — opens the popmenu with star / rename / delete.
+    // Vertical-dots glyph is the universal "more actions" affordance and
+    // keeps the row tidy when there are 4+ commands per chat.
+    const dots = document.createElement('button');
+    dots.className = 'dots' + (s.favorite ? ' starred' : '');
+    dots.setAttribute('aria-label','More');
+    dots.title = 'More';
+    dots.textContent = '⋮';
+    dots.onclick = e => {
+      e.stopPropagation();
+      openSessionMenu(dots, s, title);
+    };
+
+    actions.appendChild(dots);
+    item.appendChild(titleBlock); item.appendChild(actions);
+
+    item.onclick = ev => {
+      if (ev.target.closest('button.act')) return;
+      if (!title.readOnly) return;     // mid-rename — don't switch
+      if (s.id === activeId) { closeDrawer(); return; }
+      send({type:'switch', id: s.id});
+      closeDrawer();
+    };
+    return item;
+  }
+
+  function beginRename(input, id){
+    input.readOnly = false;
+    input.focus();
+    input.setSelectionRange(0, input.value.length);
+  }
+
+  // ───── session row popmenu (⋮) ─────
+  const popmenu = $('popmenu');
+  let popmenuFor = null;   // session id whose menu is currently open
+
+  function closePopmenu(){
+    popmenu.classList.remove('on');
+    popmenuFor = null;
+  }
+  function openSessionMenu(anchorEl, sess, titleInput){
+    popmenuFor = sess.id;
+    popmenu.innerHTML = '';
+    const opt = (label, iconHtml, danger, onClick) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.setAttribute('role','menuitem');
+      if (danger) b.classList.add('danger');
+      b.innerHTML = iconHtml + '<span>' + label + '</span>';
+      b.onclick = () => { closePopmenu(); onClick(); };
+      popmenu.appendChild(b);
+    };
+    const sep = () => {
+      const s = document.createElement('div'); s.className='pop-sep'; popmenu.appendChild(s);
+    };
+
+    opt(sess.favorite ? 'Unstar' : 'Star',
+        sess.favorite ? STAR_FILL : STAR_OUTLINE, false,
+        () => send({type:'star', id: sess.id, value: !sess.favorite}));
+    opt('Rename', PENCIL_ICON, false,
+        () => beginRename(titleInput, sess.id));
+    opt('Fork — start a new chat with this as context',
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="3" r="2.5"/><circle cx="6" cy="21" r="2.5"/><circle cx="18" cy="9" r="2.5"/><path d="M6 5.5v13"/><path d="M18 11.5c0 4-7 5.5-7 9.5"/></svg>',
+        false,
+        () => { if (confirm('Fork this chat? The new chat will start with the last 200 messages as context.')) send({type:'fork', id: sess.id, lastN: 200}); });
+    sep();
+    opt('Delete chat', TRASH_ICON, true,
+        () => { if (confirm('Delete this chat? Its claude subprocess + cwd folder are kept on disk; only the metadata is removed.')) send({type:'delete', id: sess.id}); });
+
+    // Position popmenu next to the dots button, clamped to viewport
+    const r = anchorEl.getBoundingClientRect();
+    popmenu.classList.add('on');
+    // Show offscreen first to measure
+    const w = popmenu.offsetWidth || 200, h = popmenu.offsetHeight || 160;
+    let left = r.right + 4;
+    let top  = r.top;
+    // Flip horizontally if no room on the right
+    if (left + w > window.innerWidth - 8) left = Math.max(8, r.left - w - 4);
+    // Flip vertically if no room below
+    if (top + h > window.innerHeight - 8) top = Math.max(8, r.bottom - h);
+    popmenu.style.left = left + 'px';
+    popmenu.style.top  = top  + 'px';
+  }
+  document.addEventListener('mousedown', e => {
+    if (!popmenuFor) return;
+    if (popmenu.contains(e.target)) return;
+    if (e.target.closest('.session-item button.dots')) return;
+    closePopmenu();
+  });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closePopmenu(); });
+  function commitRename(input, id){
+    if (input.readOnly) return;
+    input.readOnly = true;
+    const next = (input.value || '').trim();
+    const cur = sessions.find(s => s.id === id);
+    if (!cur) return;
+    if (!next || next === cur.title) {
+      input.value = cur.title || 'New chat';
+      return;
+    }
+    send({type:'rename', id, title: next});
+  }
+
+  function renderSessions(){
+    starredList.innerHTML = '';
+    sessionList.innerHTML = '';
+    const starred = sessions.filter(s => s.favorite);
+    const recent = sessions.filter(s => !s.favorite);
+
+    starredHeader.hidden = !starred.length;
+    starredList.hidden = !starred.length;
+    recentHeader.hidden = !recent.length || !starred.length;
+
+    for (const s of starred) starredList.appendChild(buildSessionItem(s));
+
+    if (!recent.length && !starred.length){
+      const e = document.createElement('div');
+      e.className = 'empty-list';
+      e.textContent = 'No chats yet. Click "New chat" above to start.';
+      sessionList.appendChild(e);
+      return;
+    }
+    for (const s of recent) sessionList.appendChild(buildSessionItem(s));
+  }
+
+  // ───── messages ─────
+  function clearMessages(){messagesEl.innerHTML='';streamingId=streamingBubble=null;}
+
+  function emptyPane(){
+    const div = document.createElement('div');
+    div.className = 'empty-pane';
+    div.innerHTML =
+      '<div class="big-avatar">CC</div>' +
+      '<h2>' + (activeId ? 'Empty chat' : 'No active chat') + '</h2>' +
+      '<p>' +
+      (activeId
+        ? 'Send a message — Claude will spawn here. Working in <code>' + escapeHTML(cwd) + '</code>.'
+        : 'Click <strong>New chat</strong> in the sidebar to start a fresh Claude session.') +
+      '</p>';
+    messagesEl.appendChild(div);
+  }
+
+  function renderAttachments(atts){
+    if (!atts || !atts.length) return '';
+    let html = '';
+    for (const a of atts){
+      const isImage = (a.mimeType||'').startsWith('image/');
+      // Prefer the server-served URL (survives reload). Fall back to the
+      // browser blob: URL we made at upload time (only valid during this
+      // page session). For documents, link to the URL too so the user can
+      // download them.
+      const src = a.url || a.previewUrl || '';
+      const name = escapeHTML(a.name || (isImage ? 'image' : 'file'));
+      const size = fmtBytes(a.size || 0);
+      if (isImage && src){
+        html += '<img class="att-img" src="' + src + '"'
+              + ' data-name="' + name + '" data-size="' + size + '"'
+              + ' alt="' + name + '" title="Click to view full size">';
+      } else if (a.url){
+        html += '<a class="att-doc" href="' + a.url + '" target="_blank" rel="noopener" download="' + name + '">'
+              + '<span class="di">' + (isImage ? '🖼' : '📄') + '</span>'
+              + '<span class="dn">' + name + '<span class="ds">' + size + '</span></span></a>';
+      } else {
+        html += '<div class="att-doc"><span class="di">' + (isImage ? '🖼' : '📄') + '</span>'
+              + '<span class="dn">' + name + '<span class="ds">' + size + '</span></span></div>';
+      }
+    }
+    return html;
+  }
+
+  // Threshold for collapsing user messages. ~7 lines worth of newlines OR
+  // a sufficiently long total length. Tuneable.
+  const COLLAPSE_LINE_THRESHOLD = 7;
+  const COLLAPSE_CHAR_THRESHOLD = 600;
+
+  function isLongUserText(text){
+    if (!text) return false;
+    if (text.length > COLLAPSE_CHAR_THRESHOLD) return true;
+    // Count rendered "lines" — newline count is a decent proxy
+    return text.split('\n').length > COLLAPSE_LINE_THRESHOLD + 2;
+  }
+
+  // SVG icons for message-level actions
+  const ICON_COPY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+  const ICON_FORK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="3" r="2.5"/><circle cx="6" cy="21" r="2.5"/><circle cx="18" cy="9" r="2.5"/><path d="M6 5.5v13"/><path d="M18 11.5c0 4-7 5.5-7 9.5"/></svg>';
+
+  async function copyText(text, btn){
+    try {
+      await navigator.clipboard.writeText(text);
+      const orig = btn.innerHTML;
+      btn.classList.add('flash');
+      btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>Copied</span>';
+      setTimeout(() => { btn.classList.remove('flash'); btn.innerHTML = orig; }, 1400);
+    } catch(e) {
+      showBanner('Copy failed: ' + e.message); setTimeout(hideBanner, 3000);
+    }
+  }
+
+  function buildMsgActions(msg, bubble){
+    const bar = document.createElement('div');
+    bar.className = 'msg-actions';
+
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.title = 'Copy message';
+    copyBtn.innerHTML = ICON_COPY + '<span>Copy</span>';
+    copyBtn.onclick = () => copyText(bubble.dataset.raw || msg.text || '', copyBtn);
+    bar.appendChild(copyBtn);
+
+    // Fork is only on the LAST assistant message — not user, not historical bot.
+    // We mark it with class .has-fork and update which row owns it on every
+    // new assistant_end / state load.
+    if (msg.role === 'assistant'){
+      const forkBtn = document.createElement('button');
+      forkBtn.type = 'button';
+      forkBtn.title = 'Fork — start a new chat with these messages as context';
+      forkBtn.innerHTML = ICON_FORK + '<span>Fork</span>';
+      forkBtn.onclick = () => {
+        if (!confirm('Fork this chat into a new session? The new chat will start with the last 200 messages as context.')) return;
+        send({type: 'fork', id: activeId, lastN: 200});
+      };
+      bar.appendChild(forkBtn);
+    }
+    return bar;
+  }
+
+  function refreshLastBotForkButton(){
+    // Show fork only on the visually-last bot message
+    const bots = [...messagesEl.querySelectorAll('.msg.bot')];
+    bots.forEach((el, i) => {
+      const bar = el.querySelector('.msg-actions');
+      if (!bar) return;
+      // Last-of-class gets the fork button left visible; older ones hide it.
+      const isLast = i === bots.length - 1;
+      bar.classList.toggle('always', isLast);   // always visible on last
+      const forkBtn = bar.querySelector('button[title^="Fork"]');
+      if (forkBtn) forkBtn.style.display = isLast ? '' : 'none';
+    });
+  }
+
+  function renderMessage(msg){
+    // remove placeholder if present
+    const placeholder = messagesEl.querySelector('.empty-pane');
+    if (placeholder) placeholder.remove();
+
+    const wrap = document.createElement('div');
+    wrap.className = 'msg ' + (msg.role === 'user' ? 'user' : 'bot');
+    if (msg.id) wrap.dataset.id = msg.id;
+    wrap.dataset.text = msg.text || '';
+
+    if (msg.role !== 'user'){
+      const ava = document.createElement('div'); ava.className='ava'; ava.textContent='CC';
+      wrap.appendChild(ava);
+    }
+
+    // Stack: bubble + (toggle) + meta + actions, all aligned to one side.
+    const stack = document.createElement('div');
+    stack.className = 'bubble-stack';
+
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble' + (msg.role === 'user' ? '' : ' bot');
+    bubble.dataset.raw = msg.text || '';
+
+    let html = '';
+    if (msg.role === 'user' && msg.attachments) html += renderAttachments(msg.attachments);
+    html += md(msg.text || '');
+    bubble.innerHTML = html;
+
+    // Collapse very long user messages by default.
+    let toggleEl = null;
+    if (msg.role === 'user' && isLongUserText(msg.text)){
+      bubble.classList.add('collapsed');
+      toggleEl = document.createElement('span');
+      toggleEl.className = 'toggle-collapse';
+      toggleEl.textContent = 'Show more';
+      toggleEl.onclick = () => {
+        const collapsed = bubble.classList.toggle('collapsed');
+        toggleEl.textContent = collapsed ? 'Show more' : 'Show less';
+      };
+    }
+    stack.appendChild(bubble);
+    if (toggleEl) stack.appendChild(toggleEl);
+
+    const meta = document.createElement('div');
+    meta.className='meta'; meta.textContent = fmtTime(msg.ts);
+    stack.appendChild(meta);
+
+    // Action bar (copy, fork) — sits below the meta in the stack.
+    stack.appendChild(buildMsgActions(msg, bubble));
+
+    wrap.appendChild(stack);
+
+    messagesEl.appendChild(wrap);
+    if (msg.role === 'assistant') refreshLastBotForkButton();
+    followIfPinned();
+    return { wrap, bubble };
+  }
+
+  function renderAllMessages(){
+    clearMessages();
+    if (!messages.length){
+      emptyPane();
+      return;
+    }
+    for (const m of messages) renderMessage(m);
+  }
+
+  // ─── streaming ───
+  // Strategy:
+  //   * Buffer text deltas into bubble.dataset.raw immediately (cheap)
+  //   * Re-parse markdown on a timer (~80 ms / ~12 fps) — re-rendering on
+  //     every token causes DOM thrash + visible flicker, especially with
+  //     marked which rebuilds the whole subtree.
+  //   * Append a real DOM cursor (instead of CSS ::after) so it renders
+  //     correctly inside the marked output.
+  //   * Auto-scroll only if the user was already near the bottom.
+  const STREAM_FLUSH_MS = 80;
+
+  function flushStreamBuffer(){
+    streamFlushTimer = null;
+    if (!streamingBubble) return;
+    const raw = streamingBubble.dataset.raw || '';
+    // Render markdown + append our streaming cursor as the very last node.
+    streamingBubble.innerHTML = md(raw) + '<span class="stream-cursor"></span>';
+    followIfPinned();
+  }
+
+  function startStream(id){
+    const placeholder = messagesEl.querySelector('.empty-pane');
+    if (placeholder) placeholder.remove();
+    const wrap = document.createElement('div');
+    wrap.className = 'msg bot';
+    wrap.dataset.id = id;
+    wrap.dataset.text = '';
+    const ava = document.createElement('div'); ava.className='ava'; ava.textContent='CC';
+    wrap.appendChild(ava);
+
+    const stack = document.createElement('div');
+    stack.className = 'bubble-stack';
+
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble bot streaming';
+    bubble.dataset.raw = '';
+    stack.appendChild(bubble);
+
+    const meta = document.createElement('div'); meta.className='meta';
+    meta.textContent = fmtTime(Date.now()/1000);
+    stack.appendChild(meta);
+
+    wrap.appendChild(stack);
+    messagesEl.appendChild(wrap);
+    streamingId = id; streamingBubble = bubble;
+    followIfPinned();
+  }
+
+  function appendDelta(id, text){
+    if (streamingId !== id || !streamingBubble) startStream(id);
+    // Cheap append — just buffer the text. The actual DOM update is throttled.
+    streamingBubble.dataset.raw = (streamingBubble.dataset.raw || '') + text;
+    if (streamFlushTimer) return;
+    streamFlushTimer = setTimeout(flushStreamBuffer, STREAM_FLUSH_MS);
+  }
+
+  function endStream(id){
+    // Flush any pending text first so the final render is complete + the
+    // cursor goes away cleanly.
+    if (streamFlushTimer){
+      clearTimeout(streamFlushTimer);
+      streamFlushTimer = null;
+    }
+    if (streamingBubble){
+      streamingBubble.classList.remove('streaming');
+      const raw = streamingBubble.dataset.raw || streamingBubble.innerText;
+      streamingBubble.innerHTML = md(raw);     // no cursor — turn is done
+      // Update wrap.dataset.text so dedup + copy paths see the final text
+      const wrap = streamingBubble.closest('.msg');
+      if (wrap){
+        wrap.dataset.text = raw;
+        const stack = streamingBubble.closest('.bubble-stack');
+        if (stack && !stack.querySelector('.msg-actions')){
+          stack.appendChild(buildMsgActions({role:'assistant', text: raw, id}, streamingBubble));
+        }
+      }
+      refreshLastBotForkButton();
+    }
+    streamingId = null; streamingBubble = null;
+  }
+
+  // ───── tap image → fullscreen lightbox ─────
+  function openLightbox(src, name, size){
+    lightboxImg.src = src;
+    const lbOpen = $('lightboxOpen');
+    if (lbOpen) lbOpen.href = src;
+    const meta = $('lightboxMeta');
+    if (meta) meta.textContent = [name, size].filter(Boolean).join(' · ');
+    lightbox.classList.add('on');
+  }
+  function closeLightbox(){ lightbox.classList.remove('on'); }
+  messagesEl.addEventListener('click', e => {
+    const t = e.target;
+    if (t && t.tagName === 'IMG' && t.classList.contains('att-img')){
+      openLightbox(t.src, t.dataset.name, t.dataset.size);
+    }
+  });
+  // Click backdrop (but not the inner controls or image) to close.
+  lightbox.addEventListener('click', e => {
+    if (e.target === lightbox) closeLightbox();
+  });
+  $('lightboxClose')?.addEventListener('click', closeLightbox);
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && lightbox.classList.contains('on')) closeLightbox();
+  });
+
+  // ───── WS ─────
+  function connect(){
+    setStatus('connecting…');
+    ws = new WebSocket(WS_URL);
+    ws.onopen = () => { reconnectAttempts = 0; };
+    ws.onclose = () => {
+      online = false;
+      setStatus('disconnected', 'warn');
+      const delay = Math.min(15000, 800 * 2 ** Math.min(++reconnectAttempts, 5));
+      setTimeout(connect, delay);
+    };
+    ws.onerror = () => setStatus('error', 'err');
+    ws.onmessage = ev => {
+      let m; try { m = JSON.parse(ev.data); } catch { return; }
+      handleServerMessage(m);
+    };
+  }
+  function send(obj){
+    if (!ws || ws.readyState !== 1){
+      showBanner('Not connected. Reconnecting…');
+      setTimeout(hideBanner, 3000);
+      return false;
+    }
+    ws.send(JSON.stringify(obj));
+    return true;
+  }
+
+  function refreshHeaderTitle(){
+    if (!titleLabel) return;
+    const s = sessions.find(x => x.id === activeId);
+    titleLabel.textContent = s ? (s.title || 'New chat') : 'Claude Code';
+  }
+  function setActive(id){
+    activeId = id;
+    renderSessions();
+    refreshHeaderTitle();
+  }
+
+  function setOnline(on){
+    online = on;
+    setStatus(busy ? 'thinking…' : (on ? 'online' : 'disconnected'),
+              busy ? 'busy' : (on ? 'live' : 'warn'));
+    autosize();
+  }
+
+  function handleServerMessage(m){
+    switch (m.type){
+      case 'state': {
+        sessions = m.sessions || [];
+        messages = m.messages || [];
+        pid = m.pid;
+        busy = !!m.busy;
+        cwd  = m.cwd || cwd;
+        // Display sidebar cwd label using session-specific cwd if available
+        const sessForCwd = sessions.find(s => s.id === m.activeId);
+        const showCwd = (sessForCwd && sessForCwd.cwd) || cwd;
+        cwdLabel.textContent = showCwd.replace(/^\/Users\/[^/]+/, '~') || '~';
+        cwdLabel.title = 'Working directory: ' + showCwd;
+        setActive(m.activeId);
+        renderAllMessages();
+        showTyping(false);
+        if (m.current && m.current.text){
+          startStream(m.current.id);
+          appendDelta(m.current.id, m.current.text);
+        } else if (busy){
+          // We reconnected mid-turn but haven't seen any deltas yet — show dots
+          showTyping(true);
+        }
+        setOnline(true);
+        hideBanner();
+        focusComposer();
+        break;
+      }
+      case 'sessions': sessions = m.sessions || []; renderSessions(); refreshHeaderTitle(); break;
+      case 'user': {
+        const msg = m.msg;
+        if (!msg) break;
+        // Already saw the server-canonical version
+        if (msg.id && messagesEl.querySelector('.msg.user[data-id="'+msg.id+'"]')) break;
+        // Reconcile against any optimistic 'pending-…' placeholder with same text.
+        // Server rewrites caption-less attachment uploads (similar to lite UI),
+        // so match on raw text we stored on dataset.text.
+        const txt = (msg.text || '').trim();
+        const ph = [...messagesEl.querySelectorAll('.msg.user[data-id^="pending-"]')]
+          .find(el => (el.dataset.text || '').trim() === txt);
+        if (ph) ph.remove();
+        messages.push(msg);
+        renderMessage(msg);
+        break;
+      }
+      case 'assistant_start':
+        turnHadAssistant = true;
+        showTyping(false);            // first text content_block → swap dots for streaming bubble
+        startStream(m.id);
+        busy = true; setStatus('thinking…','busy');
+        break;
+      case 'assistant_delta': appendDelta(m.id, m.text||''); break;
+      case 'assistant_end':   endStream(m.id); break;
+      case 'turn_done':
+        endStream();
+        showTyping(false);
+        busy = false;
+        if (m.sessions) { sessions = m.sessions; renderSessions(); refreshHeaderTitle(); }
+        // If the turn produced no text response and the user's message was
+        // a slash command, claude likely handled it silently (e.g., /model
+        // changes the model with no chat output). Surface a small hint so
+        // the UI doesn't look stuck.
+        if (!turnHadAssistant && lastSentText.startsWith('/')){
+          const note = document.createElement('div');
+          note.className = 'sys-note';
+          note.innerHTML = '<span class="ico">⚙︎</span><span>Slash command handled silently — no text response. Type another message to continue.</span>';
+          messagesEl.appendChild(note);
+          requestAnimationFrame(()=>{ $('scrollarea').scrollTop = 1e9; });
+        }
+        turnHadAssistant = false;
+        lastSentText = '';
+        setOnline(true);
+        focusComposer();
+        break;
+      case 'session_ended':
+        endStream();
+        showTyping(false);
+        pid = null; busy = false;
+        setOnline(true);
+        focusComposer();
+        break;
+      case 'upload_ok': {
+        for (const [localId, e] of stagedFiles){
+          if (e.status === 'uploading' && e.name === m.name && e.size === m.size){
+            e.status = 'ready';
+            e.fileId = m.fileId;
+            e.path   = m.path;
+            e.url    = m.url;       // server-served URL, used for reload-safe rendering
+            renderTray();
+            return;
+          }
+        }
+        break;
+      }
+      case 'error':
+        showBanner('Error: ' + (m.message||'unknown'));
+        setTimeout(hideBanner, 5000);
+        break;
+    }
+  }
+
+  // ───── composer ─────
+  function autosize(){
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 240) + 'px';
+    const hasText  = !!input.value.trim();
+    const hasFiles = [...stagedFiles.values()].some(e => e.status === 'ready');
+    const anyUploading = [...stagedFiles.values()].some(e => e.status === 'uploading');
+    // Allow sending even while Claude is mid-reply — it just queues the next
+    // turn. Stay disabled only when offline / nothing to send / mid-upload.
+    sendBtn.disabled = !online || anyUploading || (!hasText && !hasFiles);
+  }
+  input.addEventListener('input', autosize);
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); }
+  });
+
+  // ───── attachments ─────
+  attachBtn.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', async () => {
+    const files = [...fileInput.files];
+    fileInput.value = '';
+    for (const f of files) await stageFile(f);
+    autosize();
+  });
+  ['dragenter','dragover'].forEach(evt => document.addEventListener(evt, e => e.preventDefault()));
+  document.addEventListener('drop', async e => {
+    if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
+    e.preventDefault();
+    for (const f of e.dataTransfer.files) await stageFile(f);
+    autosize();
+  });
+  input.addEventListener('paste', async e => {
+    if (!e.clipboardData || !e.clipboardData.items) return;
+    for (const item of e.clipboardData.items){
+      if (item.kind === 'file'){
+        const f = item.getAsFile();
+        if (f) await stageFile(f);
+      }
+    }
+    autosize();
+  });
+
+  async function stageFile(file){
+    if (!file) return;
+    const MAX = 10*1024*1024;
+    if (file.size > MAX){
+      showBanner('File too big (max 10 MB): '+file.name);
+      setTimeout(hideBanner, 4000);
+      return;
+    }
+    const localId = 'a-' + Date.now() + '-' + Math.random().toString(36).slice(2,7);
+    const isImage = (file.type || '').startsWith('image/');
+    const previewUrl = isImage ? URL.createObjectURL(file) : null;
+    const entry = {
+      localId, name: file.name || (isImage?'image':'file'),
+      mimeType: file.type || 'application/octet-stream',
+      size: file.size, previewUrl, status: 'uploading',
+      url: null, path: null,   // populated by upload_ok response
+    };
+    stagedFiles.set(localId, entry);
+    renderTray();
+    autosize();
+
+    // Read file as base64 + send upload command
+    const base64 = await new Promise((res,rej)=>{
+      const r = new FileReader();
+      r.onerror = ()=>rej(r.error);
+      r.onload  = ()=>res(String(r.result).split(',')[1]);
+      r.readAsDataURL(file);
+    });
+    if (!send({type:'upload', name: file.name, mimeType: file.type, data: base64})){
+      stagedFiles.delete(localId);
+      renderTray();
+    }
+  }
+
+  function renderTray(){
+    tray.classList.toggle('on', stagedFiles.size > 0);
+    tray.innerHTML = '';
+    for (const e of stagedFiles.values()){
+      const chip = document.createElement('div'); chip.className = 'chip';
+      const thumb = e.previewUrl
+        ? '<img class="chip-thumb" src="' + e.previewUrl + '" alt="">'
+        : '<span class="chip-icon">📄</span>';
+      chip.innerHTML = thumb +
+        '<span class="chip-name">' + escapeHTML(e.name) + '</span>' +
+        (e.status === 'uploading'
+          ? '<span class="chip-spinner"></span>'
+          : '<button class="chip-x" type="button" aria-label="Remove">×</button>');
+      const x = chip.querySelector('.chip-x');
+      if (x) x.onclick = () => {
+        if (e.previewUrl) URL.revokeObjectURL(e.previewUrl);
+        stagedFiles.delete(e.localId); renderTray(); autosize();
+      };
+      tray.appendChild(chip);
+    }
+  }
+
+  // ───── send ─────
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    const text = input.value.trim();
+    const ready = [...stagedFiles.values()].filter(e => e.status === 'ready');
+    // Note: not gated on `busy` — interruption is allowed. Server writes the
+    // new user turn to claude's stdin; claude finishes the current turn then
+    // reads + answers the new one.
+    if (!text && !ready.length) return;
+
+    const attachments = ready.map(e => ({
+      fileId: e.fileId, path: e.path, url: e.url,
+      name: e.name, mimeType: e.mimeType, size: e.size,
+      previewUrl: e.previewUrl,   // optimistic only — server doesn't read this
+    }));
+    if (!send({type:'send', text, attachments})) return;
+    lastSentText = text;
+    turnHadAssistant = false;
+    input.value = ''; autosize();
+    // Show the typing indicator immediately — the empty gap between submit
+    // and the first stream token (claude warming up, tool call, etc.) is the
+    // most confusing part of the UX. Hide it as soon as deltas start.
+    showTyping(true);
+    busy = true;
+    setStatus('thinking…', 'busy');
+
+    // Drain ready chips (not uploading ones — those finish later)
+    for (const e of ready){
+      // Keep the previewUrl alive — it's referenced by the message bubble we
+      // optimistically render below.
+      stagedFiles.delete(e.localId);
+    }
+    renderTray();
+
+    // Optimistic: render the user message immediately. The server will echo
+    // back its canonical version with the same id; we dedup by id.
+    const localMsg = {
+      role: 'user', text, ts: Date.now()/1000,
+      id: 'pending-' + Date.now(), attachments,
+    };
+    renderMessage(localMsg);
+  });
+
+  // ───── new chat ─────
+  $('newBtn').addEventListener('click', () => {
+    if (!online) return;
+    send({type:'new'});
+    closeDrawer();
+    // The full state arrives in a moment; pre-focus so the user can start
+    // typing without waiting for the round-trip.
+    setTimeout(focusComposer, 50);
+  });
+
+  // ───── settings sheet (theme) ─────
+  const THEMES = [
+    { id:'amber',   label:'Amber',   a:'#c78f5b', b:'#e0a06a' },
+    { id:'ember',   label:'Ember',   a:'#ff5a3c', b:'#ff8a3d' },
+    { id:'sunset',  label:'Sunset',  a:'#f97316', b:'#ec4899' },
+    { id:'rose',    label:'Rose',    a:'#f43f5e', b:'#fb7185' },
+    { id:'magenta', label:'Magenta', a:'#d946ef', b:'#ec4899' },
+    { id:'violet',  label:'Violet',  a:'#8b5cf6', b:'#a855f7' },
+    { id:'ocean',   label:'Ocean',   a:'#3b82f6', b:'#06b6d4' },
+    { id:'mint',    label:'Mint',    a:'#14b8a6', b:'#5eead4' },
+    { id:'forest',  label:'Forest',  a:'#10b981', b:'#22c55e' },
+    { id:'slate',   label:'Slate',   a:'#64748b', b:'#94a3b8' },
+  ];
+  const THEME_KEY = 'cc.theme';
+  function applyTheme(id){
+    document.documentElement.setAttribute('data-theme', id);
+    try { localStorage.setItem(THEME_KEY, id); } catch(e) {}
+    document.querySelectorAll('.swatch').forEach(el => el.classList.toggle('active', el.dataset.theme === id));
+  }
+  function buildThemeGrid(){
+    const grid = $('themeGrid'); grid.innerHTML = '';
+    for (const t of THEMES){
+      const cell = document.createElement('div'); cell.className = 'theme-row';
+      const sw = document.createElement('button'); sw.type = 'button';
+      sw.className = 'swatch'; sw.dataset.theme = t.id;
+      sw.style.setProperty('--sw-a', t.a); sw.style.setProperty('--sw-b', t.b);
+      sw.title = t.label; sw.setAttribute('aria-label','Theme: '+t.label);
+      sw.onclick = () => applyTheme(t.id);
+      const label = document.createElement('div'); label.className='swatch-label';
+      label.textContent = t.label;
+      cell.appendChild(sw); cell.appendChild(label); grid.appendChild(cell);
+    }
+  }
+  function loadTheme(){
+    let id = 'amber';
+    try { id = localStorage.getItem(THEME_KEY) || 'amber'; } catch(e) {}
+    if (!THEMES.some(t => t.id === id)) id = 'amber';
+    applyTheme(id);
+  }
+  function openSheet(){$('sheet').hidden=false;$('sheetBackdrop').classList.add('on');}
+  function closeSheet(){$('sheet').hidden=true;$('sheetBackdrop').classList.remove('on');}
+  $('settingsBtn').addEventListener('click', openSheet);
+  $('sheetClose').addEventListener('click', closeSheet);
+  $('sheetBackdrop').addEventListener('click', closeSheet);
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && !$('sheet').hidden) closeSheet();
+  });
+  buildThemeGrid(); loadTheme();
+
+  // ───── mic / speech-to-text (Web Speech API) ─────
+  // Uses the browser's built-in recognition: macOS Safari/Chrome both wire it
+  // through the system speech engine (the same one Dictation uses), so no
+  // server-side audio transport — recognition happens in the browser.
+  // Interim results stream into the textarea live; final results stick.
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const micBtn = $('micBtn');
+  let recognition = null;
+  let listening = false;
+  let micBaseValue = '';   // textarea value at the moment recording started
+  let micFinalAcc = '';    // finalized transcripts accumulated so far this session
+
+  if (!SpeechRecognition){
+    micBtn.disabled = true;
+    micBtn.title = 'Speech recognition not supported in this browser';
+    micBtn.style.opacity = '.4';
+    micBtn.style.cursor = 'not-allowed';
+  } else {
+    micBtn.addEventListener('click', () => {
+      if (listening) stopMic(); else startMic();
+    });
+  }
+
+  function startMic(){
+    if (listening || !SpeechRecognition) return;
+    try {
+      recognition = new SpeechRecognition();
+    } catch(e) {
+      showBanner('Cannot start mic: ' + e.message); setTimeout(hideBanner, 4000); return;
+    }
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = navigator.language || 'en-US';
+    micBaseValue = input.value;
+    micFinalAcc = '';
+
+    recognition.onresult = (event) => {
+      let interim = '';
+      for (let i = event.resultIndex; i < event.results.length; i++){
+        const r = event.results[i];
+        if (r.isFinal) micFinalAcc += r[0].transcript;
+        else interim += r[0].transcript;
+      }
+      const sep = micBaseValue && !micBaseValue.endsWith(' ') ? ' ' : '';
+      input.value = micBaseValue + sep + micFinalAcc + interim;
+      autosize();
+    };
+    recognition.onerror = (e) => {
+      // 'no-speech', 'aborted', 'not-allowed' — log + bail
+      if (e.error === 'not-allowed'){
+        showBanner('Microphone permission denied. Allow it in browser settings to dictate.');
+        setTimeout(hideBanner, 5000);
+      }
+      stopMic();
+    };
+    recognition.onend = () => {
+      // Browser auto-stops sometimes (network blip, silence) — ensure UI matches.
+      listening = false; updateMicUI();
+    };
+    try { recognition.start(); } catch(e) { stopMic(); return; }
+    listening = true;
+    updateMicUI();
+    input.focus();
+  }
+  function stopMic(){
+    if (recognition){
+      try { recognition.stop(); } catch(e) {}
+      recognition = null;
+    }
+    listening = false;
+    updateMicUI();
+  }
+  function updateMicUI(){
+    micBtn.classList.toggle('listening', listening);
+    micBtn.title = listening ? 'Stop recording (Esc)' : 'Click to dictate';
+    micBtn.setAttribute('aria-pressed', listening ? 'true' : 'false');
+  }
+  // Esc while listening = stop
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && listening) stopMic();
+  });
+
+  connect();
+})();
+</script>
+</body>
+</html>

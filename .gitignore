@@ -1,0 +1,30 @@
+# macOS
+.DS_Store
+._*
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+
+# Local data — these are written by cc-server at runtime, never tracked.
+.claude-code-ui/
+.openclaw/
+claude-ui/
+
+# Environment files
+.env
+.env.local
+
+# OS / tools
+*.log
+node_modules/

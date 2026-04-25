@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Example macOS launchd plist for keeping cc-server.py running.
+
+  Install:
+    1. Copy this file to ~/Library/LaunchAgents/ai.claude-code-ui.plist
+    2. Edit the YOU placeholders and python3 path below.
+    3. launchctl load ~/Library/LaunchAgents/ai.claude-code-ui.plist
+
+  Inspect:
+    launchctl list | grep claude-code-ui
+    tail -f ~/.claude-code-ui/logs/cc-server.stderr.log
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.claude-code-ui</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/YOU/claude-code-ui/server/cc-server.py</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- Bind to a fixed port. Default is 8765. -->
+        <key>CC_SERVER_PORT</key>
+        <string>8765</string>
+
+        <!-- Path to the claude CLI. Find yours with `which claude`. -->
+        <key>CC_CLAUDE_BIN</key>
+        <string>/opt/homebrew/bin/claude</string>
+
+        <!-- Default model for new chats. /model inside chat overrides per-session. -->
+        <key>CC_MODEL_DEFAULT</key>
+        <string>claude-sonnet-4-5</string>
+
+        <!-- Make the standard PATH visible so claude can find node, ripgrep, etc. -->
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/YOU/claude-code-ui</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/YOU/.claude-code-ui/logs/cc-server.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/YOU/.claude-code-ui/logs/cc-server.stderr.log</string>
+</dict>
+</plist>

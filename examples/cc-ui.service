@@ -1,0 +1,31 @@
+# Example systemd unit for Linux — keep cc-server.py running.
+#
+# Install:
+#   1. Copy this file to ~/.config/systemd/user/cc-ui.service
+#   2. Edit User, ExecStart, and the env vars to match your setup.
+#   3. systemctl --user daemon-reload
+#      systemctl --user enable --now cc-ui
+#
+# Inspect:
+#   systemctl --user status cc-ui
+#   journalctl --user -u cc-ui -f
+
+[Unit]
+Description=Claude Code UI — WebSocket bridge to the claude CLI
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/claude-code-ui/server/cc-server.py
+WorkingDirectory=%h/claude-code-ui
+
+Environment=CC_SERVER_PORT=8765
+Environment=CC_CLAUDE_BIN=%h/.local/bin/claude
+Environment=CC_MODEL_DEFAULT=claude-sonnet-4-5
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
