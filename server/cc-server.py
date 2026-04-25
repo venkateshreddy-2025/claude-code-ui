@@ -73,6 +73,9 @@ import signal
 import shutil
 import sys
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
 from http import HTTPStatus
 from pathlib import Path
@@ -126,6 +129,41 @@ SERVE_STATIC = os.environ.get('CC_SERVE_STATIC', '1') not in ('0', 'false', 'no'
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB after base64 decode
 
 IMAGE_MIMES = {'image/png', 'image/jpeg', 'image/gif', 'image/webp'}
+
+# ───────────────────  Telegram bridge config  ───────────────────
+# Optional integration: if CC_TELEGRAM_BOT_TOKEN is set, the server runs
+# a background long-polling task that lets a Telegram bot reach into
+# the same set of sessions as the web UI (one of the parallel workers
+# answers; replies stream back via editMessageText).
+#
+# Anyone can talk to a Telegram bot — without an allowlist, anyone who
+# finds the bot username can run claude as you. So messages from any
+# user not in CC_TELEGRAM_ALLOWED_USERS are firmly refused.
+TELEGRAM_TOKEN = os.environ.get('CC_TELEGRAM_BOT_TOKEN', '').strip()
+
+
+def _parse_int_set(raw: str) -> set[int]:
+    out: set[int] = set()
+    for part in (raw or '').replace(',', ' ').split():
+        try:
+            out.add(int(part))
+        except ValueError:
+            pass
+    return out
+
+
+TELEGRAM_ALLOWED_USERS: set[int] = _parse_int_set(
+    os.environ.get('CC_TELEGRAM_ALLOWED_USERS', ''))
+# Optional: also allow specific chat ids (e.g. a private group with the
+# user). Both checks must pass — sender must be in ALLOWED_USERS AND the
+# chat must be in ALLOWED_CHATS, if ALLOWED_CHATS is set.
+TELEGRAM_ALLOWED_CHATS: set[int] = _parse_int_set(
+    os.environ.get('CC_TELEGRAM_ALLOWED_CHATS', ''))
+# Min ms between editMessageText calls per Telegram chat. Telegram
+# enforces ~1 msg/sec per chat for editing; 1200 ms gives headroom.
+TELEGRAM_EDIT_INTERVAL_MS = int(os.environ.get('CC_TELEGRAM_EDIT_INTERVAL_MS', '1200'))
+# 4096 is Telegram's hard limit per message; we leave a small margin.
+TELEGRAM_MAX_MSG_LEN = 3800
 
 # ───────────────────  state  ───────────────────
 # Parallel-workers model: each session that the user has touched gets
@@ -334,6 +372,15 @@ def append_message(sid: str, msg: dict):
 
 # ───────────────────  broadcast  ───────────────────
 async def broadcast(msg: dict):
+    # Telegram bridge gets first dibs — TG turns relay deltas to the
+    # bot independently of any WS clients. (Defined later in the file;
+    # the import-time forward reference is fine because broadcast is
+    # only ever called after main() has set everything up.)
+    try:
+        await telegram_relay_event(msg)
+    except Exception as e:
+        log(f'telegram relay error: {e}')
+
     if not state.clients:
         return
     data = json.dumps(msg)
@@ -1743,6 +1790,617 @@ async def handle_client(websocket):
         log(f'client disconnected (remaining: {len(state.clients)})')
 
 
+# ───────────────────  Telegram bridge  ───────────────────
+# Optional bot integration. Anyone in CC_TELEGRAM_ALLOWED_USERS can
+# message the bot to chat with claude — the message goes through the
+# same `send_to_session()` path the web UI uses, and the streaming
+# reply is mirrored back via Telegram's editMessageText.
+#
+# Per-user bindings (which session each Telegram user is "currently
+# in") persist at <DATA_DIR>/cc-telegram.json so a bot restart doesn't
+# lose the user's place.
+TG_STATE_FILE = DATA_DIR / 'cc-telegram.json'
+
+
+def tg_state_load() -> dict:
+    """Loads the persisted per-user binding map.
+
+    Schema: {"<tg_user_id>": {"sid": "<session_id>", "chat_id": <int>}}
+    """
+    if not TG_STATE_FILE.exists():
+        return {}
+    try:
+        return json.loads(TG_STATE_FILE.read_text())
+    except Exception as e:
+        log(f'telegram: state load failed: {e}')
+        return {}
+
+
+def tg_state_save(s: dict):
+    try:
+        TG_STATE_FILE.write_text(json.dumps(s, indent=2))
+    except Exception as e:
+        log(f'telegram: state save failed: {e}')
+
+
+class TelegramTarget:
+    """One Telegram chat receiving the stream of an assistant reply.
+    A single TelegramTurn fans out to N targets so a chat that's
+    "bound" by multiple Telegram users (or has the same user on
+    multiple devices) all see the same edits in real time."""
+    def __init__(self, chat_id: int, uid: int):
+        self.chat_id = chat_id
+        self.uid = uid
+        self.message_ids: list[int] = []   # placeholder + overflow messages
+
+
+class TelegramTurn:
+    """One in-progress assistant reply being mirrored to Telegram.
+
+    Lifecycle: created either (a) when a Telegram user sends a message
+    via the bot, or (b) lazily when an assistant reply starts in a
+    session that any Telegram user is bound to (sync from web → TG).
+
+    Lives in `state.tg_turns[sid]` while assistant deltas roll in. On
+    `turn_done` (or `session_ended`), we do a final edit and remove it.
+
+    Telegram messages cap at 4096 chars; longer replies fan out into
+    additional messages we keep editing in turn (per-target message_ids)."""
+    def __init__(self, sid: str):
+        self.sid = sid
+        self.text = ''                     # accumulated reply
+        self.last_edit_ms: float = 0.0     # rate-limit clock
+        self.flush_task: asyncio.Task | None = None
+        self.targets: list[TelegramTarget] = []
+
+    def add_target(self, chat_id: int, uid: int,
+                   placeholder_id: int | None = None) -> TelegramTarget:
+        """Idempotent — returns the existing target if (chat_id, uid)
+        already has one (avoids double-streaming when /here or the
+        binding state already lined them up)."""
+        for t in self.targets:
+            if t.chat_id == chat_id and t.uid == uid:
+                return t
+        t = TelegramTarget(chat_id, uid)
+        if placeholder_id:
+            t.message_ids.append(placeholder_id)
+        self.targets.append(t)
+        return t
+
+    def has_target(self, chat_id: int) -> bool:
+        return any(t.chat_id == chat_id for t in self.targets)
+
+
+def tg_targets_for_session(sid: str) -> list[tuple[int, int]]:
+    """All (chat_id, uid) pairs that have bound themselves to sid.
+    These are the recipients of any assistant reply in that session,
+    even if the message was triggered from the web UI."""
+    out = []
+    for uid_str, info in state.tg_user_state.items():
+        if info.get('sid') == sid:
+            try:
+                out.append((int(info.get('chat_id')), int(uid_str)))
+            except (ValueError, TypeError):
+                pass
+    return out
+
+
+async def tg_ensure_passive_turn(sid: str) -> TelegramTurn | None:
+    """If any Telegram user is bound to sid but no turn exists yet,
+    create a passive one so the web → TG sync starts mirroring on the
+    next delta. Returns the (existing or newly created) turn, or None
+    if nobody is bound."""
+    bound = tg_targets_for_session(sid)
+    if not bound:
+        return None
+    turn = state.tg_turns.get(sid)
+    if turn is None:
+        turn = TelegramTurn(sid=sid)
+        state.tg_turns[sid] = turn
+    for chat_id, uid in bound:
+        turn.add_target(chat_id, uid)
+    return turn
+
+
+# Add Telegram-specific fields onto the global State container.
+state.tg_turns = {}      # type: ignore[attr-defined]  # sid -> TelegramTurn
+state.tg_user_state = {}  # type: ignore[attr-defined]  # uid_str -> {sid, chat_id}
+
+
+async def tg_api(method: str, params: dict | None = None,
+                 timeout: float = 30) -> dict:
+    """Call a Telegram Bot API method via HTTPS POST.
+
+    We use stdlib urllib in a thread executor so we don't pull in
+    aiohttp as a dependency. The Bot API is JSON in / JSON out.
+    """
+    if not TELEGRAM_TOKEN:
+        return {'ok': False, 'error_code': 0, 'description': 'no token'}
+    url = f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/{method}'
+    body = json.dumps(params or {}).encode('utf-8')
+    headers = {'Content-Type': 'application/json'}
+
+    def do_request():
+        req = urllib.request.Request(url, data=body, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.loads(r.read().decode('utf-8'))
+        except urllib.error.HTTPError as e:
+            try:
+                detail = json.loads(e.read().decode('utf-8'))
+            except Exception:
+                detail = {'description': str(e)}
+            return {'ok': False, 'error_code': e.code, **detail}
+        except Exception as e:
+            return {'ok': False, 'error_code': 0, 'description': str(e)}
+
+    return await asyncio.get_event_loop().run_in_executor(None, do_request)
+
+
+async def tg_send(chat_id: int, text: str, *, reply_markup: dict | None = None,
+                  parse_mode: str | None = None) -> dict:
+    """Convenience wrapper around sendMessage."""
+    payload = {'chat_id': chat_id, 'text': text or '…',
+               'disable_web_page_preview': True}
+    if parse_mode: payload['parse_mode'] = parse_mode
+    if reply_markup: payload['reply_markup'] = reply_markup
+    return await tg_api('sendMessage', payload)
+
+
+def tg_truncate(text: str, n: int = TELEGRAM_MAX_MSG_LEN) -> str:
+    if len(text) <= n: return text
+    return text[:n - 3] + '…'
+
+
+def tg_is_authorized(uid: int, chat_id: int) -> bool:
+    """The two-gate allowlist: sender's user-id must be in
+    ALLOWED_USERS, and (if ALLOWED_CHATS is non-empty) the chat must
+    also be on that list."""
+    if not TELEGRAM_ALLOWED_USERS:
+        return False                        # empty allowlist = bot off
+    if uid not in TELEGRAM_ALLOWED_USERS:
+        return False
+    if TELEGRAM_ALLOWED_CHATS and chat_id not in TELEGRAM_ALLOWED_CHATS:
+        return False
+    return True
+
+
+def tg_recent_sessions(limit: int = 10) -> list[dict]:
+    """Most-recently-active sessions, brief form."""
+    items = list_sessions_brief()
+    items.sort(key=lambda s: -(s.get('lastActiveAt') or s.get('createdAt') or 0))
+    return items[:limit]
+
+
+def tg_resolve_session_for(uid: int) -> str | None:
+    """Pick the session a Telegram user's plain message goes to:
+    1. their explicitly-bound session (from /list or /new), if it
+       still exists,
+    2. otherwise their most recent session by lastActiveAt,
+    3. otherwise None (the user gets prompted to /new)."""
+    bound = state.tg_user_state.get(str(uid), {}).get('sid')
+    if bound and load_session(bound):
+        return bound
+    recent = tg_recent_sessions(limit=1)
+    return recent[0]['id'] if recent else None
+
+
+def tg_bind(uid: int, chat_id: int, sid: str):
+    state.tg_user_state[str(uid)] = {'sid': sid, 'chat_id': chat_id}
+    tg_state_save(state.tg_user_state)
+
+
+# ── Telegram → claude (incoming command dispatch) ──
+async def tg_handle_list(chat_id: int, uid: int):
+    items = tg_recent_sessions(limit=10)
+    if not items:
+        await tg_send(chat_id, 'No chats yet. Send me a message and '
+                                'I\'ll create one — or use /new to start.')
+        return
+    bound_sid = state.tg_user_state.get(str(uid), {}).get('sid')
+    rows = []
+    lines = ['Pick a chat to continue (most recent first):', '']
+    for i, s in enumerate(items, start=1):
+        title = (s.get('title') or 'Untitled')[:50]
+        marker = ' ✓' if s.get('id') == bound_sid else ''
+        when = ''
+        ts = s.get('lastActiveAt') or s.get('createdAt')
+        if ts:
+            secs = max(0, time.time() - ts)
+            if   secs < 60:    when = 'just now'
+            elif secs < 3600:  when = f'{int(secs/60)}m ago'
+            elif secs < 86400: when = f'{int(secs/3600)}h ago'
+            else:              when = f'{int(secs/86400)}d ago'
+        lines.append(f'{i}. {title}{marker}  · {when}')
+        rows.append([{'text': f'{i}. {title[:40]}',
+                      'callback_data': f'use:{s["id"]}'}])
+    await tg_send(chat_id, '\n'.join(lines),
+                   reply_markup={'inline_keyboard': rows})
+
+
+async def tg_handle_new(chat_id: int, uid: int, title: str | None = None):
+    """Spawn a fresh session via the same code path the UI uses, then
+    bind this Telegram user to it."""
+    # `new_session` flips state.active_id which is fine; the focused
+    # browser tab will switch too. If that's annoying we can split it
+    # into a "create-without-focusing" variant later.
+    await new_session()
+    sid = state.active_id
+    if not sid:
+        await tg_send(chat_id, '⚠ Could not create a new session.')
+        return
+    if title:
+        await rename_session(sid, title)
+    tg_bind(uid, chat_id, sid)
+    await tg_send(chat_id, f'✓ New chat created — bound to you. '
+                            f'Send me a message and claude will reply.')
+
+
+async def tg_handle_here(chat_id: int, uid: int):
+    sid = state.tg_user_state.get(str(uid), {}).get('sid')
+    if sid is None or not load_session(sid):
+        sid = tg_resolve_session_for(uid)
+        if sid is None:
+            await tg_send(chat_id, 'No active chat yet. Use /new to start one.')
+            return
+        # Auto-bind to most recent on first /here so the answer is honest.
+        tg_bind(uid, chat_id, sid)
+    sess = load_session(sid)
+    title = (sess.get('title') if sess else None) or 'Untitled'
+    await tg_send(chat_id, f'You\'re in: {title}\nID: `{sid[:8]}…`',
+                   parse_mode='Markdown')
+
+
+async def tg_handle_fork(chat_id: int, uid: int):
+    bound = state.tg_user_state.get(str(uid), {}).get('sid')
+    if not bound or not load_session(bound):
+        await tg_send(chat_id, 'No bound chat to fork. Use /list first.')
+        return
+    await fork_session(bound, last_n=200)
+    new_sid = state.active_id
+    if new_sid:
+        tg_bind(uid, chat_id, new_sid)
+        await tg_send(chat_id, '✓ Forked. You\'re now in the new chat with '
+                                'the last 200 turns as context.')
+
+
+async def tg_handle_callback(cb: dict):
+    """Inline-keyboard click handler (used by /list)."""
+    uid = cb.get('from', {}).get('id')
+    chat_id = cb.get('message', {}).get('chat', {}).get('id')
+    data = cb.get('data') or ''
+    cb_id = cb.get('id')
+
+    if uid is None or chat_id is None or not tg_is_authorized(uid, chat_id):
+        try: await tg_api('answerCallbackQuery',
+                           {'callback_query_id': cb_id,
+                            'text': 'Not authorised.'})
+        except Exception: pass
+        return
+
+    if data.startswith('use:'):
+        sid = data.split(':', 1)[1]
+        sess = load_session(sid)
+        if sess is None:
+            await tg_api('answerCallbackQuery',
+                          {'callback_query_id': cb_id,
+                           'text': 'That chat no longer exists.'})
+            return
+        tg_bind(uid, chat_id, sid)
+        await tg_api('answerCallbackQuery',
+                      {'callback_query_id': cb_id,
+                       'text': f'Bound to: {sess.get("title","Untitled")[:40]}'})
+        # Show the bound chat's last assistant message as a "you're back" hint
+        msgs = sess.get('messages', []) or []
+        last_bot = next((m for m in reversed(msgs) if m.get('role') == 'assistant'), None)
+        body = (last_bot.get('text') if last_bot else None) or '(no replies yet)'
+        await tg_send(chat_id, '✓ Continuing chat: '
+                                f'{sess.get("title","Untitled")}\n\nLast reply:\n\n'
+                                + tg_truncate(body, 1500))
+        return
+
+    # Unknown callback — silently ack so the spinner clears.
+    try: await tg_api('answerCallbackQuery',
+                       {'callback_query_id': cb_id})
+    except Exception: pass
+
+
+async def tg_handle_message(msg: dict):
+    """Dispatch a single Telegram update.message to the right handler."""
+    sender = msg.get('from') or {}
+    chat = msg.get('chat') or {}
+    uid = sender.get('id')
+    chat_id = chat.get('id')
+    text = (msg.get('text') or '').strip()
+
+    if uid is None or chat_id is None:
+        return
+
+    if not tg_is_authorized(uid, chat_id):
+        log(f'telegram: rejected uid={uid} chat={chat_id}')
+        try:
+            await tg_send(chat_id,
+                f'⛔ Not authorised.\nYour Telegram user id is `{uid}`.\n'
+                f'Ask the operator to add it to CC_TELEGRAM_ALLOWED_USERS.',
+                parse_mode='Markdown')
+        except Exception: pass
+        return
+
+    # Slash commands ─────────────
+    if text.startswith('/list'):
+        await tg_handle_list(chat_id, uid); return
+    if text.startswith('/new'):
+        title = text[len('/new'):].strip() or None
+        await tg_handle_new(chat_id, uid, title); return
+    if text.startswith('/here'):
+        await tg_handle_here(chat_id, uid); return
+    if text.startswith('/fork'):
+        await tg_handle_fork(chat_id, uid); return
+    if text.startswith('/start'):
+        await tg_send(chat_id,
+            'Hi! I\'m a bridge to your Claude Code UI.\n\n'
+            'Just send a message and I\'ll route it to your most recent '
+            'chat. Useful commands:\n\n'
+            '/list — pick a different chat\n'
+            '/new <title> — start a fresh chat\n'
+            '/here — which chat am I in?\n'
+            '/fork — branch the current chat')
+        return
+    if text.startswith('/'):
+        # Unknown slash command — pass it through to claude (claude has
+        # its own / commands like /model that take effect inside a session).
+        pass
+
+    if not text:
+        await tg_send(chat_id, 'Send me some text and I\'ll forward it to claude.')
+        return
+
+    # Plain message → most-recent (or bound) session.
+    sid = tg_resolve_session_for(uid)
+    if sid is None:
+        await tg_send(chat_id, 'No chats yet. Use /new to start one.')
+        return
+
+    # Auto-bind on first message so /here is informative.
+    if state.tg_user_state.get(str(uid), {}).get('sid') != sid:
+        tg_bind(uid, chat_id, sid)
+
+    # Register / reuse an in-progress turn for this sid so the
+    # streaming relay knows where to edit. A turn may already exist
+    # (e.g. if a web user just triggered a reply for this same sid and
+    # we're piggy-backing on it) — in that case we just add the
+    # sender as another target.
+    prev = state.tg_turns.get(sid)
+    if prev is not None:
+        # Reuse: fast-flush so the new sender sees the current state
+        # quickly, and add their chat as a target if not already there.
+        turn = prev
+    else:
+        turn = TelegramTurn(sid=sid)
+        state.tg_turns[sid] = turn
+
+    # Send a placeholder bubble we'll edit as deltas arrive — only
+    # for the SENDER. (Other bound users keep receiving via their
+    # own existing target streams; we don't post a duplicate.)
+    if not turn.has_target(chat_id):
+        placeholder = await tg_send(chat_id, '…')
+        if placeholder.get('ok'):
+            turn.add_target(chat_id, uid,
+                            placeholder_id=placeholder['result']['message_id'])
+        else:
+            # Add the target anyway; tg_flush_now will create a
+            # placeholder lazily on first delta.
+            turn.add_target(chat_id, uid)
+            log(f'telegram: placeholder send failed: {placeholder}')
+
+    # Also pull in any *other* users bound to this sid so they see the
+    # mirrored stream when the web user replies (or when this user
+    # answers and the other is also subscribed).
+    for chat2, uid2 in tg_targets_for_session(sid):
+        turn.add_target(chat2, uid2)
+
+    await send_to_session(sid, text, [])
+
+
+# ── claude → Telegram (relay outgoing assistant deltas) ──
+async def telegram_relay_event(event: dict):
+    """Called from inside `broadcast()`. If the event's sessionId is
+    bound by any Telegram user, route the event to (or lazily create)
+    a TelegramTurn for that session.
+
+    Sync model: this is what makes the bridge "100% syncable". A reply
+    triggered from the web UI fans out to every Telegram user bound
+    to the same sid via `tg_ensure_passive_turn`."""
+    if not TELEGRAM_TOKEN:
+        return                          # bridge disabled
+    sid = event.get('sessionId')
+    if not sid:
+        return
+
+    et = event.get('type')
+
+    # 'user' = a new user message landed (from any surface). Create a
+    # passive turn so any TG user bound to sid sees the streaming
+    # reply that's about to happen, even if we're not the sender.
+    if et in ('user', 'assistant_start'):
+        await tg_ensure_passive_turn(sid)
+        # If a web-side message just landed and there's a TG user
+        # bound to this sid, mirror the user message to them so the
+        # back-and-forth context stays coherent.
+        if et == 'user':
+            msg = event.get('msg') or {}
+            text = msg.get('text') or ''
+            mid  = msg.get('id') or ''
+            if text:
+                for chat_id, uid in tg_targets_for_session(sid):
+                    # Don't echo back to the sender if they sent via
+                    # Telegram (their own chat already shows it).
+                    turn = state.tg_turns.get(sid)
+                    if turn and turn.has_target(chat_id):
+                        # Heuristic: if this 'user' event has the same
+                        # text as one we already mirrored to chat_id,
+                        # skip. We don't track that explicitly — Telegram
+                        # de-dupes by message_id; we prefix with 🌐 so
+                        # the user knows it came from the web.
+                        pass
+                    try:
+                        await tg_send(chat_id, f'🌐 You (web): {tg_truncate(text, 1500)}')
+                    except Exception: pass
+
+    turn = state.tg_turns.get(sid)
+    if turn is None:
+        return                          # nobody bound to this sid
+
+    if et == 'assistant_start':
+        turn.text = ''
+
+    elif et == 'assistant_delta':
+        chunk = event.get('text') or ''
+        if chunk:
+            turn.text += chunk
+            tg_schedule_flush(turn)
+
+    elif et == 'assistant_end':
+        await tg_flush_now(turn)
+
+    elif et == 'turn_done':
+        await tg_flush_now(turn, final=True)
+        # Remove only if we're the active turn for this sid (a quick
+        # follow-up may have replaced us already).
+        if state.tg_turns.get(sid) is turn:
+            state.tg_turns.pop(sid, None)
+
+    elif et == 'session_ended':
+        # claude exited mid-turn — let every recipient know and drop.
+        for tgt in turn.targets:
+            try:
+                await tg_send(tgt.chat_id,
+                    f'⚠ claude session ended unexpectedly (exit '
+                    f'{event.get("exitCode","?")}). Send another message to retry.')
+            except Exception: pass
+        if state.tg_turns.get(sid) is turn:
+            state.tg_turns.pop(sid, None)
+
+
+def tg_schedule_flush(turn: TelegramTurn):
+    """Coalesces deltas into ~1 editMessageText every TELEGRAM_EDIT_INTERVAL_MS."""
+    if turn.flush_task and not turn.flush_task.done():
+        return
+    now_ms = time.time() * 1000
+    delay_ms = max(0, TELEGRAM_EDIT_INTERVAL_MS - (now_ms - turn.last_edit_ms))
+    async def _later():
+        try:
+            await asyncio.sleep(delay_ms / 1000.0)
+            await tg_flush_now(turn)
+        except asyncio.CancelledError:
+            pass
+    turn.flush_task = asyncio.create_task(_later())
+
+
+async def tg_flush_now(turn: TelegramTurn, *, final: bool = False):
+    """Render the accumulated text into the Telegram placeholder(s) for
+    every target on this turn (the original sender plus every other TG
+    user bound to the same session)."""
+    body_full = turn.text or ('…' if not final else '(no text response)')
+    parts: list[str] = []
+    body = body_full
+    while body:
+        chunk, body = body[:TELEGRAM_MAX_MSG_LEN], body[TELEGRAM_MAX_MSG_LEN:]
+        parts.append(chunk)
+    if not parts:
+        parts = [body_full]
+
+    for tgt in list(turn.targets):
+        # Lazy-create placeholder if this target doesn't have one yet
+        # (e.g. passive turn started from web side).
+        if not tgt.message_ids:
+            first = await tg_send(tgt.chat_id, '…')
+            if first.get('ok'):
+                tgt.message_ids.append(first['result']['message_id'])
+            else:
+                continue
+        for i, chunk in enumerate(parts):
+            if i < len(tgt.message_ids):
+                mid = tgt.message_ids[i]
+                res = await tg_api('editMessageText',
+                                    {'chat_id': tgt.chat_id,
+                                     'message_id': mid,
+                                     'text': chunk,
+                                     'disable_web_page_preview': True})
+                if not res.get('ok'):
+                    desc = (res.get('description') or '').lower()
+                    if 'not modified' not in desc:
+                        log(f'telegram edit failed (chat {tgt.chat_id}): {res}')
+            else:
+                res = await tg_send(tgt.chat_id, chunk)
+                if res.get('ok'):
+                    tgt.message_ids.append(res['result']['message_id'])
+
+    turn.last_edit_ms = time.time() * 1000
+
+
+# ── poller (long-poll Telegram getUpdates) ──
+async def telegram_poller():
+    """Background task that runs while the server is up. No-op if no
+    token is configured."""
+    if not TELEGRAM_TOKEN:
+        log('telegram: disabled (no CC_TELEGRAM_BOT_TOKEN)')
+        return
+    if not TELEGRAM_ALLOWED_USERS:
+        log('telegram: ⚠ CC_TELEGRAM_ALLOWED_USERS is empty — every '
+            'message will be refused. Set it to your Telegram user id '
+            '(comma-separated for multiple).')
+    log(f'telegram: enabled, allowlist={sorted(TELEGRAM_ALLOWED_USERS)}, '
+        f'chats={sorted(TELEGRAM_ALLOWED_CHATS) or "any"}')
+
+    # Restore persisted per-user bindings.
+    state.tg_user_state = tg_state_load()
+
+    # Confirm the bot identity once at startup so logs show who we are.
+    me = await tg_api('getMe')
+    if me.get('ok'):
+        u = me.get('result', {})
+        log(f'telegram: signed in as @{u.get("username")} (id={u.get("id")})')
+    else:
+        log(f'telegram: getMe failed: {me}')
+
+    offset = 0
+    backoff = 1.0
+    while True:
+        try:
+            res = await tg_api('getUpdates',
+                                {'offset': offset, 'timeout': 25,
+                                 'allowed_updates': ['message', 'callback_query']},
+                                timeout=35)
+            if not res.get('ok'):
+                # 401 = bad token; bail out so the user notices.
+                if res.get('error_code') == 401:
+                    log('telegram: 401 unauthorized — bad token. '
+                        'Stopping poller.')
+                    return
+                log(f'telegram: getUpdates failed: {res}')
+                await asyncio.sleep(min(backoff, 30))
+                backoff = min(backoff * 2, 30)
+                continue
+            backoff = 1.0
+            for upd in res.get('result', []):
+                offset = max(offset, upd.get('update_id', 0) + 1)
+                try:
+                    if 'message' in upd:
+                        await tg_handle_message(upd['message'])
+                    elif 'callback_query' in upd:
+                        await tg_handle_callback(upd['callback_query'])
+                except Exception as e:
+                    log(f'telegram: handler error: {e}')
+        except asyncio.CancelledError:
+            log('telegram: poller cancelled')
+            return
+        except Exception as e:
+            log(f'telegram: poll loop error: {e}')
+            await asyncio.sleep(min(backoff, 30))
+            backoff = min(backoff * 2, 30)
+
+
 # ───────────────────  bootstrap  ───────────────────
 async def main():
     seed_default_personas_if_empty()
@@ -1762,6 +2420,7 @@ async def main():
     log(f'  path pfx   : {PATH_PREFIX or "(none)"}')
     log(f'  model      : {MODEL_DEFAULT}')
     log(f'  active     : {state.active_id}')
+    log(f'  telegram   : {"on" if TELEGRAM_TOKEN else "off"}')
     if SERVE_STATIC:
         log(f'  open       : http://{HOST}:{PORT}/')
     else:
@@ -1773,6 +2432,12 @@ async def main():
         try: loop.add_signal_handler(sig, stop_event.set)
         except NotImplementedError: pass
 
+    # Optional background tasks. Spawn the Telegram poller as a sibling
+    # so it stops cleanly when the WS server shuts down.
+    bg_tasks: list[asyncio.Task] = []
+    if TELEGRAM_TOKEN:
+        bg_tasks.append(asyncio.create_task(telegram_poller()))
+
     async with websockets.serve(
             handle_client, HOST, PORT,
             max_size=16 * 1024 * 1024,
@@ -1780,6 +2445,13 @@ async def main():
         await stop_event.wait()
 
     log('shutting down')
+    # Cancel background tasks first so they don't try to broadcast
+    # while workers are tearing down.
+    for t in bg_tasks:
+        t.cancel()
+    for t in bg_tasks:
+        try: await t
+        except (asyncio.CancelledError, Exception): pass
     # Stop every running worker so we exit cleanly. Iterate over a snapshot
     # of the keys because stop_worker mutates the dict.
     for sid in list(state.workers.keys()):
