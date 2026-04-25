@@ -161,6 +161,14 @@
   /* Tilt the icon when collapsed so the affordance is obvious */
   #app.side-collapsed .menu-btn svg{transform:rotate(90deg)}
 
+  /* Generic header-side action button (search, etc.). Same hit-target as
+     .menu-btn but anchored to the right of the header. */
+  .header-action{flex:0 0 34px;width:34px;height:34px;border:none;background:transparent;
+    color:var(--fg-dim);border-radius:8px;cursor:pointer;display:grid;place-items:center;
+    transition:color .15s, background .15s}
+  .header-action:hover{color:var(--fg);background:rgba(255,255,255,.06)}
+  .header-action svg{width:18px;height:18px}
+
   .avatar{width:32px;height:32px;border-radius:8px;flex:0 0 32px;
     background:linear-gradient(135deg,var(--accent),var(--accent-2));
     display:grid;place-items:center;color:#fff;font-weight:600;font-size:12px;
@@ -444,6 +452,140 @@
   #lightbox .lb-meta{position:absolute;bottom:18px;left:50%;transform:translateX(-50%);
     color:rgba(255,255,255,.7);font-size:12px;pointer-events:none}
 
+  /* ───── search overlay ─────
+     Full-screen SERP-style search across every saved chat. Triggered by
+     the magnifier in the header (or ⌘K). Three layers stacked by z-index:
+       50 — #searchOverlay     (the screen)
+       60 — #searchPreview     (the popup that opens when you click a result)
+     The chat behind is dimmed with a backdrop. Esc closes the topmost
+     layer. */
+  #searchOverlay{position:fixed;inset:0;background:rgba(8,8,12,.85);
+    backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
+    z-index:50;display:none;flex-direction:column;
+    padding-top:env(safe-area-inset-top)}
+  #searchOverlay.on{display:flex;animation:searchIn .18s ease-out}
+  @keyframes searchIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+  .search-bar{display:flex;align-items:center;gap:10px;padding:14px 18px 10px;
+    border-bottom:1px solid var(--border);background:rgba(10,10,13,.92);position:sticky;top:0}
+  .search-bar .se-icon{width:18px;height:18px;color:var(--fg-faint);flex:0 0 18px}
+  .search-bar input.se-input{flex:1;min-width:0;background:transparent;color:var(--fg);
+    border:none;outline:none;font:inherit;font-size:16px;padding:8px 0;
+    letter-spacing:-.005em}
+  .search-bar input.se-input::placeholder{color:var(--fg-faint)}
+  .search-bar .se-close{flex:0 0 32px;width:32px;height:32px;border-radius:8px;
+    background:transparent;border:none;color:var(--fg-dim);cursor:pointer;
+    display:grid;place-items:center}
+  .search-bar .se-close:hover{color:var(--fg);background:rgba(255,255,255,.06)}
+  .search-bar .se-close svg{width:16px;height:16px}
+
+  .search-filters{display:flex;flex-wrap:wrap;gap:8px;padding:10px 18px;
+    border-bottom:1px solid var(--border);background:rgba(14,14,18,.72);align-items:center}
+  .search-filters .fchip{display:inline-flex;align-items:center;gap:6px;
+    padding:5px 11px;border-radius:14px;font-size:12px;color:var(--fg-dim);
+    border:1px solid var(--border);background:rgba(255,255,255,.02);cursor:pointer;
+    transition:color .15s,background .15s,border-color .15s;line-height:1}
+  .search-filters .fchip:hover{color:var(--fg);background:rgba(255,255,255,.05)}
+  .search-filters .fchip.on{color:#0f0f15;background:var(--accent);border-color:var(--accent);
+    font-weight:600}
+  .search-filters .fgroup{display:inline-flex;gap:4px;align-items:center;
+    background:rgba(255,255,255,.02);border:1px solid var(--border);border-radius:14px;padding:2px}
+  .search-filters .fgroup .fchip{border:none;border-radius:12px;padding:5px 10px;background:transparent}
+  .search-filters .fgroup .fchip.on{background:var(--accent);color:#0f0f15}
+  .search-filters .flabel{font-size:11px;color:var(--fg-faint);text-transform:uppercase;
+    letter-spacing:.04em;margin-right:2px}
+  .search-filters input.se-text{background:rgba(255,255,255,.02);border:1px solid var(--border);
+    color:var(--fg);font:inherit;font-size:12px;padding:5px 9px;border-radius:12px;
+    outline:none;min-width:120px}
+  .search-filters input.se-text:focus{border-color:var(--accent)}
+
+  .search-results{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
+  .search-results::-webkit-scrollbar{width:8px}
+  .search-results::-webkit-scrollbar-thumb{background:#2c2c33;border-radius:4px}
+
+  .search-summary{padding:12px 18px 4px;font-size:12px;color:var(--fg-faint);
+    letter-spacing:.02em}
+  .search-summary b{color:var(--fg-dim);font-weight:600}
+
+  .se-result{padding:13px 18px;border-bottom:1px solid var(--border);cursor:pointer;
+    transition:background .12s}
+  .se-result:hover{background:rgba(255,255,255,.03)}
+  .se-result .ser-head{display:flex;align-items:center;gap:8px;font-size:13px;
+    color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .se-result .ser-title{font-weight:600;color:var(--accent);max-width:60%;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .se-result .ser-role{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;
+    padding:2px 7px;border-radius:10px;border:1px solid var(--border);
+    color:var(--fg-dim);font-weight:600;line-height:1.4}
+  .se-result .ser-role.user{color:var(--accent-2);border-color:rgba(199,143,91,.4)}
+  .se-result .ser-role.assistant{color:var(--accent);border-color:rgba(199,143,91,.4)}
+  .se-result .ser-when{font-size:11px;color:var(--fg-faint);font-variant-numeric:tabular-nums;
+    margin-left:auto;flex:0 0 auto}
+  .se-result .ser-cwd{font-size:11px;color:var(--fg-faint);font-family:"SF Mono",Menlo,monospace;
+    margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .se-result .ser-snippet{font-size:13.5px;color:var(--fg-dim);line-height:1.45;margin-top:5px;
+    overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+  .se-result .ser-snippet mark{background:rgba(199,143,91,.28);color:var(--accent-2);
+    padding:0 2px;border-radius:3px;font-weight:600}
+  .se-result .ser-snippet .ell{color:var(--fg-faint)}
+
+  .se-empty{padding:48px 24px;text-align:center;color:var(--fg-faint);font-size:14px;
+    line-height:1.6}
+
+  /* Preview popup — opens when you click a search result. */
+  #searchPreview{position:fixed;inset:0;display:none;align-items:center;justify-content:center;
+    padding:24px;background:rgba(0,0,0,.55);z-index:60}
+  #searchPreview.on{display:flex;animation:searchIn .14s ease-out}
+  #searchPreview .sp-card{width:min(640px,100%);max-height:80vh;display:flex;flex-direction:column;
+    background:var(--bg-2);border:1px solid var(--border);border-radius:14px;
+    box-shadow:0 28px 80px -20px rgba(0,0,0,.6);overflow:hidden}
+  #searchPreview .sp-head{padding:14px 16px;border-bottom:1px solid var(--border);
+    display:flex;align-items:center;gap:10px}
+  #searchPreview .sp-title{font-weight:600;font-size:14px;color:var(--accent);
+    flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #searchPreview .sp-close{flex:0 0 30px;width:30px;height:30px;border-radius:8px;
+    background:transparent;border:none;color:var(--fg-dim);cursor:pointer;
+    display:grid;place-items:center}
+  #searchPreview .sp-close:hover{color:var(--fg);background:rgba(255,255,255,.06)}
+  #searchPreview .sp-close svg{width:14px;height:14px}
+  #searchPreview .sp-meta{display:flex;flex-wrap:wrap;gap:8px;align-items:center;
+    padding:10px 16px 0;font-size:12px;color:var(--fg-faint)}
+  #searchPreview .sp-meta .ser-role{font-size:10px}
+  #searchPreview .sp-body{padding:12px 16px;overflow-y:auto;flex:1;
+    font-size:14px;line-height:1.55;color:var(--fg);white-space:pre-wrap;word-wrap:break-word}
+  #searchPreview .sp-body mark{background:rgba(199,143,91,.28);color:var(--accent-2);
+    padding:0 2px;border-radius:3px}
+  #searchPreview .sp-foot{padding:10px 16px;border-top:1px solid var(--border);
+    display:flex;justify-content:flex-end;gap:8px}
+  #searchPreview .sp-btn{height:32px;padding:0 14px;border-radius:8px;border:1px solid var(--border);
+    background:rgba(255,255,255,.04);color:var(--fg);font:inherit;font-size:13px;cursor:pointer;
+    display:inline-flex;align-items:center;gap:6px}
+  #searchPreview .sp-btn:hover{background:rgba(255,255,255,.08)}
+  #searchPreview .sp-btn.primary{background:var(--accent);color:#0f0f15;border-color:var(--accent);
+    font-weight:600}
+  #searchPreview .sp-btn.primary:hover{filter:brightness(1.08)}
+
+  /* When a search result deeplinks to a message, briefly highlight the
+     bubble in the chat list so the user can find it. */
+  .msg.search-target .bubble{
+    box-shadow:0 0 0 2px var(--accent), 0 0 0 6px rgba(199,143,91,.18);
+    animation:searchPulse 2.4s ease-out 1}
+  @keyframes searchPulse{
+    0%{box-shadow:0 0 0 2px var(--accent), 0 0 0 16px rgba(199,143,91,.32)}
+    100%{box-shadow:0 0 0 2px var(--accent), 0 0 0 6px rgba(199,143,91,.0)}
+  }
+
+  /* Mobile compactness — keep the SERP usable on phones. */
+  @media(max-width:600px){
+    .search-bar{padding:10px 12px 8px}
+    .search-bar input.se-input{font-size:15px}
+    .search-filters{padding:8px 12px;gap:6px}
+    .search-filters .fchip{font-size:11.5px;padding:5px 9px}
+    .se-result{padding:11px 14px}
+    .se-result .ser-snippet{font-size:13px}
+    #searchPreview{padding:10px}
+  }
+
   /* ───── composer ───── */
   footer{padding:8px 12px calc(10px + var(--safe-bot));
     background:linear-gradient(0deg,rgba(10,10,13,.96),rgba(10,10,13,.7));
@@ -589,6 +731,14 @@
           <span id="statusText">connecting…</span>
         </div>
       </div>
+      <button class="header-action" id="searchBtn" type="button"
+              title="Search across all chats (⌘K / Ctrl-K)" aria-label="Search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="7"/>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+      </button>
     </header>
     <div id="banner"></div>
     <main id="scrollarea">
@@ -664,6 +814,62 @@
   </div>
   <img id="lightboxImg" alt="">
   <div class="lb-meta" id="lightboxMeta"></div>
+</div>
+
+<!-- Search overlay (full-screen SERP across all chats) -->
+<div id="searchOverlay" aria-hidden="true">
+  <div class="search-bar">
+    <svg class="se-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+    </svg>
+    <input type="text" class="se-input" id="searchInput"
+      placeholder="Search across all chats…" autocomplete="off" spellcheck="false">
+    <button class="se-close" id="searchClose" type="button" title="Close (Esc)" aria-label="Close">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round">
+        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+      </svg>
+    </button>
+  </div>
+  <div class="search-filters">
+    <span class="flabel">Role</span>
+    <div class="fgroup" role="radiogroup" aria-label="Filter by message role">
+      <button class="fchip on" data-filter="role"  data-value="all"       type="button">All</button>
+      <button class="fchip"    data-filter="role"  data-value="user"      type="button">User</button>
+      <button class="fchip"    data-filter="role"  data-value="assistant" type="button">Claude</button>
+    </div>
+    <span class="flabel">Sort</span>
+    <div class="fgroup" role="radiogroup" aria-label="Sort order">
+      <button class="fchip on" data-filter="sort" data-value="desc" type="button">Newest</button>
+      <button class="fchip"    data-filter="sort" data-value="asc"  type="button">Oldest</button>
+    </div>
+    <span class="flabel">Path</span>
+    <input type="text" class="se-text" id="searchPath" placeholder="cwd contains…" spellcheck="false">
+  </div>
+  <div class="search-summary" id="searchSummary">Type to search across every saved chat.</div>
+  <div class="search-results" id="searchResults"></div>
+</div>
+
+<!-- Search result preview popup (sits above the overlay) -->
+<div id="searchPreview" aria-hidden="true">
+  <div class="sp-card">
+    <div class="sp-head">
+      <div class="sp-title" id="spTitle"></div>
+      <button class="sp-close" id="spClose" type="button" title="Close (Esc)" aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+    </div>
+    <div class="sp-meta" id="spMeta"></div>
+    <div class="sp-body" id="spBody"></div>
+    <div class="sp-foot">
+      <button class="sp-btn"        id="spCancel" type="button">Cancel</button>
+      <button class="sp-btn primary" id="spOpen" type="button">Open in chat →</button>
+    </div>
+  </div>
 </div>
 
 <!-- Floating menu shown when the ⋮ on a session row is clicked -->
@@ -1501,6 +1707,8 @@
         }
         break;
       }
+      case 'search_results': onSearchResults(m); break;
+      case 'search_detail':  onSearchDetail(m);  break;
       case 'error':
         showBanner('Error: ' + (m.message||'unknown'));
         setTimeout(hideBanner, 5000);
@@ -1789,6 +1997,281 @@
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && listening) stopMic();
   });
+
+  // ─── search overlay ───
+  // Full-screen SERP for searching across every saved chat. Result clicks
+  // open a popup-preview that shows the full message; "Open in chat" closes
+  // both layers, switches sessions if needed, and pulses the matching
+  // bubble in the chat list.
+  const searchOverlay = $('searchOverlay');
+  const searchInput   = $('searchInput');
+  const searchResults = $('searchResults');
+  const searchSummary = $('searchSummary');
+  const searchPath    = $('searchPath');
+  const searchPreview = $('searchPreview');
+  const searchFilters = document.querySelector('.search-filters');
+  const spTitle = $('spTitle'), spMeta = $('spMeta'),
+        spBody = $('spBody'),  spOpen = $('spOpen'),
+        spCancel = $('spCancel'), spClose = $('spClose');
+
+  let searchActive = false;
+  let lastResults = [];
+  let searchReqSeq = 0;
+  let searchDebounce = null;
+  const filterState = { role: 'all', sort: 'desc', path: '' };
+
+  function escHtml(s){
+    return (s || '').replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+  }
+
+  function openSearch(){
+    searchActive = true;
+    searchOverlay.classList.add('on');
+    searchOverlay.setAttribute('aria-hidden', 'false');
+    setTimeout(() => searchInput.focus(), 30);
+    // Load all-recent on first open so the screen isn't empty.
+    runSearch();
+  }
+  function closeSearch(){
+    searchActive = false;
+    searchOverlay.classList.remove('on');
+    searchOverlay.setAttribute('aria-hidden', 'true');
+    closePreview();
+  }
+  function openPreview(){
+    searchPreview.classList.add('on');
+    searchPreview.setAttribute('aria-hidden', 'false');
+  }
+  function closePreview(){
+    searchPreview.classList.remove('on');
+    searchPreview.setAttribute('aria-hidden', 'true');
+  }
+
+  $('searchBtn').addEventListener('click', () => {
+    if (searchActive) closeSearch(); else openSearch();
+  });
+  $('searchClose').addEventListener('click', closeSearch);
+  spClose.addEventListener('click',  closePreview);
+  spCancel.addEventListener('click', closePreview);
+
+  // ⌘K / Ctrl-K global shortcut. Esc closes preview first, then overlay.
+  document.addEventListener('keydown', e => {
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')){
+      e.preventDefault();
+      if (searchActive) closeSearch(); else openSearch();
+      return;
+    }
+    if (e.key === 'Escape'){
+      if (searchPreview.classList.contains('on')){ closePreview(); return; }
+      if (searchActive){ closeSearch(); return; }
+    }
+  });
+
+  // Filter chip clicks — radio-group behaviour within each [data-filter].
+  searchFilters.addEventListener('click', e => {
+    const chip = e.target.closest('.fchip');
+    if (!chip) return;
+    const filter = chip.dataset.filter;
+    const value  = chip.dataset.value;
+    if (!filter || !value) return;
+    searchFilters.querySelectorAll(`.fchip[data-filter="${filter}"]`)
+      .forEach(c => c.classList.toggle('on', c === chip));
+    filterState[filter] = value;
+    runSearch();
+  });
+
+  searchInput.addEventListener('input', () => {
+    clearTimeout(searchDebounce);
+    searchDebounce = setTimeout(runSearch, 160);
+  });
+  searchInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter'){ e.preventDefault(); runSearch(); }
+  });
+  searchPath.addEventListener('input', () => {
+    filterState.path = searchPath.value || '';
+    clearTimeout(searchDebounce);
+    searchDebounce = setTimeout(runSearch, 220);
+  });
+
+  function runSearch(){
+    const reqId = 'se-' + (++searchReqSeq);
+    const q = (searchInput.value || '').trim();
+    if (!send({
+      type: 'search',
+      q,
+      role: filterState.role,
+      sort: filterState.sort,
+      path: filterState.path,
+      reqId,
+    })){
+      searchSummary.textContent = 'Not connected.';
+    } else {
+      searchSummary.innerHTML = q
+        ? `Searching for <b>${escHtml(q)}</b>…`
+        : 'Loading recent messages…';
+    }
+  }
+
+  function relTime(ts){
+    if (!ts) return '';
+    const d = new Date(ts * 1000);
+    const sec = (Date.now() - d.getTime()) / 1000;
+    if (sec < 60)        return Math.floor(sec)        + 's ago';
+    if (sec < 3600)      return Math.floor(sec/60)     + 'm ago';
+    if (sec < 86400)     return Math.floor(sec/3600)   + 'h ago';
+    if (sec < 86400*30)  return Math.floor(sec/86400)  + 'd ago';
+    return d.toLocaleDateString(undefined, {month:'short', day:'numeric'});
+  }
+  function absTime(ts){
+    if (!ts) return '';
+    const d = new Date(ts * 1000);
+    return d.toLocaleString(undefined,
+      {month:'short', day:'numeric', year:'numeric',
+       hour:'numeric', minute:'2-digit'});
+  }
+
+  function renderSnippet(snip){
+    if (!snip) return '';
+    const ell = '<span class="ell">…</span>';
+    const pre  = (snip.truncated_left  ? ell : '') + escHtml(snip.pre);
+    const hit  = `<mark>${escHtml(snip.hit)}</mark>`;
+    const post = escHtml(snip.post)  + (snip.truncated_right ? ell : '');
+    return pre + hit + post;
+  }
+
+  function onSearchResults(m){
+    lastResults = m.results || [];
+    const q = (searchInput.value || '').trim();
+    searchResults.innerHTML = '';
+    if (!lastResults.length){
+      searchResults.innerHTML =
+        '<div class="se-empty">No matches.<br>'
+        + 'Try a shorter query or clear the filters above.</div>';
+      searchSummary.textContent = q
+        ? `No matches for "${q}".`
+        : 'No messages yet — start a chat below.';
+      return;
+    }
+    searchSummary.innerHTML = q
+      ? `<b>${lastResults.length}</b> match${lastResults.length===1?'':'es'} for <b>${escHtml(q)}</b>`
+      : `<b>${lastResults.length}</b> recent message${lastResults.length===1?'':'s'}`;
+
+    const frag = document.createDocumentFragment();
+    lastResults.forEach((r, i) => {
+      const card = document.createElement('div');
+      card.className = 'se-result';
+      card.dataset.idx = i;
+      const cwd = (r.sessionCwd || '').replace(/^\/Users\/[^/]+/, '~');
+      card.innerHTML = `
+        <div class="ser-head">
+          <span class="ser-role ${r.role==='user'?'user':'assistant'}">
+            ${r.role==='user' ? 'You' : 'Claude'}
+          </span>
+          <span class="ser-title" title="${escHtml(r.sessionTitle)}">${escHtml(r.sessionTitle)}</span>
+          <span class="ser-when" title="${escHtml(absTime(r.ts))}">${escHtml(relTime(r.ts))}</span>
+        </div>
+        <div class="ser-cwd">${escHtml(cwd)}</div>
+        <div class="ser-snippet">${renderSnippet(r.snippet)}</div>
+      `;
+      card.addEventListener('click', () => openResultPreview(r));
+      frag.appendChild(card);
+    });
+    searchResults.replaceChildren(frag);
+  }
+
+  // Two-step preview: show the result immediately with the snippet's
+  // text expanded as a fallback, then ask the server for the full text
+  // (it might be long) and swap it in when it arrives.
+  let activeResult = null;
+  function openResultPreview(r){
+    activeResult = r;
+    spTitle.textContent = r.sessionTitle || 'Untitled';
+    const cwd = (r.sessionCwd || '').replace(/^\/Users\/[^/]+/, '~');
+    spMeta.innerHTML = `
+      <span class="ser-role ${r.role==='user'?'user':'assistant'}">
+        ${r.role==='user' ? 'You' : 'Claude'}
+      </span>
+      <span title="${escHtml(absTime(r.ts))}">${escHtml(relTime(r.ts))}</span>
+      <span style="font-family:'SF Mono',Menlo,monospace">${escHtml(cwd)}</span>
+    `;
+    spBody.innerHTML = renderSnippet(r.snippet);
+    openPreview();
+    // Fetch full text for the body.
+    send({type: 'search_expand', sessionId: r.sessionId, msgId: r.msgId, reqId: 'sd-' + (++searchReqSeq)});
+  }
+
+  function onSearchDetail(m){
+    const detail = m.result;
+    if (!detail || !activeResult) return;
+    if (detail.sessionId !== activeResult.sessionId
+        || detail.msgId !== activeResult.msgId) return;
+    const q = (searchInput.value || '').trim().toLowerCase();
+    const text = detail.text || '';
+    if (!q) {
+      spBody.textContent = text;
+      return;
+    }
+    // Highlight every case-insensitive occurrence of the query.
+    const lower = text.toLowerCase();
+    let html = '';
+    let i = 0;
+    while (i < text.length){
+      const found = lower.indexOf(q, i);
+      if (found < 0){
+        html += escHtml(text.slice(i));
+        break;
+      }
+      html += escHtml(text.slice(i, found));
+      html += '<mark>' + escHtml(text.slice(found, found + q.length)) + '</mark>';
+      i = found + q.length;
+    }
+    spBody.innerHTML = html;
+  }
+
+  spOpen.addEventListener('click', () => {
+    if (!activeResult) return;
+    const r = activeResult;
+    closePreview();
+    closeSearch();
+    if (r.sessionId === activeId){
+      flashMessage(r.msgId);
+    } else {
+      // Switch to the target session. The state snapshot that comes back
+      // will repopulate `messages` and re-render the bubbles; we poll for
+      // the target id to land in the DOM and then flash it.
+      send({type: 'switch', id: r.sessionId});
+      waitForMessage(r.msgId, 2500).then(el => { if (el) flashMessage(r.msgId); });
+    }
+  });
+
+  // Poll for a message bubble with the given data-id to appear in the
+  // chat list. Resolves with the element or null on timeout. Used right
+  // after a session switch when the state snapshot is in-flight.
+  function waitForMessage(msgId, timeoutMs){
+    return new Promise(resolve => {
+      const sel = '.msg[data-id="' + CSS.escape(msgId) + '"]';
+      const start = performance.now();
+      function tick(){
+        const el = messagesEl.querySelector(sel);
+        if (el) return resolve(el);
+        if (performance.now() - start > timeoutMs) return resolve(null);
+        requestAnimationFrame(tick);
+      }
+      tick();
+    });
+  }
+
+  function flashMessage(msgId){
+    if (!msgId) return;
+    const sel = '.msg[data-id="' + CSS.escape(msgId) + '"]';
+    const el = messagesEl.querySelector(sel);
+    if (!el) return;
+    el.scrollIntoView({behavior:'smooth', block:'center'});
+    el.classList.add('search-target');
+    setTimeout(() => el.classList.remove('search-target'), 2600);
+  }
 
   connect();
 })();

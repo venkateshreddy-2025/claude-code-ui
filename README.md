@@ -38,6 +38,10 @@ is single-user. No hosting, no cloud.
   ever leaves the page.
 - **Mobile-friendly** — single layout from 320 px phones to 27" monitors.
 - **Reload-safe** — refresh the page and the active stream resumes.
+- **Search across every chat** — magnifier in the header (or ⌘K)
+  opens a SERP-style overlay. Filter by role / sort / path, click a
+  result for an extended preview, click "Open in chat →" to jump
+  straight to the matching message in its session.
 
 ## Quick start (5 commands)
 

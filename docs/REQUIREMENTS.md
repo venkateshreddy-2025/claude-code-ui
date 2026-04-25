@@ -65,6 +65,7 @@ Files:
 | 25 | **Throttled streaming + smart auto-scroll** | DOM is re-rendered ~12 fps (not per-token). Auto-scroll only follows if the user is within 80 px of the bottom; a "↓ Latest" button appears otherwise so they can keep reading old turns. |
 | 26 | **Image lightbox** | Inline images cap at 220 px tall in chat, click for full-size with name + dimensions. |
 | 27 | **Standalone HTTP serving** | cc-server.py serves the UI + uploads itself by default — no Caddy/nginx required. Set `CC_SERVE_STATIC=0` if you prefer to put a reverse proxy in front. |
+| 28 | **Search across every chat (SERP)** | Magnifier in header (or ⌘K) opens a full-screen search overlay. Filter by role (All / User / Claude), sort newest/oldest, filter by cwd substring. Live snippet highlighting. Click a result → popup with the full message → "Open in chat →" switches to that session and pulses the matching bubble. |
 
 ## Backlog
 
@@ -72,7 +73,7 @@ Files:
 |---|---|---|
 | B1 | **Per-session model selector in UI** | Dropdown next to the chat header for picking model without typing `/model`. |
 | B2 | **Project directory picker** | "Use the user's chosen project" instead of always `~/claude-ui/<timestamp>/`. Picker that browses + lets user pick. |
-| B3 | **Sessions search (SERP)** | Filter sidebar by title or message content; role / path / date filters; click → popup → jump to message. |
+| B3 | **Search by date range** | Add explicit From/To date pickers to the search filters (server already accepts dateFrom/dateTo). |
 | B4 | **PWA + offline shell** | Install to home screen; cache the static HTML so reopening on a flaky network shows the shell while WS reconnects. |
 | B5 | **Streaming TTS replies** | Pipe claude's reply through TTS (macOS `say`, OpenAI TTS, etc.) → audio chunks over WS → `<audio>`. |
 | B6 | **Voice messages (audio attachment)** | Hold-to-record audio from the browser → server sends as audio attachment. |

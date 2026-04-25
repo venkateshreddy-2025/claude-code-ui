@@ -509,6 +509,142 @@ async def fork_session(source_id: str, last_n: int = 200):
     await broadcast(state_snapshot())
 
 
+# ───────────────────  search  ───────────────────
+def _build_snippet(text: str, match_pos: int, match_len: int,
+                   context_chars: int = 80) -> dict:
+    """Extract a snippet around a match position. Returns {pre, hit, post,
+    truncated_left, truncated_right} so the UI can render the highlight
+    with prepended/appended ellipses where appropriate.
+
+    Boundaries are snapped to nearby whitespace (the FIRST space after
+    `start` and the LAST space before `end`) so words aren't cut in half.
+    """
+    n = len(text)
+    start = max(0, match_pos - context_chars)
+    end = min(n, match_pos + match_len + context_chars)
+    if start > 0:
+        # Move forward to the first whitespace so we don't start mid-word.
+        space = text.find(' ', start, match_pos)
+        if space != -1 and (match_pos - space) < context_chars:
+            start = space + 1
+    if end < n:
+        # Move backward to the last whitespace within range so we keep
+        # as much trailing context as possible without cutting mid-word.
+        space = text.rfind(' ', match_pos + match_len, end)
+        if space != -1 and (space - (match_pos + match_len)) > 8:
+            end = space
+    # Collapse newlines + carriage returns to single spaces but leave
+    # natural word spacing intact, so pre+hit+post concatenate cleanly.
+    def flat(s: str) -> str:
+        return s.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
+    return {
+        'pre':  flat(text[start:match_pos]),
+        'hit':  text[match_pos:match_pos + match_len],
+        'post': flat(text[match_pos + match_len:end]),
+        'truncated_left':  start > 0,
+        'truncated_right': end < n,
+    }
+
+
+def search_messages(query: str, role: str = 'all', path_filter: str = '',
+                    date_from: float | None = None, date_to: float | None = None,
+                    sort: str = 'desc', limit: int = 200) -> list[dict]:
+    """Scan every session's messages for substring (case-insensitive)
+    matches of `query`. Returns matching messages with snippet metadata so
+    the UI can render a SERP-style result list with highlighted hits.
+
+    Filters:
+        role: 'all' | 'user' | 'assistant'
+        path_filter: substring of the session's cwd to require
+        date_from / date_to: epoch seconds, inclusive
+        sort: 'desc' (newest first) | 'asc' (oldest first)
+        limit: max results to return
+    """
+    q = (query or '').strip().lower()
+    results: list[dict] = []
+
+    sessions = load_index().get('sessions', [])
+    # Sort sessions so the result truncation is deterministic
+    sessions.sort(key=lambda s: -(s.get('lastActiveAt') or s.get('createdAt') or 0))
+
+    for sess_brief in sessions:
+        sid = sess_brief.get('id')
+        if not sid:
+            continue
+        sess = load_session(sid)
+        if not sess:
+            continue
+        cwd = sess.get('cwd') or ''
+        if path_filter and path_filter.lower() not in cwd.lower():
+            continue
+        for m in sess.get('messages', []) or []:
+            r = m.get('role') or ''
+            if role and role != 'all' and r != role:
+                continue
+            ts = m.get('ts') or 0
+            if date_from is not None and ts < date_from:
+                continue
+            if date_to is not None and ts > date_to:
+                continue
+            text = m.get('text') or ''
+            if not text:
+                continue
+            if q:
+                pos = text.lower().find(q)
+                if pos < 0:
+                    continue
+                snippet = _build_snippet(text, pos, len(q))
+            else:
+                # Empty query → return everything matching the filters,
+                # with the leading chunk as the snippet.
+                snippet = _build_snippet(text, 0, 0)
+
+            results.append({
+                'sessionId':    sid,
+                'sessionTitle': sess.get('title') or 'Untitled',
+                'sessionCwd':   cwd,
+                'msgId':        m.get('id'),
+                'role':         r,
+                'ts':           ts,
+                'snippet':      snippet,
+                'fullLength':   len(text),
+            })
+
+            if len(results) >= limit * 4:
+                # Keep scanning a little past `limit` so the sort below
+                # has options, but bail out before reading thousands of
+                # large messages we'll discard.
+                break
+        if len(results) >= limit * 4:
+            break
+
+    rev = (sort != 'asc')
+    results.sort(key=lambda r: r.get('ts') or 0, reverse=rev)
+    return results[:limit]
+
+
+def expand_match(session_id: str, msg_id: str, context_chars: int = 600) -> dict | None:
+    """Return a wider snippet for the popup-preview view of a search
+    result. Looks up the message by id within the session."""
+    sess = load_session(session_id)
+    if not sess:
+        return None
+    for m in sess.get('messages', []) or []:
+        if m.get('id') == msg_id:
+            text = m.get('text') or ''
+            return {
+                'sessionId':    session_id,
+                'sessionTitle': sess.get('title') or 'Untitled',
+                'sessionCwd':   sess.get('cwd') or '',
+                'msgId':        msg_id,
+                'role':         m.get('role') or '',
+                'ts':           m.get('ts') or 0,
+                # Whole text — UI can render with markdown / collapse if huge.
+                'text':         text,
+            }
+    return None
+
+
 # ───────────────────  claude stdout reader  ───────────────────
 async def claude_reader():
     proc = state.proc
@@ -860,6 +996,31 @@ async def handle_client(websocket):
             elif cmd == 'upload':
                 resp = await handle_upload(msg)
                 await websocket.send(json.dumps(resp))
+            elif cmd == 'search':
+                results = search_messages(
+                    query=msg.get('q') or '',
+                    role=(msg.get('role') or 'all'),
+                    path_filter=msg.get('path') or '',
+                    date_from=msg.get('dateFrom'),
+                    date_to=msg.get('dateTo'),
+                    sort=(msg.get('sort') or 'desc'),
+                    limit=int(msg.get('limit') or 200),
+                )
+                await websocket.send(json.dumps({
+                    'type': 'search_results',
+                    'reqId': msg.get('reqId'),
+                    'results': results,
+                }))
+            elif cmd == 'search_expand':
+                detail = expand_match(
+                    msg.get('sessionId') or '',
+                    msg.get('msgId') or '',
+                )
+                await websocket.send(json.dumps({
+                    'type': 'search_detail',
+                    'reqId': msg.get('reqId'),
+                    'result': detail,
+                }))
             elif cmd == 'state':
                 await websocket.send(json.dumps(state_snapshot()))
             elif cmd == 'stop':
