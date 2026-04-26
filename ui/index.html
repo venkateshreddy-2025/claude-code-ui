@@ -1036,14 +1036,35 @@
     z-index:55;display:none;backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)}
   .modal-backdrop.on{display:block;animation:fadein .15s}
 
-  /* Routines list inside the routines modal. */
-  .routines-list{display:flex;flex-direction:column;gap:8px;
-    margin-top:14px;max-height:54vh;overflow-y:auto;padding-right:4px}
+  /* Routines modal — wider than the default modal so rows have
+     room for title + meta + status + buttons without truncating.
+     The modal itself scrolls vertically; only its inner list
+     scrolls. Layout: header (title + help) → list (flex:1, scrolls)
+     → actions (sticky bottom). */
+  #routinesModal{width:min(720px, calc(100% - 32px));
+    max-height:min(80vh, 720px);
+    display:flex;flex-direction:column;
+    padding-bottom:0}
+  #routinesModal[hidden]{display:none}
+  #routinesModal h3{flex:0 0 auto}
+  #routinesModal > .setting-help{flex:0 0 auto}
+  #routinesModal .modal-actions{flex:0 0 auto;
+    margin-top:auto;padding:14px 0 16px;border-top:1px solid var(--border-soft);
+    background:linear-gradient(to top, var(--bg-2), var(--bg-2) 70%, transparent);
+    position:sticky;bottom:0}
+  .routines-list{flex:1 1 auto;display:flex;flex-direction:column;gap:8px;
+    margin-top:14px;overflow-y:auto;
+    padding-right:6px;
+    /* Custom scrollbar so long lists feel native. */
+    scrollbar-width:thin;scrollbar-color:#2c2c33 transparent}
+  .routines-list::-webkit-scrollbar{width:8px}
+  .routines-list::-webkit-scrollbar-thumb{background:#2c2c33;border-radius:4px}
   .routines-empty{padding:24px 8px;text-align:center;color:var(--fg-faint);font-size:13px}
   .routine-row{display:flex;align-items:flex-start;gap:10px;
     padding:10px 12px;border-radius:10px;
     border:1px solid var(--border);background:rgba(255,255,255,.02);
-    transition:background .12s,border-color .12s}
+    transition:background .12s,border-color .12s;
+    flex:0 0 auto}
   .routine-row:hover{background:rgba(255,255,255,.04);border-color:var(--border-soft)}
   .routine-row.cancelled{opacity:.55}
   .routine-row.dead{border-color:rgba(220,80,80,.4)}
@@ -1058,13 +1079,22 @@
     color:var(--fg-dim)}
   .routine-row .rprompt{font-size:12px;color:var(--fg-dim);margin-top:4px;
     overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
-  .routine-row .rkill{flex:0 0 auto;background:transparent;border:1px solid var(--border);
-    border-radius:8px;padding:6px 12px;color:var(--fg-dim);
-    font:inherit;font-size:12px;cursor:pointer;transition:color .12s,background .12s,border-color .12s}
-  .routine-row .rkill:hover{color:#ff7878;border-color:#ff7878;background:rgba(255,120,120,.06)}
+  /* Action column: status pill on top, action buttons below it,
+     stacked vertically so they don't crowd the row when wide. */
+  .routine-row .ractions{flex:0 0 auto;display:flex;flex-direction:column;
+    align-items:flex-end;gap:6px}
+  .routine-row .rkill,
+  .routine-row .rdelete{flex:0 0 auto;background:transparent;
+    border:1px solid var(--border);border-radius:8px;padding:5px 12px;
+    color:var(--fg-dim);font:inherit;font-size:12px;cursor:pointer;
+    transition:color .12s,background .12s,border-color .12s;min-width:62px;text-align:center}
+  .routine-row .rkill:hover   {color:#ff7878;border-color:#ff7878;background:rgba(255,120,120,.06)}
+  .routine-row .rdelete:hover {color:#ff7878;border-color:#ff7878;background:rgba(255,120,120,.06)}
   .routine-row.cancelled .rkill{display:none}
+  .routine-row:not(.cancelled) .rdelete{display:none}
   .routine-row .rstatus{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;
-    padding:1px 6px;border-radius:8px;border:1px solid var(--border);color:var(--fg-faint)}
+    padding:1px 7px;border-radius:8px;border:1px solid var(--border);color:var(--fg-faint);
+    line-height:1.6}
   .routine-row .rstatus.alive{color:var(--accent);border-color:rgba(199,143,91,.4)}
   .routine-row .rstatus.dead{color:#ff7878;border-color:rgba(255,120,120,.35)}
   .routine-row .rstatus.cancelled{color:var(--fg-faint)}
@@ -4171,14 +4201,22 @@
       const prompt = r.prompt
         ? `<div class="rprompt">${escHtml(r.prompt)}</div>`
         : '';
+      // Two action buttons: Kill (live → cancel + SIGTERM, leaves
+      // the row in the registry as cancelled), Delete (cancelled →
+      // hard-remove from JSON entirely). Show whichever applies.
+      const actions = `
+        <div class="ractions">
+          ${status}
+          <button class="rkill"   data-id="${escHtml(r.id)}" type="button">Kill</button>
+          <button class="rdelete" data-id="${escHtml(r.id)}" type="button">Delete</button>
+        </div>`;
       html += `<div class="${cls}" data-id="${escHtml(r.id)}">
         <div class="rmain">
           <div class="rtitle">${escHtml(r.title || 'Routine')}</div>
           <div class="rmeta">${meta} ${mech}</div>
           ${prompt}
         </div>
-        ${status}
-        <button class="rkill" data-id="${escHtml(r.id)}" type="button">Kill</button>
+        ${actions}
       </div>`;
     }
     list.innerHTML = html;
@@ -4186,8 +4224,16 @@
       btn.addEventListener('click', () => {
         const rid = btn.dataset.id;
         if (!rid) return;
-        if (!confirm('Kill this routine? The bridge will SIGTERM the process and remove its crontab line if any.')) return;
+        if (!confirm('Kill this routine? The bridge will SIGTERM the process and remove its crontab line if any.\n\nThe row stays in the list as cancelled (you can Delete it after).')) return;
         send({ type: 'routine_cancel', id: rid });
+      });
+    });
+    list.querySelectorAll('.rdelete').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const rid = btn.dataset.id;
+        if (!rid) return;
+        if (!confirm('Delete this routine entirely? This removes it from the registry. (No active process to kill — already cancelled.)')) return;
+        send({ type: 'routine_remove', id: rid });
       });
     });
   }
