@@ -2364,6 +2364,28 @@ async def telegram_poller():
     else:
         log(f'telegram: getMe failed: {me}')
 
+    # Drop any leftover webhook config — getUpdates can't run while a
+    # webhook is set, so this stops a "409 Conflict: terminated by other
+    # getUpdates request" loop if the bot was previously webhook-mode.
+    dw = await tg_api('deleteWebhook', {'drop_pending_updates': False})
+    if not dw.get('ok'):
+        log(f'telegram: deleteWebhook failed (non-fatal): {dw}')
+
+    # Register slash commands so Telegram clients show autocomplete when
+    # the user types "/". setMyCommands is durable on Telegram's side
+    # (not a per-session thing), so calling it on every boot is fine.
+    cmds = await tg_api('setMyCommands', {
+        'commands': [
+            {'command': 'list',  'description': 'Pick a chat to continue'},
+            {'command': 'new',   'description': 'Start a fresh chat (optional title)'},
+            {'command': 'here',  'description': 'Which chat am I currently in?'},
+            {'command': 'fork',  'description': 'Branch the current chat'},
+            {'command': 'start', 'description': 'Help / onboarding'},
+        ],
+    })
+    if not cmds.get('ok'):
+        log(f'telegram: setMyCommands failed (non-fatal): {cmds}')
+
     offset = 0
     backoff = 1.0
     while True:
