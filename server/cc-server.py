@@ -1487,15 +1487,21 @@ async def claude_reader(w: Worker):
                 w.deliver_files_this_turn = False
                 w.turn_written_files = set()
 
-                # Snapshot any files claude wrote so they persist on
-                # disk and show up when the chat is reloaded. The
-                # signal sources (most authoritative first):
-                #   1. tool_use Write / Edit / NotebookEdit paths
-                #   2. cwd diff (catches Bash/shell writes in cwd)
-                #   3. text-referenced absolute paths in the reply
+                # File capture is opt-in: only run when the user's
+                # message actually looked like a file request. Without
+                # this gate, a normal coding turn (which can issue
+                # hundreds of Write/Edit calls) would attach a random
+                # sample of intermediate files to chat.json — nobody
+                # wants that.
+                #
+                # Belt + braces: if the turn produced a huge candidate
+                # set (>BULK_TURN_CAP), we skip delivery even when
+                # `deliver` is true — the user almost certainly didn't
+                # mean "send me all 50 of these files".
                 attached_records: list[dict] = []
                 pending_file_count = 0
-                if turn_start is not None:
+                BULK_TURN_CAP = 25
+                if deliver and turn_start is not None:
                     candidates: dict[str, Path] = {}
                     # Always honour tool_use signals (free of false
                     # positives — claude actually invoked Write).
@@ -1512,42 +1518,54 @@ async def claude_reader(w: Worker):
                         candidates[s] = p
 
                     # Heuristic backups (cwd diff + text-referenced).
-                    sess_for_files = load_session(sid)
-                    if sess_for_files:
-                        cwd_for_files = Path(
-                            sess_for_files.get('cwd') or DEFAULT_CWD)
-                        try:
-                            for p, _stat in _scan_files_modified_after(
-                                    cwd_for_files, turn_start):
-                                candidates.setdefault(str(p), p)
-                        except Exception as e:
-                            log(f'cwd-scan failed: {e}')
-                        # Last-assistant text → cross-cwd path mentions
-                        msgs_for_text = sess_for_files.get('messages') or []
-                        last_a = next((m for m in reversed(msgs_for_text)
-                                       if m.get('role') == 'assistant'), None)
-                        if last_a:
+                    # Skipped if tool_use already gave us a lot — no
+                    # point widening the net for an obvious bulk turn.
+                    if len(candidates) <= BULK_TURN_CAP:
+                        sess_for_files = load_session(sid)
+                        if sess_for_files:
+                            cwd_for_files = Path(
+                                sess_for_files.get('cwd') or DEFAULT_CWD)
                             try:
-                                for p, _stat in _extract_referenced_files(
-                                        last_a.get('text') or '', turn_start):
+                                for p, _stat in _scan_files_modified_after(
+                                        cwd_for_files, turn_start):
                                     candidates.setdefault(str(p), p)
                             except Exception as e:
-                                log(f'text-scan failed: {e}')
+                                log(f'cwd-scan failed: {e}')
+                            # Last-assistant text → cross-cwd path mentions
+                            msgs_for_text = sess_for_files.get('messages') or []
+                            last_a = next((m for m in reversed(msgs_for_text)
+                                           if m.get('role') == 'assistant'), None)
+                            if last_a:
+                                try:
+                                    for p, _stat in _extract_referenced_files(
+                                            last_a.get('text') or '', turn_start):
+                                        candidates.setdefault(str(p), p)
+                                except Exception as e:
+                                    log(f'text-scan failed: {e}')
 
-                    # Snapshot each candidate.
-                    for _, p in candidates.items():
-                        rec = snapshot_attachment(sid, p)
-                        if rec is not None:
-                            attached_records.append(rec)
-                            if len(attached_records) >= TELEGRAM_MAX_FILES_PER_TURN:
-                                break
+                    # Bulk-turn safeguard: a turn with too many
+                    # candidate files is almost certainly a coding
+                    # session, not a "send me a file" turn.
+                    if len(candidates) > BULK_TURN_CAP:
+                        log(f'skip file delivery: bulk turn '
+                            f'({len(candidates)} candidates > '
+                            f'{BULK_TURN_CAP} cap)')
+                    else:
+                        # Snapshot each candidate.
+                        for _, p in candidates.items():
+                            rec = snapshot_attachment(sid, p)
+                            if rec is not None:
+                                attached_records.append(rec)
+                                if len(attached_records) >= TELEGRAM_MAX_FILES_PER_TURN:
+                                    break
 
-                    # Persist on the assistant message so /list, the
-                    # web UI, and a `chat.json` reload can all see
-                    # them.
-                    if attached_records:
-                        attach_files_to_last_assistant(sid, attached_records)
-                        pending_file_count = len(attached_records)
+                        # Persist on the assistant message so /list,
+                        # the web UI, and a `chat.json` reload can
+                        # all see them.
+                        if attached_records:
+                            attach_files_to_last_assistant(
+                                sid, attached_records)
+                            pending_file_count = len(attached_records)
 
                 # Pre-set the placeholder hint for the active TG turn,
                 # if any, so the final flush renders "📎 N file(s)

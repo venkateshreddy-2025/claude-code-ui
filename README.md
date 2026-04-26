@@ -325,6 +325,13 @@ scan. Plain coding messages (*"refactor this"*, *"fix the bug"*)
 leave the bot text-only so claude can use scratch files freely
 without spamming your Telegram.
 
+**Bulk-turn safeguard.** A normal coding session may write or edit
+hundreds of files in a single turn. Even if the trigger heuristic
+matched (e.g., the user said "send me…"), if the turn produces more
+than 25 candidate files we skip delivery entirely and just log it.
+The user almost certainly didn't mean "snapshot all 200 files I
+just refactored." Ask claude for a specific file by name to get it.
+
 **Three signal sources** (most authoritative first):
 
 1. **`tool_use` events from claude's stream** — `Write`, `Edit`, and
