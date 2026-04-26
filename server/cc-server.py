@@ -515,6 +515,15 @@ async def start_worker(sid: str, *, force_fresh: bool = False) -> Worker | None:
             stderr=asyncio.subprocess.PIPE,
             env=scrubbed_env(),
             cwd=cwd,
+            # Each NDJSON line from claude can be huge — a tool_result
+            # with an inline base64 image (or a long generated reply)
+            # easily blows past asyncio's default 64 KB readline buffer.
+            # Bumping to 64 MB matches the practical upper bound on any
+            # single message claude emits and keeps the reader from
+            # crashing with "Separator is not found, and chunk exceed
+            # the limit". If you ever hit this in practice, the right
+            # fix is to chunk on claude's side, not bump this further.
+            limit=64 * 1024 * 1024,
         )
     except Exception as e:
         log(f'  ✗ spawn failed: {e}')
@@ -1307,11 +1316,18 @@ def expand_match(session_id: str, msg_id: str, context_chars: int = 600) -> dict
 async def claude_reader(w: Worker):
     """Pump events out of `w.proc.stdout`. Every WS event we emit gets
     tagged with `sessionId: w.sid` so the UI can route to per-session
-    state buffers, regardless of which chat is in focus."""
+    state buffers, regardless of which chat is in focus.
+
+    Crash policy: any unexpected exception in this loop terminates the
+    subprocess (stdout would otherwise be left undrained, deadlocking
+    on the next big write) and surfaces the error as a `session_ended`
+    event so the Telegram bridge can finalize a stuck turn and the UI
+    can re-spawn cleanly on the next send."""
     proc = w.proc
     sid  = w.sid
     in_text_block = False
     short_run = (time.time(), 4.0)   # if proc dies <4s after start, count as crash
+    crash_msg: str | None = None
 
     try:
         while proc and proc.returncode is None:
@@ -1408,14 +1424,29 @@ async def claude_reader(w: Worker):
     except asyncio.CancelledError:
         pass
     except Exception as e:
+        crash_msg = str(e)
         log(f'reader error sid={sid[:8]}: {e}')
         await broadcast({'type': 'error', 'sessionId': sid,
                          'message': f'reader: {e}'})
     finally:
+        # If the reader crashed but the subprocess is still alive, kill
+        # it. With no one draining stdout, claude will deadlock on the
+        # next big write and become unresponsive — the chat looks
+        # "stuck" until the user manually restarts the server. Killing
+        # the proc here gives the next send a clean spawn.
+        if crash_msg and w.proc and w.proc.returncode is None:
+            log(f'  terminating claude sid={sid[:8]} after reader crash')
+            try:
+                w.proc.terminate()
+                try: await asyncio.wait_for(w.proc.wait(), 3)
+                except asyncio.TimeoutError: w.proc.kill()
+            except ProcessLookupError: pass
+
         if w.proc and w.proc.returncode is not None:
             rc = w.proc.returncode
             elapsed = time.time() - short_run[0]
-            log(f'claude exited sid={sid[:8]} code={rc} elapsed={elapsed:.1f}s')
+            log(f'claude exited sid={sid[:8]} code={rc} elapsed={elapsed:.1f}s'
+                + (f' (after reader crash: {crash_msg})' if crash_msg else ''))
             # If claude died within a few seconds of spawning AND we
             # were trying --resume, the session memory is probably
             # corrupt. Arm the fallback so the next spawn skips --resume.
@@ -1426,8 +1457,11 @@ async def claude_reader(w: Worker):
             w.busy = False
             w.current = None
             w.reader_task = None
-            await broadcast({'type': 'session_ended', 'sessionId': sid,
-                              'exitCode': rc})
+            payload = {'type': 'session_ended', 'sessionId': sid,
+                       'exitCode': rc}
+            if crash_msg:
+                payload['error'] = f'reader crashed: {crash_msg}'
+            await broadcast(payload)
 
 
 # ───────────────────  send (with attachments)  ───────────────────
@@ -2174,7 +2208,28 @@ async def tg_handle_message(msg: dict):
     # (e.g. if a web user just triggered a reply for this same sid and
     # we're piggy-backing on it) — in that case we just add the
     # sender as another target.
+    #
+    # Resilience: if the previous turn is stale (no edit activity in
+    # 5+ minutes), assume it's wedged and discard it. The next claude
+    # spawn this send triggers will start with a fresh turn.
     prev = state.tg_turns.get(sid)
+    STALE_TURN_S = 300
+    if prev is not None and prev.last_edit_ms:
+        idle_s = (time.time() * 1000 - prev.last_edit_ms) / 1000
+        if idle_s > STALE_TURN_S:
+            log(f'telegram: discarding stale turn for sid={sid[:8]} '
+                f'(idle {idle_s:.0f}s)')
+            if prev.flush_task and not prev.flush_task.done():
+                prev.flush_task.cancel()
+            state.tg_turns.pop(sid, None)
+            prev = None
+            # If the worker for this sid is also wedged (stuck busy),
+            # tear it down so the upcoming send_to_session respawns.
+            stuck = state.workers.get(sid)
+            if stuck and stuck.busy:
+                log(f'  also tearing down zombie worker sid={sid[:8]}')
+                await stop_worker(sid, broadcast_end=False)
+
     if prev is not None:
         # Reuse: fast-flush so the new sender sees the current state
         # quickly, and add their chat as a target if not already there.
@@ -2279,12 +2334,22 @@ async def telegram_relay_event(event: dict):
             state.tg_turns.pop(sid, None)
 
     elif et == 'session_ended':
-        # claude exited mid-turn — let every recipient know and drop.
+        # claude exited (or the reader crashed) mid-turn. Tell every
+        # recipient + drop the turn. Future sends respawn cleanly.
+        err = event.get('error')
+        rc  = event.get('exitCode')
+        if err:
+            tail = f' Reason: {err}.'
+        elif rc not in (None, 0):
+            tail = f' Exit code: {rc}.'
+        else:
+            tail = ''
         for tgt in turn.targets:
             try:
                 await tg_send(tgt.chat_id,
-                    f'⚠ claude session ended unexpectedly (exit '
-                    f'{event.get("exitCode","?")}). Send another message to retry.')
+                    f'⚠ The previous reply couldn\'t finish — '
+                    f'claude\'s session ended mid-turn.{tail} '
+                    f'Send another message and I\'ll restart this chat.')
             except Exception: pass
         if state.tg_turns.get(sid) is turn:
             state.tg_turns.pop(sid, None)
