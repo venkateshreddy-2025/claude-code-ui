@@ -90,27 +90,38 @@ HOST = os.environ.get('CC_SERVER_HOST', '127.0.0.1')
 PORT = int(os.environ.get('CC_SERVER_PORT', 8765))
 
 HOME = Path.home()
-# CC_DATA_DIR holds session metadata, uploads, and logs. Override to
-# share storage with another claude install.
-DATA_DIR = Path(os.environ.get('CC_DATA_DIR', str(HOME / '.claude-code-ui')))
+# Single visible root for everything the bridge owns:
+#   $HOME/claude-ui/
+#     ├─ long-term-memory.md      # the cross-chat index
+#     ├─ bridge.log                # server log (was /tmp/...)
+#     ├─ <chat-folder>/            # per-chat working dir
+#     │    ├─ chat.json            # mirror of the session messages
+#     │    ├─ MEMORY.md            # per-chat memory (overwritten on save)
+#     │    └─ uploads/             # any files the chat received
+#     └─ _data/                    # bookkeeping the user rarely touches
+#          ├─ cc-sessions/         # per-session JSON (id → messages)
+#          ├─ cc-uploads/<sid>/    # legacy upload location
+#          └─ cc-telegram.json     # Telegram chat-id ↔ session-id map
+#
+# Nothing under ~/.openclaw, nothing in /tmp. All persistent and visible.
+CWD_ROOT = Path(os.environ.get('CC_CWD_ROOT', str(HOME / 'claude-ui')))
+CWD_ROOT.mkdir(parents=True, exist_ok=True)
+
+DATA_DIR = Path(os.environ.get('CC_DATA_DIR', str(CWD_ROOT / '_data')))
 SESS_DIR = DATA_DIR / 'cc-sessions'
 SESS_DIR.mkdir(parents=True, exist_ok=True)
 UPLOAD_DIR = DATA_DIR / 'cc-uploads'
-# Long-term memory: a single Markdown file outside any chat folder
-# that holds a brief INDEX of every saved session reflection. The
-# heavy content (skill / pattern notes) lives in each chat's cwd as
-# `PROGRESS-<ts>.md`; the index just points at them so a fresh
-# claude can scan it on startup and know what's been done before.
-MEMORY_FILE = DATA_DIR / 'long-term-memory.md'
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR = DATA_DIR / 'logs'
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 INDEX_FILE = SESS_DIR / 'index.json'
 
-# Per-session working directory root. Each new session gets its own folder
-# under here so claude can write scratch files without colliding.
-CWD_ROOT = Path(os.environ.get('CC_CWD_ROOT', str(HOME / 'claude-ui')))
-CWD_ROOT.mkdir(parents=True, exist_ok=True)
+# Long-term memory: lives at the chat root so the user sees it next
+# to the per-chat folders it indexes. Override via CC_MEMORY_FILE
+# if you want it elsewhere.
+MEMORY_FILE = Path(os.environ.get('CC_MEMORY_FILE',
+                                  str(CWD_ROOT / 'long-term-memory.md')))
+
 DEFAULT_CWD = str(HOME.resolve())
 
 # Static UI files (only used when CC_SERVE_STATIC=1).
@@ -1513,20 +1524,48 @@ async def save_progress_silent(sid: str):
     cwd.mkdir(parents=True, exist_ok=True)
     MEMORY_FILE.parent.mkdir(parents=True, exist_ok=True)
     timestamp = time.strftime('%Y-%m-%d_%H-%M-%S')
-    md_path = cwd / f'PROGRESS-{timestamp}.md'
+    # Single stable filename per chat — overwritten on every save so
+    # the file is always the LATEST memory. No PROGRESS-<ts>.md
+    # sprawl (each save used to leave behind a new file).
+    md_path = cwd / 'MEMORY.md'
     title   = sess.get('title') or 'Untitled chat'
     # Pre-create the memory index header if missing — saves one Read
-    # tool call on claude's side. Idempotent: if the file already
-    # exists with content, we leave it alone.
+    # tool call on claude's side.
     if not MEMORY_FILE.exists():
         MEMORY_FILE.write_text(
             '# Long-term memory index\n\n'
-            'Pointers to skill / experience notes. Each entry has\n'
+            'Pointers to per-chat MEMORY.md files. Each entry has\n'
             'Triggers (keywords / names / problem shapes) and a\n'
             'one-sentence Skill. Read this file first when a request\n'
             'might match a past topic, then Read the relevant `**Path**:`\n'
             'for the full bullet-form memory.\n',
             encoding='utf-8')
+
+    # Refresh-not-append: if this session has been saved before,
+    # remove its prior entry from the index so the new write fully
+    # replaces it (rather than letting stale entries accumulate).
+    # Each entry is keyed by `**Session**: <sid>` for unambiguous
+    # match.
+    try:
+        existing = MEMORY_FILE.read_text(encoding='utf-8')
+        # Match: ## header line, then any number of bullet metadata
+        # lines, where ONE of them is `- **Session**: <sid>`.
+        # Ends at the next ## heading or end-of-file.
+        entry_pat = re.compile(
+            r'^## [^\n]+\n'
+            r'(?:- \*\*[^*\n]+\*\*:[^\n]*\n)*?'
+            r'- \*\*Session\*\*:\s*' + re.escape(sid) + r'\b[^\n]*\n'
+            r'(?:- \*\*[^*\n]+\*\*:[^\n]*\n)*',
+            re.MULTILINE
+        )
+        cleaned = entry_pat.sub('', existing)
+        # Tidy up runs of blank lines left behind by the removal.
+        cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+        if cleaned != existing:
+            MEMORY_FILE.write_text(cleaned, encoding='utf-8')
+            log(f'  refresh: removed prior index entry for sid={sid[:8]}')
+    except Exception as e:
+        log(f'  refresh: prior-entry cleanup failed (continuing): {e}')
 
     # The prompt — silent-mode instructions for two Write calls.
     # We deliberately do NOT include a JSON dump of the conversation:
@@ -1542,32 +1581,57 @@ async def save_progress_silent(sid: str):
     prompt = f"""[INTERNAL — silent turn, NO chat output.]
 
 FAST. Issue BOTH Write tool calls in a SINGLE assistant message —
-in PARALLEL, not sequentially. Don't say anything between them.
-Don't think out loud. Don't plan. Don't preamble. Just the two
-Write blocks, in one message.
+in PARALLEL, not sequentially. No narration, no thinking out loud,
+no preamble. Just the two Write blocks, in one message.
 
-WRITE 1 — memory file at: {md_path}
+WRITE 1 — overwrite the per-chat memory at:
+    {md_path}
 
-Bullet-form, 100-300 words ideal, 800 max. Skip any section that's
-empty. Capture the hard-to-re-derive stuff: names, versions, paths,
-URLs, numbers, exact commands, gotchas.
+This is a fresh write each time (overwrites any previous content).
+Capture the LATEST state of this chat — what's true now, not history.
+
+Bullet-form, 100-400 words ideal, 800 max. Lead with the answer.
+Don't pad. Skip empty sections.
+
+CRITICAL — if the chat touched any of these, RECORD them with
+ABSOLUTE PATHS / exact identifiers:
+
+  • Files / directories / repos worked with
+      → ABSOLUTE paths, e.g. /Users/foo/proj/src/server.py:42
+  • Codebases / git branches
+      → repo path + branch + commit if mentioned
+  • MCP servers used  (e.g. mcp__playwright, mcp__desktop-commander)
+      → which tools were called, what for, what worked / didn't
+  • External services / URLs / API endpoints
+      → full URLs, auth method, rate limits if mentioned
+  • Commands run / scripts written
+      → exact text in fenced blocks, copy-pasteable
+  • Environment / config
+      → env vars, port numbers, versions, credentials FILE PATHS
+        (never the credentials themselves)
+
+Structure (omit any section that has nothing):
 
 ```markdown
 # <≤8-word title — keywords future-you will search for>
 
-> **Quick answer** — 1-3 imperative bullets. Skim-only, you
-> already know what to do.
+> **Quick answer** — 1-3 imperative bullets, skim-only.
 
 ## Triggers
-- keyword / problem-shape 1
-- keyword / problem-shape 2
+- keyword / problem-shape
+
+## Files / paths / codebase
+- /abs/path/to/thing — what it is, why it matters
+
+## MCP / tools used
+- mcp__<server>__<tool> — purpose, outcome
+  (skip section entirely if no MCP tools were involved)
 
 ## Key facts
 - <name> — <value>
-- <thing> — <detail>
 
 ## Steps that worked
-exact commands / code in fenced blocks (no paraphrase)
+exact commands / code in fenced blocks
 
 ## What didn't work        ← skip if nothing failed
 - <attempt> — <symptom> — <fix>
@@ -1576,20 +1640,25 @@ exact commands / code in fenced blocks (no paraphrase)
 - <case>
 ```
 
-WRITE 2 — append to the memory index at: {MEMORY_FILE}
+WRITE 2 — append to the memory index at:
+    {MEMORY_FILE}
 
-The file already exists with a header. APPEND (don't rewrite) this
-exact 4-line block to the bottom:
+The file exists with a header. The bridge has ALREADY removed any
+prior entry for this session id, so just APPEND this exact 5-line
+block to the bottom:
 
 ```
 ## {timestamp.replace('_', ' ')} — {title}
+- **Session**: {sid}
 - **Path**: {md_path}
 - **Triggers**: <comma-separated keywords/names/numbers, e.g. "Postgres, NOT NULL, 50M rows">
 - **Skill**: <ONE sentence ≤25 words in instruction form>
 ```
 
+The `**Session**:` line is REQUIRED — that's how the bridge finds
+and refreshes this entry on the next save.
+
 After both Writes land in your single message, STOP. No chat text.
-Don't acknowledge. Don't summarize. Just end the turn.
 """
 
     # Flip the silent-turn flag BEFORE writing the prompt so the
