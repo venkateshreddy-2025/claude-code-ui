@@ -277,9 +277,9 @@ share the same workers and the same on-disk session.
 | Telegram action | Effect |
 |---|---|
 | (any plain text) | Routes to your bound (or most-recent) session. Reply streams back via `editMessageText`. |
-| `/list` | Numbered list + tappable inline keyboard of recent chats. Tap to bind. |
+| `/list` | Numbered list + tappable inline keyboard of recent chats. Tap → binds, then replays the **last 10 messages** as a transcript so you have context. |
 | `/new <title?>` | Creates a fresh session, binds you to it. |
-| `/here` | Replies with the title + ID of the currently bound session. |
+| `/here` | Shows the last 10 messages of the currently bound session, plus the session id. |
 | `/fork` | Forks the bound chat (last 200 turns) and binds you to the new one. |
 | `/start` | Onboarding text. |
 
@@ -289,6 +289,39 @@ sent from the web UI are mirrored to bound Telegram chats with a
 "🌐 Web: …" prefix; messages sent from one Telegram user are mirrored
 to *other* bound users with a "📱 from Telegram: …" prefix (the
 original sender's chat is never echoed back to itself).
+
+### File delivery
+
+When claude writes a file during a turn (via its `Write`, `Edit`, or
+shell tools), the bridge automatically delivers it to every Telegram
+chat bound to that session. Each file is sent through the API method
+that gives the best native preview on Telegram clients:
+
+| File extension | API method | What you see in Telegram |
+|---|---|---|
+| `.png .jpg .jpeg .gif .webp .bmp` | `sendPhoto` | Native large inline preview, tap for full size |
+| `.mp4 .mov .webm .mkv .m4v` | `sendVideo` | Thumbnail + inline player |
+| `.mp3 .m4a .wav .ogg .flac .aac` | `sendAudio` | Inline audio player |
+| `.pdf` | `sendDocument` | Mobile clients show first-page preview; desktop shows icon + open |
+| `.pptx .docx .xlsx .key .pages …` | `sendDocument` | Filename + size; tap opens in associated app |
+| `.txt .md .json .py .js …` | `sendDocument` | Inline text preview if small (<5 KB) |
+| `.zip .tar .gz` | `sendDocument` | Filename + size only |
+
+Limits and behaviour:
+
+- Bot API caps single file uploads at **50 MB**. The bridge enforces
+  a 45 MB safety margin — files bigger than that are skipped with a
+  message listing what wasn't delivered.
+- A maximum of **10 files per turn** are delivered. If a turn
+  produces more, the rest are listed but not uploaded.
+- Hidden files (starting with `.`) and noisy directories
+  (`node_modules`, `.git`, `dist`, `__pycache__`, `.venv`, `target`,
+  `build`, `.cache`, …) are skipped automatically.
+- If `sendPhoto`/`sendVideo` rejects a file (oversized image
+  dimensions, malformed media), the bridge transparently falls back
+  to `sendDocument` so the file still gets through.
+- If a turn produces only files (no text reply), the placeholder
+  reads "📎 N file(s) attached below" instead of "(no text response)".
 
 ### Setup
 

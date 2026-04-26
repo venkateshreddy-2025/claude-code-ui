@@ -184,6 +184,10 @@ class Worker:
         self.busy: bool = False
         self.current = None              # in-progress assistant message
         self.reader_task: asyncio.Task | None = None
+        # When the in-flight turn started (set by send_to_session, cleared
+        # by `result`). We use it to find files claude wrote during the
+        # turn so we can deliver them to bound Telegram chats.
+        self.turn_started_at: float | None = None
         # Resilience: if claude keeps crashing on `--resume <sid>` (the
         # session memory is corrupt or got out of sync), we count fails
         # in a rolling window and fall back to a fresh spawn that
@@ -1401,9 +1405,39 @@ async def claude_reader(w: Worker):
                 # one bad spawn early on doesn't permanently arm the
                 # fallback for a now-healthy session.
                 w.recent_failures.clear()
+                # Capture turn-start before we hand off to telegram file
+                # delivery (which is async-scheduled so it doesn't block
+                # the next event).
+                turn_start = w.turn_started_at
+                w.turn_started_at = None
+
+                # Pre-scan for files claude wrote during this turn, so
+                # the Telegram final-flush can render a better
+                # placeholder ("📎 file attached below") instead of
+                # "(no text response)" when the turn produced only
+                # files and no chat reply.
+                pending_file_count = 0
+                if turn_start is not None and TELEGRAM_TOKEN:
+                    sess_for_files = load_session(sid)
+                    if sess_for_files:
+                        cwd_for_files = Path(
+                            sess_for_files.get('cwd') or DEFAULT_CWD)
+                        try:
+                            pending_file_count = len(
+                                _scan_files_modified_after(
+                                    cwd_for_files, turn_start))
+                        except Exception as e:
+                            log(f'pre-scan files failed: {e}')
+                tturn = state.tg_turns.get(sid)
+                if tturn is not None:
+                    tturn.pending_file_count = pending_file_count
+
                 await broadcast({'type': 'turn_done',
                                  'sessionId': sid,
                                  'sessions': list_sessions_brief()})
+                if turn_start is not None and pending_file_count > 0:
+                    asyncio.create_task(
+                        tg_deliver_new_files_for_turn(sid, turn_start))
                 continue
 
             if t == 'assistant':
@@ -1541,6 +1575,10 @@ async def send_to_session(sid: str, text: str, attachments: list[dict]):
 
     append_message(sid, user_msg)
     w.busy = True
+    # Mark turn-start so we can diff cwd files after `result` and
+    # deliver any new ones via Telegram. Resolution = whole seconds is
+    # fine (filesystem mtimes are usually that granular anyway).
+    w.turn_started_at = time.time()
     await broadcast({'type': 'user', 'sessionId': sid, 'msg': user_msg})
 
     content = []
@@ -1890,6 +1928,11 @@ class TelegramTurn:
         # messages we set this to the sender's chat_id so the relay
         # doesn't echo their own message back to them. None = web-side.
         self.origin_chat_id: int | None = None
+        # Hint set by claude_reader before broadcasting turn_done: how
+        # many new files we'll deliver below this turn. Used by the
+        # final flush to swap "(no text response)" for "📎 …" when
+        # claude's only output for this turn was a Write/Edit tool.
+        self.pending_file_count: int = 0
 
     def add_target(self, chat_id: int, uid: int,
                    placeholder_id: int | None = None) -> TelegramTarget:
@@ -1985,6 +2028,153 @@ async def tg_send(chat_id: int, text: str, *, reply_markup: dict | None = None,
     return await tg_api('sendMessage', payload)
 
 
+# ── file delivery (multipart upload) ──
+# Telegram's Bot API caps file uploads at 50 MB. We leave a 5 MB margin
+# in case the multipart envelope adds size, so the practical cap is 45 MB.
+TELEGRAM_FILE_LIMIT = 45 * 1024 * 1024
+TELEGRAM_MAX_FILES_PER_TURN = 10
+# Folders inside a session cwd that we never crawl for file delivery
+# (build artefacts, deps, caches, hidden git/state).
+_FILE_SKIP_DIRS = {
+    'node_modules', '.git', '.next', '__pycache__', '.venv', 'venv',
+    'dist', 'build', '.cache', '.pytest_cache', '.mypy_cache',
+    'target', '.idea', '.vscode', '.DS_Store',
+}
+_IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'}
+_VIDEO_EXTS = {'.mp4', '.mov', '.webm', '.mkv', '.m4v'}
+_AUDIO_EXTS = {'.mp3', '.m4a', '.wav', '.ogg', '.flac', '.aac'}
+
+
+async def tg_api_upload(method: str, chat_id: int, file_field: str,
+                        path: Path, caption: str | None = None) -> dict:
+    """Multipart-form upload of a single file to the Telegram Bot API.
+
+    `method` is the API endpoint (sendPhoto, sendDocument, sendVideo,
+    sendAudio, ...). `file_field` is the corresponding form field name
+    (photo, document, video, audio, ...). Returns the API's parsed
+    JSON response."""
+    if not TELEGRAM_TOKEN:
+        return {'ok': False, 'description': 'no token'}
+    url = f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/{method}'
+
+    def do_request():
+        boundary = '----cc_' + uuid.uuid4().hex
+        nl = b'\r\n'
+        body = bytearray()
+        # chat_id
+        body += f'--{boundary}\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n{chat_id}\r\n'.encode('utf-8')
+        if caption:
+            body += f'--{boundary}\r\nContent-Disposition: form-data; name="caption"\r\n\r\n{caption}\r\n'.encode('utf-8')
+        # File part
+        ctype = mimetypes.guess_type(str(path))[0] or 'application/octet-stream'
+        # Use a fairly safe filename (Telegram requires it for some APIs).
+        fname = path.name.replace('"', '_')
+        body += f'--{boundary}\r\nContent-Disposition: form-data; name="{file_field}"; filename="{fname}"\r\nContent-Type: {ctype}\r\n\r\n'.encode('utf-8')
+        body += path.read_bytes()
+        body += f'\r\n--{boundary}--\r\n'.encode('utf-8')
+        headers = {
+            'Content-Type': f'multipart/form-data; boundary={boundary}',
+            'Content-Length': str(len(body)),
+        }
+        req = urllib.request.Request(url, data=bytes(body), headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=180) as r:
+                return json.loads(r.read().decode('utf-8'))
+        except urllib.error.HTTPError as e:
+            try: detail = json.loads(e.read().decode('utf-8'))
+            except Exception: detail = {'description': str(e)}
+            return {'ok': False, 'error_code': e.code, **detail}
+        except Exception as e:
+            return {'ok': False, 'error_code': 0, 'description': str(e)}
+
+    return await asyncio.get_event_loop().run_in_executor(None, do_request)
+
+
+def _scan_files_modified_after(cwd: Path, since: float) -> list[tuple[Path, os.stat_result]]:
+    """Walk `cwd` and return files whose mtime > since. Skips hidden
+    files and well-known noisy directories (node_modules etc.).
+    Returns a list of (Path, stat) tuples sorted by mtime ascending."""
+    found: list[tuple[Path, os.stat_result]] = []
+    if not cwd.exists() or not cwd.is_dir():
+        return found
+    for root, dirs, files in os.walk(str(cwd)):
+        # Prune skip dirs in-place so os.walk doesn't descend
+        dirs[:] = [d for d in dirs
+                   if d not in _FILE_SKIP_DIRS and not d.startswith('.')]
+        for fname in files:
+            if fname.startswith('.'):  # .DS_Store, .env, etc.
+                continue
+            p = Path(root) / fname
+            try:
+                stat = p.stat()
+            except OSError:
+                continue
+            if stat.st_mtime > since:
+                found.append((p, stat))
+    found.sort(key=lambda t: t[1].st_mtime)
+    return found
+
+
+async def tg_deliver_new_files_for_turn(sid: str, turn_started_at: float):
+    """After claude finishes a turn, scan the session's cwd for files
+    modified during the turn and deliver them to every Telegram chat
+    bound to this session."""
+    if not TELEGRAM_TOKEN:
+        return
+    targets = tg_targets_for_session(sid)
+    if not targets:
+        return
+    sess = load_session(sid)
+    if sess is None:
+        return
+    cwd_str = sess.get('cwd') or DEFAULT_CWD
+    cwd = Path(cwd_str)
+    new_files = _scan_files_modified_after(cwd, turn_started_at)
+    if not new_files:
+        return
+    sent = 0
+    skipped: list[tuple[str, str]] = []
+    for p, stat in new_files:
+        if sent >= TELEGRAM_MAX_FILES_PER_TURN:
+            skipped.append((p.name, 'cap reached (10 files / turn)'))
+            continue
+        if stat.st_size > TELEGRAM_FILE_LIMIT:
+            mb = stat.st_size // (1024 * 1024)
+            skipped.append((p.name, f'too large ({mb} MB; cap 45 MB)'))
+            continue
+        ext = p.suffix.lower()
+        # Pick the right Bot API method so each file gets the best
+        # native preview Telegram clients can offer.
+        if ext in _IMAGE_EXTS:
+            method, field, caption = 'sendPhoto', 'photo', p.name
+        elif ext in _VIDEO_EXTS:
+            method, field, caption = 'sendVideo', 'video', p.name
+        elif ext in _AUDIO_EXTS:
+            method, field, caption = 'sendAudio', 'audio', None
+        else:
+            method, field, caption = 'sendDocument', 'document', None
+        for chat_id, _uid in targets:
+            try:
+                res = await tg_api_upload(method, chat_id, field, p, caption=caption)
+                if not res.get('ok'):
+                    log(f'telegram: file send failed ({method}) {p.name}: {res}')
+                    # Fall back to sendDocument if sendPhoto/Video rejects
+                    # (e.g., dimension limits, malformed image).
+                    if method != 'sendDocument':
+                        await tg_api_upload('sendDocument', chat_id, 'document', p)
+            except Exception as e:
+                log(f'telegram: file upload exception {p.name}: {e}')
+        sent += 1
+    if skipped:
+        body = '⏬ Some files weren\'t delivered:\n' + '\n'.join(
+            f'• `{n}` — {why}' for n, why in skipped[:10])
+        for chat_id, _uid in targets:
+            try: await tg_send(chat_id, body, parse_mode='Markdown')
+            except Exception: pass
+    if sent:
+        log(f'telegram: delivered {sent} file(s) for sid={sid[:8]}')
+
+
 def tg_truncate(text: str, n: int = TELEGRAM_MAX_MSG_LEN) -> str:
     if len(text) <= n: return text
     return text[:n - 3] + '…'
@@ -2008,6 +2198,53 @@ def tg_recent_sessions(limit: int = 10) -> list[dict]:
     items = list_sessions_brief()
     items.sort(key=lambda s: -(s.get('lastActiveAt') or s.get('createdAt') or 0))
     return items[:limit]
+
+
+def _humanize_age(ts: float) -> str:
+    if not ts:
+        return ''
+    elapsed = max(0, time.time() - ts)
+    if   elapsed < 60:    return 'just now'
+    elif elapsed < 3600:  return f'{int(elapsed/60)}m ago'
+    elif elapsed < 86400: return f'{int(elapsed/3600)}h ago'
+    else:                 return f'{int(elapsed/86400)}d ago'
+
+
+def tg_format_recent_transcript(sess: dict, n: int = 10,
+                                per_msg_cap: int = 600) -> list[str]:
+    """Format the last `n` messages of a session as Telegram-ready
+    text blocks. Each block is <4096 chars. Returns >=1 block — the
+    caller sends each one as a separate sendMessage call.
+
+    `per_msg_cap` truncates a single long message before it pushes the
+    transcript into multiple Telegram bubbles."""
+    msgs = (sess.get('messages') or [])[-n:]
+    title = (sess.get('title') or 'Untitled')[:80]
+    if not msgs:
+        return [f'✓ Continuing chat: {title}\n\n(no messages yet)']
+
+    header = (f'✓ Continuing chat: {title}\n'
+              f'📜 Last {len(msgs)} message{"s" if len(msgs)!=1 else ""}:\n')
+
+    blocks: list[str] = []
+    cur = header
+    for m in msgs:
+        role = m.get('role') or ''
+        who  = '👤 You' if role == 'user' else ('🤖 Claudy' if role == 'assistant' else role.title())
+        when = _humanize_age(m.get('ts') or 0)
+        text = (m.get('text') or '').strip()
+        if len(text) > per_msg_cap:
+            text = text[:per_msg_cap].rstrip() + '…'
+        chunk = f'\n— {who} · {when} —\n{text}\n'
+        # If this chunk would overflow a Telegram message, split.
+        if len(cur) + len(chunk) > TELEGRAM_MAX_MSG_LEN:
+            blocks.append(cur.rstrip())
+            cur = chunk.lstrip()
+        else:
+            cur += chunk
+    if cur.strip():
+        blocks.append(cur.rstrip())
+    return blocks
 
 
 def tg_resolve_session_for(uid: int) -> str | None:
@@ -2084,9 +2321,16 @@ async def tg_handle_here(chat_id: int, uid: int):
         # Auto-bind to most recent on first /here so the answer is honest.
         tg_bind(uid, chat_id, sid)
     sess = load_session(sid)
-    title = (sess.get('title') if sess else None) or 'Untitled'
-    await tg_send(chat_id, f'You\'re in: {title}\nID: `{sid[:8]}…`',
-                   parse_mode='Markdown')
+    if sess is None:
+        await tg_send(chat_id, 'No active chat yet. Use /new to start one.')
+        return
+    # Same transcript view as /list selection so you always have a way
+    # to recall recent context without rebinding.
+    for block in tg_format_recent_transcript(sess, n=10):
+        try: await tg_send(chat_id, block)
+        except Exception: pass
+    # Footer with the session id for power-users.
+    await tg_send(chat_id, f'ID: `{sid[:8]}…`', parse_mode='Markdown')
 
 
 async def tg_handle_fork(chat_id: int, uid: int):
@@ -2128,13 +2372,12 @@ async def tg_handle_callback(cb: dict):
         await tg_api('answerCallbackQuery',
                       {'callback_query_id': cb_id,
                        'text': f'Bound to: {sess.get("title","Untitled")[:40]}'})
-        # Show the bound chat's last assistant message as a "you're back" hint
-        msgs = sess.get('messages', []) or []
-        last_bot = next((m for m in reversed(msgs) if m.get('role') == 'assistant'), None)
-        body = (last_bot.get('text') if last_bot else None) or '(no replies yet)'
-        await tg_send(chat_id, '✓ Continuing chat: '
-                                f'{sess.get("title","Untitled")}\n\nLast reply:\n\n'
-                                + tg_truncate(body, 1500))
+        # Show the last 10 messages as a transcript so the user has
+        # the recent context paged in. Long replies get truncated
+        # per-message so 10 turns reliably fits in 1–2 Telegram bubbles.
+        for block in tg_format_recent_transcript(sess, n=10):
+            try: await tg_send(chat_id, block)
+            except Exception: pass
         return
 
     # Unknown callback — silently ack so the spinner clears.
@@ -2374,7 +2617,17 @@ async def tg_flush_now(turn: TelegramTurn, *, final: bool = False):
     """Render the accumulated text into the Telegram placeholder(s) for
     every target on this turn (the original sender plus every other TG
     user bound to the same session)."""
-    body_full = turn.text or ('…' if not final else '(no text response)')
+    if turn.text:
+        body_full = turn.text
+    elif not final:
+        body_full = '…'
+    elif turn.pending_file_count > 0:
+        # claude's only output this turn was a file write — let the
+        # placeholder reflect that instead of looking like a no-op.
+        n = turn.pending_file_count
+        body_full = f'📎 {n} file{"s" if n != 1 else ""} attached below.'
+    else:
+        body_full = '(no text response)'
     parts: list[str] = []
     body = body_full
     while body:
