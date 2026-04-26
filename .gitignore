@@ -32,6 +32,8 @@ node_modules/
 # Local-only docs / notes — never tracked. Contains operator details
 # (paths, ports, tokens) for a specific machine; not shareable.
 LOCAL_NOTES.md
+JOURNAL-*.md
+RETRO-*.md
 *.local.md
 *.local
 secrets/
