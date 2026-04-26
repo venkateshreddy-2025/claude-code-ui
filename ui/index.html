@@ -1528,18 +1528,8 @@
   </div>
 </div>
 
-<!-- Save-progress dialog — shown after summarization finishes. -->
-<div class="modal-backdrop" id="summaryDoneBackdrop"></div>
-<div class="modal" id="summaryDoneModal" hidden>
-  <button class="close" id="summaryDoneClose" aria-label="Close">×</button>
-  <h3>Progress saved</h3>
-  <p class="setting-help" id="summaryDonePath"></p>
-  <p class="setting-help" id="summaryDoneSize"></p>
-  <div class="modal-actions">
-    <button type="button" class="btn-ghost"   id="summaryCopyPath">Copy path</button>
-    <button type="button" class="btn-primary" id="summaryDoneOk">Got it</button>
-  </div>
-</div>
+<!-- Save runs invisibly — no modal, no toast. Only the save button's
+     own state changes (busy → saved → busy again). -->
 
 <script>
 (() => {
@@ -2309,12 +2299,20 @@
       return;
     }
     for (const m of msgs) renderMessage(m);
-    // If the focused chat has an in-progress assistant stream, paint it
-    // immediately from our buffered text so the user sees the current
-    // state when they switch back to a chat that's still streaming.
+    // If the focused chat has an in-progress assistant stream, paint
+    // the buffered text via the rAF typewriter — adaptive cps will
+    // catch up to the live tail in ~2s while the user sees the
+    // typewriter effect, then incremental deltas stream at baseline.
     if (c && c.current && c.current.id){
       startStream(c.current.id);
-      if (c.current.text) appendDelta(c.current.id, c.current.text);
+      if (c.current.text){
+        // Single appendDelta with the whole buffered tail; the rAF
+        // drainer handles the cadence.
+        appendDelta(c.current.id, c.current.text);
+      }
+      // Show "thinking" dots if claude is mid-tool-use (no text yet
+      // but more is coming) — provides a continuity cue.
+      if (c.busy) setStatus('thinking…','busy');
     } else if (c && c.busy){
       // Worker is busy but hasn't emitted any text yet — show dots.
       showTyping(true);
@@ -2356,10 +2354,13 @@
   //   On endStream a final full reparse runs, the cursor goes away,
   //   and frozen+live are collapsed back into a single innerHTML so
   //   the regular non-streaming code path takes over.
-  const STREAM_BASE_CPS         = 80;   // ~12.5 ms/char baseline
-  const STREAM_MAX_SPEEDUP      = 5;    // up to ~400 cps on big bursts
-  const STREAM_ADAPT_DENOM      = 250;  // each 250 unread chars = +1× speed
-  const MAX_CHARS_PER_FRAME     = 240;  // avoid mega-frames on huge bursts
+  const STREAM_BASE_CPS         = 90;    // ~11 ms/char baseline (incremental deltas)
+  const STREAM_MAX_SPEEDUP      = 30;    // up to ~2700 cps catching up on big buffers
+  const STREAM_ADAPT_DENOM      = 100;   // each 100 unread chars = +1× speed
+  // Resume goal: a 5000-char buffer (resuming a streaming chat after a
+  // switch) drains in ~2 seconds — visible typewriter effect, not 12s.
+  // Small incremental deltas stay at baseline cps so they look natural.
+  const MAX_CHARS_PER_FRAME     = 800;   // ceiling per frame on huge bursts
   // Stream state — one in-flight stream at a time, attached to streamingBubble.
   let _streamRafId         = null;
   let _streamLastFrameTs   = 0;
@@ -3882,34 +3883,22 @@
   // ───── save progress (Markdown summary via opus 4.6 1M) ─────
   // Spawns a SEPARATE claude subprocess on the server side so the active
   // session's claude isn't disturbed. Disables the composer in the
-  // active chat while running. Server emits `summarizing` then
-  // `summary_done` (with {path, bytes}) to drive the modal.
+  // Save runs invisibly. The only user-visible signal is the save
+  // button's own state (busy → saved → busy again on new content).
+  // No banner, no modal, no toast — the user shouldn't be told the
+  // bridge is doing internal bookkeeping.
   let summarizing = false;
   function setSummarizing(on){
     summarizing = !!on;
-    appEl.classList.toggle('summarizing', summarizing);
-    const inp = document.getElementById('input');
-    const sendBtn = document.getElementById('send');
-    // Composer stays usable — the save runs on the same claude proc
-    // but in silent mode, the user can keep typing. We just tag the
-    // app so a small "saving" hint can show.
     const saveBtn = document.getElementById('saveProgressBtn');
     if (saveBtn){
       saveBtn.disabled = summarizing || !isSaveEligible();
       saveBtn.classList.toggle('busy', summarizing);
     }
-    if (summarizing){
-      showBanner('Saving — silent reflection in flight…');
-    } else {
-      hideBanner();
-    }
   }
 
   // The Save button is enabled iff the active chat has unsaved
   // content — i.e., something has been said since the last save.
-  // Server emits `lastActiveAt` and `lastSavedAt` on every session
-  // brief; we compare them. Returns false when there's no active
-  // chat or no messages yet.
   function isSaveEligible(){
     if (!activeId) return false;
     const s = sessions.find(x => x.id === activeId);
@@ -3924,51 +3913,23 @@
     if (!saveBtn) return;
     const eligible = isSaveEligible();
     saveBtn.disabled = summarizing || !eligible;
-    saveBtn.title = summarizing
-      ? 'Saving…'
-      : eligible
-        ? 'Save reflection (silent — writes a learning note + memory index entry)'
-        : 'Nothing new to save';
+    // Tooltip stays neutral — no internals leak.
+    saveBtn.title = summarizing ? 'Saving…' : (eligible ? 'Save' : 'Saved');
     saveBtn.classList.toggle('saved', !summarizing && !eligible && !!activeId);
   }
 
   document.getElementById('saveProgressBtn').addEventListener('click', () => {
     if (summarizing) return;
-    if (!activeId){
-      showBanner('No active chat to save.');
-      setTimeout(hideBanner, 3000); return;
-    }
-    if (!isSaveEligible()){
-      showBanner('Already saved — nothing new to capture.');
-      setTimeout(hideBanner, 2500); return;
-    }
+    if (!activeId || !isSaveEligible()) return;
     setSummarizing(true);
     send({ type: 'save_progress', id: activeId });
   });
 
+  // save_done: just flip the button. No modal, no toast, no banner.
   function onSaveDone(m){
     setSummarizing(false);
-    refreshSaveButton();      // turns into "saved" state
-    const md     = m.mdPath     || m.path || '';
-    const memory = m.memoryPath || '';
-    document.getElementById('summaryDonePath').innerHTML =
-      (md     ? 'Reflection: <code>' + escHtml(md)     + '</code><br>' : '') +
-      (memory ? 'Memory index: <code>' + escHtml(memory) + '</code>'   : '');
-    document.getElementById('summaryDoneSize').textContent =
-      'Saved silently — no chat narration. New chats will read the index on startup.';
-    document.getElementById('summaryDoneBackdrop').classList.add('on');
-    document.getElementById('summaryDoneModal').hidden = false;
-    document.getElementById('summaryCopyPath').onclick = async () => {
-      try { await navigator.clipboard.writeText(md); showBanner('Reflection path copied'); setTimeout(hideBanner, 1800); } catch(e) {}
-    };
+    refreshSaveButton();      // muted "saved" state
   }
-  function closeSummaryDone(){
-    document.getElementById('summaryDoneBackdrop').classList.remove('on');
-    document.getElementById('summaryDoneModal').hidden = true;
-  }
-  document.getElementById('summaryDoneClose').addEventListener('click', closeSummaryDone);
-  document.getElementById('summaryDoneOk').addEventListener('click', closeSummaryDone);
-  document.getElementById('summaryDoneBackdrop').addEventListener('click', closeSummaryDone);
 
   // ───── mic / speech-to-text (Web Speech API) ─────
   // Uses the browser's built-in recognition: macOS Safari/Chrome both wire it

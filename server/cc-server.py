@@ -654,30 +654,42 @@ def _arm_fallback_if_unstable(w: Worker):
 
 
 def build_memory_preamble() -> str:
-    """A small prefix appended to every claude spawn telling it where
-    the long-term memory index lives. Claude is encouraged (not
-    forced) to consult it before answering when the request matches a
-    past topic.
-
-    The file is intentionally an INDEX, not a content store — claude
-    follows the `**Path**:` field of the matching entry to load the
-    full bullet-form memory."""
+    """Mandatory first-action instruction injected into every claude
+    spawn. Claude MUST read the long-term memory index at the start of
+    every user turn — not "if related", not "when relevant", ALWAYS —
+    and use whatever's there silently. Never narrate the read."""
     return (
-        "Long-term memory\n"
-        "----------------\n"
-        f"An index of past-session memories / skills / experiences\n"
-        f"lives at:\n"
+        "Long-term memory (NON-NEGOTIABLE)\n"
+        "---------------------------------\n"
+        "On EVERY user turn, your FIRST action — before producing any\n"
+        "chat output and before any other tool — is to Read this file:\n"
         f"    {MEMORY_FILE}\n\n"
-        "Each entry has Triggers (keywords / names / problem shapes)\n"
-        "and a one-sentence Skill. Before answering the user, scan\n"
-        "their request against the Triggers in this index. If anything\n"
-        "matches, Read the index, then Read the `**Path**:` of the\n"
-        "matching entry — those files are bullet-form lookups (facts,\n"
-        "names, URLs, numbers, exact commands) so retrieval is fast.\n\n"
-        "Don't quote, summarize, or recap the index back to the user —\n"
-        "just use what's relevant to ground your answer in what's\n"
-        "already been figured out. If the index doesn't exist yet,\n"
-        "this is your first session — no action needed.\n"
+        "If the file exists: scan the entries. Each one has Triggers\n"
+        "(keywords / names / problem shapes) and a Skill (one-line\n"
+        "takeaway). If any Triggers loosely match the user's current\n"
+        "request, also Read the entry's `**Path**:` for the full\n"
+        "bullet-form memory and apply it to your answer.\n\n"
+        "If the file does NOT exist: silently proceed — just answer\n"
+        "the user normally. Never say \"first session\" or anything\n"
+        "like that.\n\n"
+        "ABSOLUTE SILENCE about memory operations. Never write or say:\n"
+        "  • \"Let me check memory\" / \"checking my memory\" /\n"
+        "    \"I'll look at\" / \"first I need to\"\n"
+        "  • \"the memory directory\" / \"memory index\" / \"saved\n"
+        "    sessions\" / \"previous conversations\" / \"long-term\n"
+        "    memory\" / \"first rodeo\" / \"fresh start\"\n"
+        "  • Any acknowledgement that you just performed a Read tool\n"
+        "    call to consult memory. The Read happens in your tool\n"
+        "    use — your visible chat output never references it.\n\n"
+        "If the user asks \"do you remember X?\" or \"check your\n"
+        "memory\" — Read the index, then answer the question with\n"
+        "what you found (or what you can answer from context). Do\n"
+        "NOT respond with meta-talk about whether memory exists,\n"
+        "about checking, about sessions. Just answer the substance.\n\n"
+        "Treat the memory like your own internal knowledge — when\n"
+        "you use it, just use it. ChatGPT/Claude with memory enabled\n"
+        "doesn't say \"let me check my memory of you\"; it just\n"
+        "answers as if it always knew."
     )
 
 
@@ -1519,16 +1531,16 @@ async def save_progress_silent(sid: str):
     # answer the user without re-deriving everything.
     prompt = f"""[INTERNAL — produce no chat output.]
 
-You are about to encode a MEMORY for your future self. Two Write
-calls, then stop. Do not narrate, do not respond, do not summarize
-aloud.
+FAST. Two Write calls. Stop. No narration, no response, no
+acknowledgement. Be quick — bias toward brevity. Don't think out
+loud, don't plan, just write the two files and end the turn.
 
 This is NOT a summary. It is a memory / skill / experience artifact —
-something a future claude with NO context from this session can RETRIEVE
-fast and use to answer a similar question. Bias TOWARD brevity. As
-short as 100 words is FINE if that's what the session warrants. 5000
-words is the HARD CEILING, not a target. If there isn't that much
-substance, don't pad — stop early.
+something a future claude with NO context from this session can
+RETRIEVE fast and use to answer a similar question. Aim for 100-800
+words total. 2500 words only if the session genuinely had that much
+substance. 5000 is a hard ceiling that should almost never apply.
+Don't pad. Don't fluff. Stop early when you've captured the meat.
 
 Format = mostly BULLETS. Strip the prose. Capture the things that
 are hard to re-derive:
