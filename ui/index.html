@@ -1719,6 +1719,12 @@
   let activeId = null;
   let sessions = [];           // [{id,title,createdAt,lastActiveAt}]
   let cwd = '~';
+  // When the server reports 0 sessions on page load (or after a wipe),
+  // auto-fire a default {type:'new'} so the user lands directly inside
+  // a fresh chat instead of staring at an empty pane. Guarded by an
+  // in-flight flag so we don't spam the server while it's spinning the
+  // session up.
+  let autoCreatePending = false;
   let reconnectAttempts = 0;
   let streamingId = null;      // server-side assistant message id (DOM-only — for the focused chat)
   let streamingBubble = null;
@@ -3100,6 +3106,16 @@
         setOnline(true);
         hideBanner();
         focusComposer();
+        // Empty-shell shortcut: zero chats AND no active id → ask the
+        // server for a default new chat so the user can start typing
+        // immediately (no separate "New chat" click). Reset the
+        // in-flight flag once the server has populated `sessions`.
+        if (sessions.length === 0 && !newActive && !autoCreatePending){
+          autoCreatePending = true;
+          send({type:'new'});
+        } else if (sessions.length > 0){
+          autoCreatePending = false;
+        }
         break;
       }
       case 'sessions': sessions = m.sessions || []; renderSessions(); refreshHeaderTitle(); refreshSaveButton(); break;
@@ -3782,24 +3798,15 @@
   // / Sonnet 4.6 unlocks the 1M context window (Max / Team / Enterprise).
   // Used by the per-persona model dropdown in the persona edit form.
   const KNOWN_MODELS = [
-    // ── Aliases (resolve to latest on Anthropic API) ────────
-    { id: 'opus',                   label: 'Opus  ·  alias → latest Opus' },
-    { id: 'sonnet',                 label: 'Sonnet  ·  alias → latest Sonnet' },
-    { id: 'haiku',                  label: 'Haiku  ·  alias → latest Haiku' },
-    { id: 'opusplan',               label: 'Opus + plan  ·  Opus reasons, Sonnet executes' },
     // ── 1M-context variants ─────────────────────────────────
     { id: 'claude-opus-4-7[1m]',    label: 'Opus 4.7  ·  1M context' },
     { id: 'claude-opus-4-6[1m]',    label: 'Opus 4.6  ·  1M context' },
     { id: 'claude-sonnet-4-6[1m]',  label: 'Sonnet 4.6  ·  1M context' },
-    // ── Pinned latest ───────────────────────────────────────
+    // ── Standard context ────────────────────────────────────
     { id: 'claude-opus-4-7',        label: 'Opus 4.7' },
-    { id: 'claude-sonnet-4-6',      label: 'Sonnet 4.6' },
+    { id: 'claude-opus-4-6',        label: 'Opus 4.6' },
+    { id: 'claude-sonnet-4-6',     label: 'Sonnet 4.6' },
     { id: 'claude-haiku-4-5',       label: 'Haiku 4.5' },
-    // ── Pinned legacy (still available) ─────────────────────
-    { id: 'claude-opus-4-6',        label: 'Opus 4.6  ·  legacy' },
-    { id: 'claude-opus-4-5',        label: 'Opus 4.5  ·  legacy' },
-    { id: 'claude-opus-4-1',        label: 'Opus 4.1  ·  legacy' },
-    { id: 'claude-sonnet-4-5',      label: 'Sonnet 4.5  ·  legacy' },
   ];
   function fillModelSelect(sel, current){
     if (!sel) return;
