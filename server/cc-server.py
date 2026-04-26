@@ -346,10 +346,45 @@ def log(*a):
 
 def scrubbed_env():
     """Strip env vars that would make claude bypass the user's `claude
-    login` (Max subscription) credentials."""
+    login` (Max subscription) credentials, OR pollute the spawned CLI
+    with parent-process state.
+
+    Important: when the bridge is launched from inside another Claude
+    Code session (e.g. via `nohup` from an agent terminal), every
+    `CLAUDE_CODE_*` and `ANTHROPIC_*` env var the parent set is
+    inherited by the spawned `claude` subprocess — including auth
+    tokens that are scoped to the parent session and produce a 401
+    against the user's account. Strip them all and let the spawned
+    CLI re-read its own config from ~/.claude.
+    """
     env = dict(os.environ)
-    for k in ('ANTHROPIC_API_KEY', 'CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT'):
+    # Explicit list of known-bad vars (auth + entrypoint markers).
+    explicit = (
+        'ANTHROPIC_API_KEY',
+        'ANTHROPIC_AUTH_TOKEN',
+        'ANTHROPIC_BASE_URL',
+        'ANTHROPIC_VERTEX_PROJECT_ID',
+        'ANTHROPIC_BEDROCK_BASE_URL',
+        'ANTHROPIC_CUSTOM_HEADERS',
+        'CLAUDE_CODE_OAUTH_TOKEN',
+        'CLAUDECODE',
+        'CLAUDE_CODE_ENTRYPOINT',
+        'CLAUDE_CODE_EXECPATH',
+        'CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST',
+        'CLAUDE_CODE_SDK_HAS_OAUTH_REFRESH',
+        'CLAUDE_CODE_USE_BEDROCK',
+        'CLAUDE_CODE_USE_VERTEX',
+        'CLAUDE_AGENT_SDK_VERSION',
+        'CLAUDE_INTERNAL_FC_OVERRIDES',
+    )
+    for k in explicit:
         env.pop(k, None)
+    # Defensive blanket: any other `CLAUDE_CODE_*` knob is parent-process
+    # state we don't want polluting the child. The user's persistent
+    # config lives in ~/.claude — claude will read that on startup.
+    for k in list(env.keys()):
+        if k.startswith('CLAUDE_CODE_') or k.startswith('CLAUDE_INTERNAL_'):
+            env.pop(k, None)
     return env
 
 
