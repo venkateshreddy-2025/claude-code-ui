@@ -1981,6 +1981,11 @@
     let html = '';
     if (msg.role === 'user' && msg.attachments) html += renderAttachments(msg.attachments);
     html += md(msg.text || '');
+    // Bot-side attachments (files claude wrote during the turn) go
+    // BELOW the reply text, the way Telegram shows them.
+    if (msg.role === 'assistant' && msg.attachments && msg.attachments.length){
+      html += renderAttachments(msg.attachments);
+    }
     bubble.innerHTML = html;
 
     // Collapse very long user messages by default.
@@ -1999,7 +2004,12 @@
     if (toggleEl) stack.appendChild(toggleEl);
 
     const meta = document.createElement('div');
-    meta.className='meta'; meta.textContent = fmtTime(msg.ts);
+    meta.className='meta';
+    let metaText = fmtTime(msg.ts);
+    if (msg.role === 'user' && msg.source && msg.source !== 'web'){
+      metaText = '✈︎ via ' + msg.source + ' · ' + metaText;
+    }
+    meta.textContent = metaText;
     stack.appendChild(meta);
 
     // Action bar (copy, fork) — sits below the meta in the stack.
