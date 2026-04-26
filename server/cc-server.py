@@ -89,8 +89,8 @@ HOST = os.environ.get('CC_SERVER_HOST', '127.0.0.1')
 PORT = int(os.environ.get('CC_SERVER_PORT', 8765))
 
 HOME = Path.home()
-# CC_DATA_DIR holds session metadata, uploads, and logs. Override to e.g.
-# ~/.openclaw to share data with the OpenClaw bridge install.
+# CC_DATA_DIR holds session metadata, uploads, and logs. Override to
+# share storage with another claude install.
 DATA_DIR = Path(os.environ.get('CC_DATA_DIR', str(HOME / '.claude-code-ui')))
 SESS_DIR = DATA_DIR / 'cc-sessions'
 SESS_DIR.mkdir(parents=True, exist_ok=True)

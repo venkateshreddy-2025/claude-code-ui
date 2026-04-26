@@ -17,8 +17,8 @@ __pycache__/
 venv/
 
 # Local data — these are written by cc-server at runtime, never tracked.
+# (CC_DATA_DIR / CC_CWD_ROOT defaults; override paths via env vars.)
 .claude-code-ui/
-.openclaw/
 claude-ui/
 
 # Environment files
