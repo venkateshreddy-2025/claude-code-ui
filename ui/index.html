@@ -117,13 +117,26 @@
   html[data-theme="magenta"] {--accent:#d946ef;--accent-2:#ec4899;--bubble-user-a:#d946ef;--bubble-user-b:#ec4899}
   html[data-theme="slate"]   {--accent:#64748b;--accent-2:#94a3b8;--bubble-user-a:#64748b;--bubble-user-b:#94a3b8}
 
-  /* ───── layout ───── */
+  /* ───── layout ─────
+     Three columns: sidebar | chat | artifact panel.
+     - Default desktop:    var(--side-w) 1fr 0       (no artifact)
+     - Sidebar collapsed:  0 1fr 0
+     - Artifact open:      0 1fr var(--art-w)        (sidebar auto-collapses)
+     The grid-template-columns transition makes the artifact panel
+     slide in/out smoothly. On mobile (<900px) the artifact panel
+     overlays the chat full-screen instead. */
+  :root{--art-w:min(58vw,900px)}
   #app{display:grid;grid-template-columns:1fr;height:100dvh;
     transition:grid-template-columns .25s cubic-bezier(.4,0,.2,1)}
-  @media(min-width:900px){#app{grid-template-columns:var(--side-w) 1fr}}
+  @media(min-width:900px){#app{grid-template-columns:var(--side-w) 1fr 0}}
   /* Collapsed sidebar (desktop only) → main pane uses the full window */
-  @media(min-width:900px){#app.side-collapsed{grid-template-columns:0 1fr}}
+  @media(min-width:900px){#app.side-collapsed{grid-template-columns:0 1fr 0}}
   #app.side-collapsed #sidebar{transform:translateX(-100%);overflow:hidden}
+  /* Artifact panel open → auto-collapse sidebar, chat shrinks, panel shows */
+  @media(min-width:900px){
+    #app.artifact-open{grid-template-columns:0 1fr var(--art-w)}
+    #app.artifact-open #sidebar{transform:translateX(-100%);overflow:hidden}
+  }
 
   /* ───── sidebar ───── */
   #sidebar{display:flex;flex-direction:column;height:100dvh;
@@ -359,36 +372,55 @@
   .empty-pane code{background:#1a1c20;padding:2px 6px;border-radius:4px;font-size:12.5px;
     color:var(--fg-dim)}
 
-  .msg{display:flex;margin:8px 0;animation:in .25s ease-out both;align-items:flex-end;gap:8px;
+  /* Messages span the full reading width of the chat pane (capped to
+     a comfortable 920px), with very subtle directional padding so the
+     eye still reads "user vs claude" at a glance. No visual bubble
+     alignment to one side — both messages anchor to the chat's centre.
+     This is the Claude.ai-style "document feel" rather than the
+     iMessage bubbles. */
+  .msg{display:flex;margin:10px 0;animation:in .25s ease-out both;
+    align-items:flex-end;gap:8px;
     /* white-space inherits from .bubble */}
   @keyframes in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
-  .msg.user{justify-content:flex-end}
-  .msg.bot{justify-content:flex-start;gap:0}
-  /* Bot avatar removed — no .ava in bot bubbles. The bubble itself is
-     the only visual element. Keeping the layout symmetric with user
-     bubbles makes the chat read like a flat dialogue. */
+  .msg.user{justify-content:stretch}
+  .msg.bot{justify-content:stretch;gap:0}
+  /* Bot avatar removed — no .ava in bot bubbles. */
   .msg .ava{width:28px;height:28px;border-radius:7px;flex:0 0 28px;
     background:linear-gradient(135deg,var(--accent),var(--accent-2));
     display:grid;place-items:center;color:#fff;font-weight:600;font-size:10.5px}
-  /* Stack the bubble + meta + actions vertically so the timestamp sits
-     UNDER the bubble (not flexbox-aligned next to it). Gives a cleaner,
-     more iMessage-like rhythm. */
-  .bubble-stack{display:flex;flex-direction:column;min-width:0;max-width:min(78%,820px)}
-  .msg.user .bubble-stack{align-items:flex-end}
-  .msg.bot  .bubble-stack{align-items:flex-start}
-  .bubble{max-width:100%;padding:10px 14px;border-radius:18px;
+  /* Stack the bubble + meta + actions vertically. Stretches the full
+     pane width so each message gets the whole reading column. */
+  .bubble-stack{display:flex;flex-direction:column;min-width:0;
+    width:100%;max-width:920px;margin:0 auto}
+  .msg.user .bubble-stack{align-items:stretch}
+  .msg.bot  .bubble-stack{align-items:stretch}
+  /* Subtle directional padding — user content nudges right via
+     left-padding, claude content nudges left via right-padding. The
+     offset is small enough (24-40px) that you read it as rhythm
+     rather than alignment. */
+  .msg.user .bubble-stack{padding-left:36px}
+  .msg.bot  .bubble-stack{padding-right:36px}
+  @media(max-width:899.98px){
+    .msg.user .bubble-stack{padding-left:14px}
+    .msg.bot  .bubble-stack{padding-right:14px}
+  }
+
+  .bubble{width:100%;max-width:100%;padding:12px 16px;border-radius:14px;
     word-wrap:break-word;overflow-wrap:anywhere;
-    font-size:15px;line-height:1.5;letter-spacing:-.005em}
-  /* Plain (non-markdown) text bubbles keep newlines visible.
-     Markdown bubbles strip the pre-wrap so <p> spacing kicks in cleanly. */
+    font-size:15px;line-height:1.55;letter-spacing:-.005em}
+  /* Plain (non-markdown) text bubbles keep newlines visible. */
   .bubble.plain{white-space:pre-wrap}
+  /* User messages keep the accent gradient — flat, full-width, with
+     a softer corner so it reads as a card rather than a chat bubble. */
   .msg.user .bubble{background:linear-gradient(135deg,var(--bubble-user-a),var(--bubble-user-b));
-    color:#fff;border-bottom-right-radius:6px;
-    box-shadow:0 6px 20px -8px rgba(0,0,0,.4)}
+    color:#fff;
+    box-shadow:0 4px 14px -6px rgba(0,0,0,.35)}
+  /* Claude messages get a quieter card surface — sits flat on the page,
+     subtle border for separation, no bubble tail. */
   .msg.bot .bubble{background:var(--bubble-bot);color:var(--fg);
-    border-bottom-left-radius:6px;border:1px solid var(--border)}
+    border:1px solid var(--border)}
   .meta{font-size:9.5px;color:var(--fg-faint);
-    margin:3px 2px 0;letter-spacing:.02em;font-variant-numeric:tabular-nums;
+    margin:4px 4px 0;letter-spacing:.02em;font-variant-numeric:tabular-nums;
     text-transform:lowercase}
   .msg.user .meta{align-self:flex-end}
   .msg.bot  .meta{align-self:flex-start}
@@ -576,6 +608,95 @@
   .toggle-collapse{display:inline-block;margin-top:4px;color:var(--fg-dim);font-size:11.5px;
     cursor:pointer;text-decoration:underline;text-decoration-style:dotted}
   .toggle-collapse:hover{color:var(--fg)}
+
+  /* ───── artifact side-panel ─────
+     A canvas-style pane that slides in from the right when claude
+     emits a `|ARTIFACT| <path> |` marker. Holds an iframe (HTML/SVG/
+     PDF), an <img> (raster/vector image), or a <pre> (code/MD).
+     The chat sidebar auto-collapses while the panel is open so the
+     reading width on the chat itself stays comfortable. */
+  #artifactPanel{display:flex;flex-direction:column;height:100dvh;
+    background:var(--bg-2);border-left:1px solid var(--border);
+    overflow:hidden;visibility:hidden;
+    /* Slide off-screen by default; the grid column is 0px so this
+       just keeps it from flashing when grid animates open. */
+    transition:visibility 0s linear .3s}
+  #app.artifact-open #artifactPanel{visibility:visible;
+    transition:visibility 0s linear 0s}
+  /* Mobile: full-screen overlay */
+  @media(max-width:899.98px){
+    #artifactPanel{position:fixed;top:0;right:0;width:100vw;height:100dvh;
+      z-index:25;transform:translateX(100%);
+      transition:transform .25s cubic-bezier(.4,0,.2,1), visibility 0s linear .25s}
+    #app.artifact-open #artifactPanel{transform:translateX(0);visibility:visible;
+      transition:transform .25s cubic-bezier(.4,0,.2,1), visibility 0s linear 0s}
+  }
+  .art-head{display:flex;align-items:center;gap:8px;padding:10px 14px;
+    border-bottom:1px solid var(--border);background:var(--chrome-top-a);
+    min-height:48px;flex:0 0 auto}
+  .art-head .art-icon{width:18px;height:18px;color:var(--accent);flex:0 0 18px}
+  .art-head .art-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap;font-size:13.5px;font-weight:600;color:var(--fg);
+    letter-spacing:-.005em}
+  .art-head .art-meta{font-size:11px;color:var(--fg-faint);
+    font-variant-numeric:tabular-nums;flex:0 0 auto}
+  .art-head .art-btn{flex:0 0 32px;width:32px;height:32px;border-radius:8px;
+    background:transparent;border:none;color:var(--fg-dim);cursor:pointer;
+    display:grid;place-items:center;transition:background .12s,color .12s}
+  .art-head .art-btn:hover{color:var(--fg);background:rgba(255,255,255,.06)}
+  .art-head .art-btn svg{width:16px;height:16px}
+
+  .art-tabs{display:flex;gap:2px;padding:6px 10px 0;background:var(--chrome-top-a);
+    border-bottom:1px solid var(--border);overflow-x:auto;scrollbar-width:none}
+  .art-tabs::-webkit-scrollbar{display:none}
+  .art-tab{display:inline-flex;align-items:center;gap:6px;padding:7px 11px;
+    border-radius:8px 8px 0 0;background:transparent;border:none;color:var(--fg-faint);
+    cursor:pointer;font:inherit;font-size:12px;white-space:nowrap;
+    transition:color .12s,background .12s;border-bottom:2px solid transparent;
+    margin-bottom:-1px}
+  .art-tab:hover{color:var(--fg-dim);background:rgba(255,255,255,.04)}
+  .art-tab.active{color:var(--accent);background:var(--bg-2);
+    border-bottom:2px solid var(--accent)}
+  .art-tab .at-name{max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  .art-body{flex:1;overflow:hidden;background:#0a0a0e;display:flex;
+    align-items:stretch;justify-content:stretch;position:relative}
+  .art-body iframe{width:100%;height:100%;border:none;background:#fff;
+    display:block}
+  .art-body .art-img-wrap{flex:1;display:grid;place-items:center;overflow:auto;
+    background:#000;padding:14px}
+  .art-body .art-img-wrap img{max-width:100%;max-height:100%;height:auto;
+    display:block}
+  .art-body pre.art-code{flex:1;margin:0;padding:18px 22px;overflow:auto;
+    background:#0d0d12;color:var(--fg);font-family:"SF Mono",Menlo,Monaco,Consolas,monospace;
+    font-size:13px;line-height:1.55;white-space:pre;
+    -webkit-overflow-scrolling:touch}
+  .art-body .art-md{flex:1;overflow:auto;padding:24px 32px;background:var(--bg-2);
+    color:var(--fg);max-width:100%;-webkit-overflow-scrolling:touch}
+  .art-body .art-md > div{max-width:760px;margin:0 auto;line-height:1.6;font-size:15px}
+  .art-body .art-error{flex:1;display:grid;place-items:center;color:var(--fg-faint);
+    font-size:13.5px;text-align:center;padding:32px}
+  .art-body .art-error a{color:var(--accent);text-decoration:underline;
+    text-underline-offset:2px;display:block;margin-top:8px;
+    font-family:"SF Mono",Menlo,Monaco,Consolas,monospace;font-size:12px}
+
+  /* Inline artifact chip painted under the assistant bubble.
+     Click → opens the panel. Mirrors the look of .att-doc but uses a
+     theme-accent border + rocket-style canvas icon to telegraph
+     "this is interactive". */
+  .art-chip{display:inline-flex;align-items:center;gap:9px;padding:8px 12px;
+    border-radius:9px;border:1px solid var(--accent);
+    background:linear-gradient(135deg,rgba(199,143,91,.10),rgba(199,143,91,.04));
+    color:var(--fg);text-decoration:none;cursor:pointer;font:inherit;font-size:13px;
+    margin:6px 6px 0 0;max-width:100%;transition:transform .12s,box-shadow .15s}
+  .art-chip:hover{transform:translateY(-1px);
+    box-shadow:0 6px 18px -8px rgba(199,143,91,.4)}
+  .art-chip .ai{width:24px;height:24px;border-radius:6px;display:grid;place-items:center;
+    background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#0f0f15;
+    flex:0 0 24px;font-weight:600;font-size:11px}
+  .art-chip .an{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:300px;
+    font-weight:500}
+  .art-chip .as{font-size:10.5px;color:var(--fg-faint);font-variant-numeric:tabular-nums}
 
   /* attachments inside user bubbles + lightbox.
      Images are clamped to a friendly inline size (max 320 px tall, max 100%
@@ -1116,6 +1237,46 @@
       </div>
     </footer>
   </section>
+
+  <!-- ────────  artifact side-panel  ────────
+       Renders inline files claude marked with `|ARTIFACT| <path> |`.
+       Visibility flips via body class `artifact-open`. The header
+       holds the file name + size + close button; the body swaps
+       between iframe / img / pre depending on the file type. -->
+  <aside id="artifactPanel" aria-hidden="true">
+    <div class="art-head">
+      <svg class="art-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="3"/>
+        <path d="M3 9h18M9 21V9"/>
+      </svg>
+      <div class="art-title" id="artTitle">Artifact</div>
+      <div class="art-meta"  id="artMeta"></div>
+      <a class="art-btn" id="artOpen" target="_blank" rel="noopener" title="Open in new tab" aria-label="Open in new tab">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+          <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+        </svg>
+      </a>
+      <a class="art-btn" id="artDownload" download title="Download" aria-label="Download">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/>
+          <line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+      </a>
+      <button class="art-btn" id="artClose" title="Close (Esc)" aria-label="Close artifact panel">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6"  x2="6"  y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+    </div>
+    <div class="art-tabs" id="artTabs"></div>
+    <div class="art-body" id="artBody"></div>
+  </aside>
 </div>
 
 <div class="drawer-bg" id="drawerBg"></div>
@@ -1436,16 +1597,20 @@
   // ───── helpers ─────
   function escapeHTML(s){return s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 
-  // Strip the bridge's `|SEND| <path> |` markers from any text we're
-  // about to display. The server does this server-side before
-  // persisting to chat.json, so reloads are clean — but during
-  // streaming the marker arrives in deltas and would briefly flash
-  // on screen until turn_done fixes the bubble. Strip on render so
-  // it never appears.
-  const SEND_MARKER_RE = /\|\s*SEND\s*\|\s*[^|\n]+?\s*\|/g;
+  // Strip the bridge's `|SEND| <path> |` and `|ARTIFACT| <path> |`
+  // markers from any text we're about to display. The server does
+  // this server-side before persisting to chat.json, so reloads are
+  // clean — but during streaming the marker arrives in deltas and
+  // would briefly flash on screen until turn_done fixes the bubble.
+  // Strip on render so it never appears.
+  const SEND_MARKER_RE     = /\|\s*SEND\s*\|\s*[^|\n]+?\s*\|/g;
+  const ARTIFACT_MARKER_RE = /\|\s*ARTIFACT\s*\|\s*[^|\n]+?\s*\|/g;
   function stripSendMarkers(text){
     if (!text || text.indexOf('|') < 0) return text;
-    return text.replace(SEND_MARKER_RE, '').replace(/[ \t]+\n/g,'\n').replace(/\n{3,}/g,'\n\n').replace(/\s+$/, '');
+    return text
+      .replace(SEND_MARKER_RE, '')
+      .replace(ARTIFACT_MARKER_RE, '')
+      .replace(/[ \t]+\n/g,'\n').replace(/\n{3,}/g,'\n\n').replace(/\s+$/, '');
   }
 
   // Configure marked once it's loaded. GFM = headers, tables, fenced code,
@@ -1925,6 +2090,44 @@
     return html;
   }
 
+  // ───── artifact chips inline under bot bubbles ─────
+  // Each chip is a clickable handle into the side-panel. Stored URLs
+  // are server-relative so they survive reloads. data-art-key encodes
+  // the URL — the click handler in messagesEl resolves the artifact
+  // record + opens the panel.
+  function shortArtifactKind(name){
+    const ext = ((name || '').split('.').pop() || '').toLowerCase();
+    if (ext === 'html' || ext === 'htm') return 'HTML';
+    if (ext === 'svg') return 'SVG';
+    if (ext === 'pdf') return 'PDF';
+    if (ext === 'md' || ext === 'markdown') return 'MD';
+    if (ext === 'mmd' || ext === 'mermaid') return 'MERMAID';
+    if (['png','jpg','jpeg','gif','webp','bmp'].includes(ext)) return 'IMG';
+    if (['js','ts','jsx','tsx','py','go','rs','rb','java','c','h','cpp','sh','json','yaml','yml','toml','css'].includes(ext)) return ext.toUpperCase();
+    return ext.toUpperCase() || 'FILE';
+  }
+  function renderArtifactChips(arts){
+    if (!arts || !arts.length) return '';
+    let html = '<div class="art-chips" style="display:flex;flex-wrap:wrap;gap:0;margin-top:4px">';
+    for (const a of arts){
+      const name = escapeHTML(a.name || 'artifact');
+      const size = fmtBytes(a.size || 0);
+      const kind = shortArtifactKind(a.name);
+      html += '<button class="art-chip" type="button"'
+            + ' data-art-url="' + escapeHTML(a.url || '') + '"'
+            + ' data-art-name="' + name + '"'
+            + ' data-art-size="' + size + '"'
+            + ' data-art-mime="' + escapeHTML(a.mimeType || '') + '"'
+            + ' title="Open in side panel">'
+            + '<span class="ai">' + escapeHTML(kind) + '</span>'
+            + '<span class="an">' + name + '</span>'
+            + '<span class="as">' + size + '</span>'
+            + '</button>';
+    }
+    html += '</div>';
+    return html;
+  }
+
   // Threshold for collapsing user messages. ~7 lines worth of newlines OR
   // a sufficiently long total length. Tuneable.
   const COLLAPSE_LINE_THRESHOLD = 7;
@@ -2031,6 +2234,10 @@
     // BELOW the reply text, the way Telegram shows them.
     if (msg.role === 'assistant' && msg.attachments && msg.attachments.length){
       html += renderAttachments(msg.attachments);
+    }
+    // Bot-side artifact chips — clickable, open the side-panel.
+    if (msg.role === 'assistant' && msg.artifacts && msg.artifacts.length){
+      html += renderArtifactChips(msg.artifacts);
     }
     bubble.innerHTML = html;
 
@@ -2263,6 +2470,17 @@
     const t = e.target;
     if (t && t.tagName === 'IMG' && t.classList.contains('att-img')){
       openLightbox(t.src, t.dataset.name, t.dataset.size);
+      return;
+    }
+    // Artifact chip → open the side-panel.
+    const chip = t && t.closest && t.closest('.art-chip');
+    if (chip){
+      openArtifact({
+        url:      chip.dataset.artUrl,
+        name:     chip.dataset.artName,
+        size:     chip.dataset.artSize,
+        mimeType: chip.dataset.artMime,
+      });
     }
   });
   // Click backdrop (but not the inner controls or image) to close.
@@ -2271,8 +2489,160 @@
   });
   $('lightboxClose')?.addEventListener('click', closeLightbox);
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape' && lightbox.classList.contains('on')) closeLightbox();
+    if (e.key === 'Escape'){
+      if (lightbox.classList.contains('on')) { closeLightbox(); return; }
+      if (document.body.classList.contains('artifact-on')) { closeArtifact(); return; }
+    }
   });
+
+  // ───── artifact side-panel control ─────
+  // openArtifact({url,name,size,mimeType}) — populates the right-hand
+  // canvas panel and flips the body class so CSS shifts the layout
+  // (sidebar collapses, chat shrinks, panel slides in). The renderer
+  // picks an iframe / <img> / <pre> based on extension+mime.
+  const artPanel    = $('artifactPanel');
+  const artTitleEl  = $('artTitle');
+  const artMetaEl   = $('artMeta');
+  const artBodyEl   = $('artBody');
+  const artTabsEl   = $('artTabs');
+  const artOpenLink = $('artOpen');
+  const artDownload = $('artDownload');
+
+  // Track open artifacts in a stack so we can show tabs across the
+  // session. Identified by URL.
+  const artifactStack = [];   // [{url,name,size,mimeType}, ...]
+  let activeArtifactUrl = null;
+
+  function classifyArtifact(name, mimeType){
+    const ext = ((name || '').split('.').pop() || '').toLowerCase();
+    const mime = (mimeType || '').toLowerCase();
+    if (mime.startsWith('image/') || ['png','jpg','jpeg','gif','webp','bmp','svg'].includes(ext)){
+      // SVG embedded in iframe so its internal scripts run sandboxed;
+      // raster images go in <img> for crisp scaling.
+      if (ext === 'svg' || mime === 'image/svg+xml') return 'iframe';
+      return 'image';
+    }
+    if (ext === 'pdf' || mime === 'application/pdf') return 'iframe';
+    if (ext === 'html' || ext === 'htm' || mime === 'text/html') return 'iframe';
+    if (ext === 'md' || ext === 'markdown' || mime === 'text/markdown') return 'md';
+    return 'code';   // default: render as syntax-highlightable text
+  }
+
+  async function fetchTextOrEmpty(url){
+    try {
+      const r = await fetch(url, {cache: 'no-store'});
+      if (!r.ok) return '';
+      return await r.text();
+    } catch (e) { return ''; }
+  }
+
+  function escapeForPre(s){
+    return (s || '').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  }
+
+  function renderActiveArtifact(){
+    const a = artifactStack.find(x => x.url === activeArtifactUrl);
+    if (!a){ artBodyEl.innerHTML = ''; return; }
+    artTitleEl.textContent = a.name || 'Artifact';
+    artMetaEl.textContent  = a.size || '';
+    if (artOpenLink) artOpenLink.href = a.url;
+    if (artDownload){ artDownload.href = a.url; artDownload.setAttribute('download', a.name || ''); }
+
+    artBodyEl.innerHTML = '';
+    if (!a.url){
+      artBodyEl.innerHTML = '<div class="art-error">Artifact has no URL.</div>';
+      return;
+    }
+    const kind = classifyArtifact(a.name, a.mimeType);
+    if (kind === 'iframe'){
+      const iframe = document.createElement('iframe');
+      iframe.src = a.url;
+      // Sandboxed: scripts allowed (so HTML artifacts work) and popups
+      // (so target=_blank links can open) but no same-origin (so the
+      // artifact can't reach our localhost APIs).
+      iframe.setAttribute('sandbox', 'allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms');
+      iframe.setAttribute('referrerpolicy', 'no-referrer');
+      iframe.title = a.name || 'Artifact';
+      artBodyEl.appendChild(iframe);
+    } else if (kind === 'image'){
+      const wrap = document.createElement('div');
+      wrap.className = 'art-img-wrap';
+      const img = document.createElement('img');
+      img.src = a.url;
+      img.alt = a.name || '';
+      wrap.appendChild(img);
+      artBodyEl.appendChild(wrap);
+    } else if (kind === 'md'){
+      const wrap = document.createElement('div');
+      wrap.className = 'art-md';
+      const inner = document.createElement('div');
+      wrap.appendChild(inner);
+      artBodyEl.appendChild(wrap);
+      fetchTextOrEmpty(a.url).then(txt => {
+        try {
+          inner.innerHTML = window.marked ? window.marked.parse(txt) : escapeForPre(txt);
+        } catch (e) { inner.textContent = txt; }
+      });
+    } else {
+      const pre = document.createElement('pre');
+      pre.className = 'art-code';
+      pre.textContent = '';
+      artBodyEl.appendChild(pre);
+      fetchTextOrEmpty(a.url).then(txt => { pre.textContent = txt; });
+    }
+  }
+
+  function renderArtifactTabs(){
+    if (!artTabsEl) return;
+    if (artifactStack.length <= 1){ artTabsEl.innerHTML = ''; artTabsEl.style.display = 'none'; return; }
+    artTabsEl.style.display = '';
+    let html = '';
+    for (const a of artifactStack){
+      const cls = a.url === activeArtifactUrl ? 'art-tab active' : 'art-tab';
+      html += '<button type="button" class="' + cls + '"'
+            + ' data-art-tab="' + escapeHTML(a.url) + '"'
+            + ' title="' + escapeHTML(a.name || '') + '">'
+            + '<span class="at-name">' + escapeHTML(a.name || '') + '</span>'
+            + '</button>';
+    }
+    artTabsEl.innerHTML = html;
+  }
+
+  artTabsEl?.addEventListener('click', e => {
+    const t = e.target.closest('[data-art-tab]');
+    if (!t) return;
+    activeArtifactUrl = t.dataset.artTab;
+    renderActiveArtifact();
+    renderArtifactTabs();
+  });
+
+  function openArtifact(art){
+    if (!art || !art.url) return;
+    // Dedup by URL — if it's already in the stack just activate it.
+    const existing = artifactStack.find(x => x.url === art.url);
+    if (existing){
+      activeArtifactUrl = existing.url;
+    } else {
+      artifactStack.push(art);
+      activeArtifactUrl = art.url;
+    }
+    document.body.classList.add('artifact-on');
+    document.getElementById('app').classList.add('artifact-open');
+    if (artPanel) artPanel.setAttribute('aria-hidden', 'false');
+    renderActiveArtifact();
+    renderArtifactTabs();
+  }
+
+  function closeArtifact(){
+    document.body.classList.remove('artifact-on');
+    document.getElementById('app').classList.remove('artifact-open');
+    if (artPanel) artPanel.setAttribute('aria-hidden', 'true');
+    // Keep the stack so chips re-open without re-fetching, but clear
+    // the iframe so it stops loading anything.
+    artBodyEl.innerHTML = '';
+  }
+
+  $('artClose')?.addEventListener('click', closeArtifact);
 
   // ───── WS ─────
   function connect(){
@@ -2467,6 +2837,38 @@
           const c = getChat(sid);
           c.busy = false;
           c.current = null;
+          // Stash artifact records on the last assistant message in
+          // memory, so renderAllMessages on session-switch repaints
+          // chips correctly. The server has already mirrored these
+          // into chat.json — this just keeps the in-memory model in
+          // sync without a full reload.
+          if (Array.isArray(m.artifacts) && m.artifacts.length){
+            const msgs = c.messages || [];
+            for (let i = msgs.length - 1; i >= 0; i--){
+              if (msgs[i].role === 'assistant'){
+                msgs[i].artifacts = (msgs[i].artifacts || []).concat(m.artifacts);
+                if (focused){
+                  // Append chips to the live bubble without reflowing
+                  // the whole conversation. Find by id when available
+                  // (more reliable than :last-of-type), otherwise fall
+                  // back to the last bot bubble in the DOM.
+                  let bubble = null;
+                  if (msgs[i].id){
+                    const wrap = messagesEl.querySelector('.msg.bot[data-id="' + msgs[i].id + '"]');
+                    if (wrap) bubble = wrap.querySelector('.bubble');
+                  }
+                  if (!bubble){
+                    const wraps = messagesEl.querySelectorAll('.msg.bot');
+                    bubble = wraps.length ? wraps[wraps.length - 1].querySelector('.bubble') : null;
+                  }
+                  if (bubble && !bubble.querySelector('.art-chips')){
+                    bubble.insertAdjacentHTML('beforeend', renderArtifactChips(msgs[i].artifacts));
+                  }
+                }
+                break;
+              }
+            }
+          }
         }
         if (m.sessions) { sessions = m.sessions; renderSessions(); refreshHeaderTitle(); }
         if (focused || !sid){
@@ -2484,6 +2886,13 @@
           lastSentText = '';
           setOnline(true);
           focusComposer();
+          // Auto-open the most recent artifact in the side panel.
+          if (Array.isArray(m.artifacts) && m.artifacts.length){
+            const a = m.artifacts[m.artifacts.length - 1];
+            openArtifact({
+              url: a.url, name: a.name, size: fmtBytes(a.size || 0), mimeType: a.mimeType,
+            });
+          }
         }
         break;
       }
