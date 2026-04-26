@@ -431,6 +431,16 @@
     margin-left:2px;vertical-align:text-bottom;animation:blink 1.05s step-start infinite;
     border-radius:1px;opacity:.85}
   @keyframes blink{50%{opacity:0}}
+  /* Streaming sub-containers — frozen blocks (already-parsed) sit on
+     top, live tail (in-flight) below. Both render as part of the
+     bubble's prose flow, so block elements inside them inherit the
+     existing .bubble typography rules. `display:contents` makes the
+     wrappers transparent to the cascade so the first/last-child
+     margin rules still target the actual <p>/<ul>/<pre>. */
+  .md-frozen, .md-live { display: contents; }
+  /* Pre-empt a flash of un-styled plain-text in the live tail by
+     keeping its line-height aligned with the rest of the bubble. */
+  .bubble.streaming { min-height: 1.55em; }
 
   /* Floating "jump to latest" button — only visible while user is scrolled
      up AND new content arrives. Lets them keep reading old turns without
@@ -1554,7 +1564,6 @@
   let streamingBubble = null;
   let turnHadAssistant = false; // tracks whether the in-flight turn produced any text
   let lastSentText = '';        // for slash-command system-note hint
-  let streamFlushTimer = null;  // throttle handle for markdown re-rendering
   let userAtBottom = true;      // is the scroll position pinned to the bottom?
   const stagedFiles = new Map(); // localId -> { fileId?, name, mimeType, size, previewUrl, content?, status }
 
@@ -2295,66 +2304,142 @@
 
   // ─── streaming ───
   //
-  // Tokens come off the wire one or two characters at a time, which
-  // looks twitchy if we paint each one. Better: hold each delta until
-  // we hit a NATURAL BOUNDARY (a newline) OR a fallback timeout
-  // expires, then render whatever's accumulated as a single chunk.
-  // The eye reads it as "one short line at a time" — much less jittery
-  // than letter-by-letter.
+  // Smooth typewriter rendering, decoupled from the network. The big
+  // idea: the network arrives in irregular bursts (sometimes 5 chars
+  // at a time, sometimes 2000 in a single delta). If we paint as
+  // tokens arrive, the eye sees the text "splat" and "stall" in
+  // turns. Instead:
   //
-  // Two layers:
+  //   1. RECEIVE — every delta just appends to `bubble.dataset.raw`
+  //      (the full raw buffer) and ensures a rAF is queued. No DOM
+  //      writes happen here.
   //
-  //   FAST PATH — text-only chunk flush. The pending bytes since the
-  //   last md() render get dropped into a <span class=stream-text>
-  //   trailer via textContent. Triggered by either:
-  //     (a) the latest delta contained a newline (paragraph break,
-  //         list-item break, fenced code boundary, …), or
-  //     (b) STREAM_CHUNK_MS has passed since the last flush.
+  //   2. RENDER — a single rAF drainer reveals chars at a constant
+  //      cps (chars-per-second), with adaptive speedup if the buffer
+  //      grows large. ~80 cps base, up to ~5× faster on big bursts.
+  //      Time-deltas mean we stay smooth even when the tab is throttled
+  //      (rAF can fire below 60Hz; we still drain the right total).
   //
-  //   SLOW PATH — every MD_REPARSE_MS the bubble's whole HTML is
-  //   replaced with `md(raw)`, properly formatting lists / code /
-  //   tables. Slower cadence (~3 fps) so the periodic DOM rebuild
-  //   stays visually invisible.
+  //   3. APPEND-ONLY DOM — the bubble carries two child containers:
+  //        .md-frozen — already-finalized blocks (parsed once, never
+  //                     touched again). New paragraphs get appended
+  //                     via insertAdjacentHTML at safe boundaries.
+  //        .md-live   — the current in-flight block. Re-parsed every
+  //                     frame, but bounded to a single paragraph so
+  //                     the cost is trivial.
+  //      Cursor is a sibling .stream-cursor at the very end.
   //
-  //   On endStream a final md() parse runs + the cursor is removed.
-  const STREAM_CHUNK_MS = 120;   // max ms between text chunk flushes
-  const MD_REPARSE_MS   = 360;   // markdown re-parse cadence (~3 fps)
-  let _mdReparseTimer = null;
-  let _mdSnapshot     = '';      // raw text at the last full md() render
+  //   4. SAFE BOUNDARIES — a freeze-point is a `\n\n` (paragraph
+  //      break) that's NOT inside an open code fence. Once we cross
+  //      one, everything up to that point is parsed and frozen, and
+  //      the live re-parse only ever runs against the (small) tail.
+  //
+  //   On endStream a final full reparse runs, the cursor goes away,
+  //   and frozen+live are collapsed back into a single innerHTML so
+  //   the regular non-streaming code path takes over.
+  const STREAM_BASE_CPS         = 80;   // ~12.5 ms/char baseline
+  const STREAM_MAX_SPEEDUP      = 5;    // up to ~400 cps on big bursts
+  const STREAM_ADAPT_DENOM      = 250;  // each 250 unread chars = +1× speed
+  const MAX_CHARS_PER_FRAME     = 240;  // avoid mega-frames on huge bursts
+  // Stream state — one in-flight stream at a time, attached to streamingBubble.
+  let _streamRafId         = null;
+  let _streamLastFrameTs   = 0;
+  let _streamCharBudget    = 0;     // fractional chars carried between frames
+  let _streamRevealedLen   = 0;     // # of chars from .dataset.raw drained to DOM
+  let _streamFrozenLen     = 0;     // # of chars committed to .md-frozen
+  let _streamFrozenEl      = null;  // <div class="md-frozen"> inside the bubble
+  let _streamLiveEl        = null;  // <div class="md-live"> inside the bubble
+  let _streamCursorEl      = null;  // <span class="stream-cursor">
 
-  function ensureStreamTrailer(){
-    if (!streamingBubble) return null;
-    let trailer = streamingBubble.querySelector('.stream-text');
-    if (trailer) return trailer;
-    let cursor = streamingBubble.querySelector('.stream-cursor');
-    trailer = document.createElement('span');
-    trailer.className = 'stream-text';
-    if (cursor) streamingBubble.insertBefore(trailer, cursor);
-    else streamingBubble.appendChild(trailer);
-    return trailer;
+  // Find the largest index `i <= upto` such that raw[0..i] ends right
+  // after a paragraph break (`\n\n`) and that break is NOT inside an
+  // open code fence (` ``` `). Returns 0 if no such index exists yet.
+  function findSafeFreezeIdx(raw, upto){
+    if (!raw) return 0;
+    const slice = raw.slice(0, upto);
+    let inFence = false;
+    let lastSafe = 0;
+    let lineStart = 0;
+    for (let i = 0; i < slice.length; i++){
+      const c = slice[i];
+      if (c === '\n'){
+        // Was this line a fence open/close?
+        if (slice.startsWith('```', lineStart)){
+          inFence = !inFence;
+        }
+        // Paragraph break = blank line right after this newline
+        if (!inFence && slice[i+1] === '\n'){
+          lastSafe = i + 2;          // pointer just past the second \n
+        }
+        lineStart = i + 1;
+      }
+    }
+    return lastSafe;
   }
 
-  function flushStreamBuffer(){
-    streamFlushTimer = null;
-    if (!streamingBubble) return;
-    const raw = streamingBubble.dataset.raw || '';
-    const trailer = ensureStreamTrailer();
-    if (!trailer) return;
-    // Only show bytes appended since the last full md() render —
-    // anything before _mdSnapshot is already laid out as proper HTML.
-    const tail = raw.slice(_mdSnapshot.length);
-    if (trailer.textContent !== tail) trailer.textContent = tail;
-    followIfPinned();
+  function ensureStreamRaf(){
+    if (_streamRafId != null) return;
+    _streamRafId = requestAnimationFrame(_streamFrame);
   }
 
-  function flushMarkdown(){
-    _mdReparseTimer = null;
+  function _streamFrame(now){
+    _streamRafId = null;
     if (!streamingBubble) return;
-    const raw = streamingBubble.dataset.raw || '';
-    if (raw === _mdSnapshot) return;
-    _mdSnapshot = raw;
-    streamingBubble.innerHTML = md(raw) + '<span class="stream-cursor"></span>';
+    const raw   = streamingBubble.dataset.raw || '';
+    const unread = raw.length - _streamRevealedLen;
+    if (unread <= 0){
+      _streamLastFrameTs = now;
+      return;
+    }
+    // Adaptive cps: base + linear ramp on buffer pressure.
+    const speedup   = Math.min(STREAM_MAX_SPEEDUP, 1 + unread / STREAM_ADAPT_DENOM);
+    const cps       = STREAM_BASE_CPS * speedup;
+    // Accumulate fractional char budget so an integer floor doesn't
+    // permanently lose tiny per-frame remainders (which would cap us
+    // below the configured cps).
+    const dt = _streamLastFrameTs ? Math.max(1, now - _streamLastFrameTs) : 16;
+    _streamCharBudget += (cps * dt) / 1000;
+    let n = Math.floor(_streamCharBudget);
+    if (n < 1){
+      // Not enough budget yet — wait one more frame.
+      _streamLastFrameTs = now;
+      _streamRafId = requestAnimationFrame(_streamFrame);
+      return;
+    }
+    _streamCharBudget -= n;
+    n = Math.min(n, unread, MAX_CHARS_PER_FRAME);
+    _streamRevealedLen += n;
+
+    // Step 1: see if we crossed a safe paragraph break since last frame.
+    // If so, freeze everything up to that boundary.
+    const safeIdx = findSafeFreezeIdx(raw, _streamRevealedLen);
+    if (safeIdx > _streamFrozenLen && _streamFrozenEl){
+      const freezeChunk = raw.slice(_streamFrozenLen, safeIdx);
+      // insertAdjacentHTML appends without touching prior siblings — no flicker on already-frozen blocks.
+      _streamFrozenEl.insertAdjacentHTML('beforeend', md(freezeChunk));
+      _streamFrozenLen = safeIdx;
+    }
+
+    // Step 2: render the live tail. Because we freeze on `\n\n`, the
+    // live tail is bounded to a single paragraph (or one in-flight
+    // code/list block) — reparsing it on every frame is cheap and
+    // visually invisible. The expensive cost would be reparsing the
+    // ENTIRE bubble; that no longer happens because frozen blocks
+    // are siblings that never get re-rendered.
+    const liveTail = raw.slice(_streamFrozenLen, _streamRevealedLen);
+    if (_streamLiveEl){
+      _streamLiveEl.innerHTML = md(liveTail);
+    }
+
+    _streamLastFrameTs = now;
     followIfPinned();
+
+    // If buffer still has unread chars, keep ticking. If we've drained
+    // everything, stop — appendDelta() will rearm the rAF when more
+    // arrives.
+    if (_streamRevealedLen < raw.length){
+      _streamRafId = requestAnimationFrame(_streamFrame);
+    }
   }
 
   function startStream(id){
@@ -2372,6 +2457,15 @@
     const bubble = document.createElement('div');
     bubble.className = 'bubble bot streaming';
     bubble.dataset.raw = '';
+
+    // Sub-containers: frozen (parsed once) + live (in-flight tail) + cursor
+    const frozen = document.createElement('div'); frozen.className = 'md-frozen';
+    const live   = document.createElement('div'); live.className   = 'md-live';
+    const cursor = document.createElement('span'); cursor.className = 'stream-cursor';
+    bubble.appendChild(frozen);
+    bubble.appendChild(live);
+    bubble.appendChild(cursor);
+
     stack.appendChild(bubble);
 
     const meta = document.createElement('div'); meta.className='meta';
@@ -2380,56 +2474,38 @@
 
     wrap.appendChild(stack);
     messagesEl.appendChild(wrap);
-    streamingId = id; streamingBubble = bubble;
-    _mdSnapshot = '';                  // fresh stream, no parsed snapshot yet
+
+    streamingId         = id;
+    streamingBubble     = bubble;
+    _streamFrozenEl     = frozen;
+    _streamLiveEl       = live;
+    _streamCursorEl     = cursor;
+    _streamRevealedLen   = 0;
+    _streamFrozenLen     = 0;
+    _streamLastFrameTs   = 0;
+    _streamCharBudget    = 0;
     followIfPinned();
   }
 
   function appendDelta(id, text){
     if (streamingId !== id || !streamingBubble) startStream(id);
     streamingBubble.dataset.raw = (streamingBubble.dataset.raw || '') + text;
-    // FAST PATH: flush on a natural boundary (newline) for instant
-    // chunked reveal, otherwise fall back to a STREAM_CHUNK_MS timer
-    // so unbounded prose still appears within a perceptual beat.
-    const hasBoundary = text.indexOf('\n') !== -1;
-    if (hasBoundary){
-      if (streamFlushTimer){ clearTimeout(streamFlushTimer); streamFlushTimer = null; }
-      flushStreamBuffer();
-    } else if (!streamFlushTimer){
-      streamFlushTimer = setTimeout(flushStreamBuffer, STREAM_CHUNK_MS);
-    }
-    // SLOW PATH: full markdown re-render every MD_REPARSE_MS so lists /
-    // code blocks / tables format up. Cheap visually because the
-    // existing text doesn't shift much.
-    if (!_mdReparseTimer){
-      _mdReparseTimer = setTimeout(flushMarkdown, MD_REPARSE_MS);
-    }
+    ensureStreamRaf();
   }
 
   function endStream(id){
-    // Flush any pending text first so the final render is complete + the
-    // cursor goes away cleanly.
-    if (streamFlushTimer){
-      clearTimeout(streamFlushTimer);
-      streamFlushTimer = null;
-    }
-    if (_mdReparseTimer){
-      clearTimeout(_mdReparseTimer);
-      _mdReparseTimer = null;
-    }
-    _mdSnapshot = '';
+    if (_streamRafId != null){ cancelAnimationFrame(_streamRafId); _streamRafId = null; }
     if (streamingBubble){
       streamingBubble.classList.remove('streaming');
       const raw = streamingBubble.dataset.raw || streamingBubble.innerText;
-      // Strip `|SEND| <path> |` markers before rendering — keep
+      // Strip `|SEND| / |ARTIFACT|` markers before rendering — keep
       // the raw text on dataset for copy/fork actions but display
       // the cleaned version.
       const display = stripSendMarkers(raw);
-      // If the turn isn't actually finished (claude is still thinking /
-      // running tools between text blocks), keep a blinking cursor at
-      // the end so the typewriter effect persists. The cursor goes away
-      // for real on `turn_done` via finishStreamingCursors().
       const stillThinking = isBusy();
+      // Final pass: collapse frozen+live back into a single innerHTML
+      // so the bubble matches the format of historical (non-streaming)
+      // bubbles. Keeps copy/fork/markdown actions consistent.
       streamingBubble.innerHTML = md(display)
         + (stillThinking ? '<span class="stream-cursor pending"></span>' : '');
       const wrap = streamingBubble.closest('.msg');
@@ -2443,6 +2519,10 @@
       refreshLastBotForkButton();
     }
     streamingId = null; streamingBubble = null;
+    _streamFrozenEl = _streamLiveEl = _streamCursorEl = null;
+    _streamRevealedLen = _streamFrozenLen = 0;
+    _streamLastFrameTs = 0;
+    _streamCharBudget = 0;
   }
 
   // Strip every "still thinking" cursor we may have left on past bubbles.
