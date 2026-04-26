@@ -1477,65 +1477,120 @@ async def save_progress_silent(sid: str):
     md_path = cwd / f'PROGRESS-{timestamp}.md'
     title   = sess.get('title') or 'Untitled chat'
 
+    # The prompt — silent-mode instructions for two Write calls.
+    # We deliberately do NOT include a JSON dump of the conversation:
+    # this claude process has it in context already, so we ask it to
+    # encode the memory directly.
+    #
+    # Critical framing: this is a MEMORY / SKILL / EXPERIENCE artifact,
+    # not a summary. A summary describes; a memory enables fast future
+    # retrieval. The prompt forces lead-with-the-answer + triggers +
+    # action-form heuristics so a stateless future-claude (no context
+    # from this session) can grep the index, hit the right entry, and
+    # answer the user without re-deriving everything.
     prompt = f"""[INTERNAL — produce no chat output.]
 
-You are about to call the Write tool twice and then stop. Do not
-summarize aloud, do not narrate, do not respond with chat text.
+You are about to encode a MEMORY for your future self. Two Write
+calls, then stop. Do not narrate, do not respond, do not summarize
+aloud.
 
-TASK 1 — comprehensive learning artifact for THIS conversation
+This is NOT a summary. It is a memory / skill / experience artifact —
+something a future claude with NO context from this session can RETRIEVE
+fast and use to answer a similar question. Bias TOWARD brevity. As
+short as 100 words is FINE if that's what the session warrants. 5000
+words is the HARD CEILING, not a target. If there isn't that much
+substance, don't pad — stop early.
+
+Format = mostly BULLETS. Strip the prose. Capture the things that
+are hard to re-derive:
+
+    • main facts / decisions
+    • names (people, services, files, libraries, repos)
+    • important info (gotchas, settings, error messages)
+    • URLs
+    • details (versions, paths, ports, env vars)
+    • numbers (sizes, latencies, thresholds, counts)
+
+If a section has nothing concrete to say, omit it entirely. No
+filler.
+
+TASK 1 — encode the memory
 File path:
     {md_path}
 
-Frame this as a reflection note your FUTURE SELF will read to recall
-a SKILL, PATTERN, or HEURISTIC learned in this session. Cap: 5000
-words. The goal is not "summarize what was said" — the goal is
-"distil what's worth keeping". Be precise and concrete.
+Use this structure (bullets unless a section explicitly needs prose):
 
-Markdown structure:
+  # <≤8-word title — the keywords future-you will search for>
 
-  # <≤8-word title — what skill / pattern this teaches>
-  ## Context
-     What was the user actually trying to do? What problem space?
-     Enough scaffolding that you'll re-orient when you re-read this.
-  ## The skill / pattern (the meta-lesson)
-     The single most important takeaway. State it as a heuristic,
-     recipe, or rule of thumb — something portable to a future
-     situation.
-  ## Step-by-step reasoning that worked
-     The chain of decisions, not just the answer. Show the why.
-  ## Pitfalls + how they were resolved
-     Symptoms, false starts, the actual fix and the explanation.
-  ## Code / commands / configs that mattered
-     In fenced blocks. Exact text — no paraphrase. Future-you should
-     be able to copy-paste these.
-  ## Counter-examples and alternatives considered
-     What was tried and ruled out, and why.
+  > **Quick answer** — 1–3 short bullets. The single most useful
+  > thing first. Imperative voice. A future-you skimming only this
+  > block should already know what to do.
+
+  ## Triggers (when this memory applies)
+     - keyword 1
+     - keyword 2
+     - problem shape …
+     Future-you pattern-matches the user's request against these.
+
+  ## Key facts
+     - <name / fact> — <value or detail>
+     - ...
+     The "lookup table" — names, versions, paths, URLs, numbers.
+
+  ## Heuristic / rule
+     - "Do X when you see Y."  (instruction form, not narrative)
+     - ...
+
+  ## What worked (steps / commands)
+     Exact commands or code in fenced blocks. No paraphrase. Future-
+     you copy-pastes these.
+
+  ## What didn't work
+     - <attempt> — <symptom> — <real fix>
+     Often the highest-value section. Skip if nothing failed.
+
+  ## Don't apply when
+     - <case 1>
+     - <case 2>
+     The boundary of the heuristic.
+
   ## Open questions
-     What's still unclear, what would unlock progress.
+     - …
+     Skip this section if there are none.
 
-Be detailed. Stay under 5000 words.
+Bullet-first. Concrete identifiers, copy-pasteable specifics, exact
+numbers. Stay under 5000 words but go MUCH shorter when the topic
+allows.
 
-TASK 2 — append ONE entry to the long-term memory index
+TASK 2 — append ONE entry to the memory index
 File path:
     {MEMORY_FILE}
 
-This file is an INDEX, not a content store. Append exactly:
+The index is a flat list of pointers + triggers. Append exactly:
 
     ## {timestamp.replace('_', ' ')} — {title}
     - **Path**: {md_path}
-    - **Topic**: <ONE sentence, ≤25 words, what TASK 1 teaches>
+    - **Triggers**: <comma-separated keywords / names / numbers that
+      should fire this memory — e.g. "Postgres, NOT NULL, 50M rows,
+      ALTER TABLE blocking, pg 11+">
+    - **Skill**: <ONE sentence, ≤25 words, the takeaway in
+      action / instruction form>
 
-If {MEMORY_FILE} doesn't exist yet, create it starting with this
-header line (and nothing else above your entry):
+If {MEMORY_FILE} doesn't exist yet, create it with this header
+(nothing else above your entry):
 
     # Long-term memory index
 
-Then your entry. Otherwise just append the entry to the bottom.
-Never include the body of TASK 1 here — only the three-line stub
-above.
+    Pointers to skill / experience notes. Read this file first
+    when a request might match a past topic; then Read the relevant
+    `**Path**:` for the full memory.
+
+Then your entry. Otherwise just append the entry to the bottom of
+the file. Never include the body of TASK 1 here — only the entry.
 
 After both Write calls succeed, STOP. Output no chat text. Use no
-other tools.
+other tools beyond Write (and a single Read first if you need to
+check whether the index already exists).
 """
 
     # Flip the silent-turn flag BEFORE writing the prompt so the
