@@ -1700,10 +1700,16 @@
     const when = document.createElement('span');
     when.className = 'when';
     const ts = s.lastActiveAt || s.createdAt;
+    const parts = [];
+    // Show the short chat id ("@c1", "@g3", …) so the user can
+    // reference it in their messages: "look at @c2".
+    if (s.chatId) parts.push('@' + s.chatId);
     if (ts){
       const d = new Date(ts * 1000);
-      when.textContent = fmtRel(ts) + ' · ' + d.toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'});
+      parts.push(fmtRel(ts));
+      parts.push(d.toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}));
     }
+    when.textContent = parts.join(' · ');
     titleBlock.appendChild(title);
     titleBlock.appendChild(when);
 
