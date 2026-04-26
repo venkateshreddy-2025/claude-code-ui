@@ -216,6 +216,30 @@
   #popmenu button svg{width:14px;height:14px;flex:0 0 14px}
   #popmenu .pop-sep{height:1px;background:var(--border-soft);margin:4px 0}
 
+  /* @-mention autocomplete popover above the composer.
+     Shows when user types `@` in the message box; lists chats by
+     recency, filters as they keep typing, Enter/Tab to insert. */
+  #mentionPop{position:fixed;z-index:65;min-width:280px;max-width:420px;
+    max-height:300px;overflow-y:auto;background:var(--bg-2);
+    border:1px solid var(--border);border-radius:10px;padding:4px;
+    box-shadow:0 12px 40px -12px rgba(0,0,0,.6);display:none}
+  #mentionPop.on{display:block}
+  #mentionPop .item{display:flex;flex-direction:column;align-items:flex-start;
+    gap:1px;padding:7px 10px;border-radius:7px;cursor:pointer;
+    color:var(--fg);font:inherit;text-align:left;border:none;
+    background:transparent;width:100%}
+  #mentionPop .item:hover,
+  #mentionPop .item.sel{background:rgba(255,255,255,.06)}
+  #mentionPop .item .row1{display:flex;align-items:center;gap:8px;
+    width:100%}
+  #mentionPop .item .cid{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:12px;color:var(--accent);font-weight:600;
+    background:rgba(255,255,255,.04);padding:1px 6px;border-radius:4px}
+  #mentionPop .item .ttl{font-size:13px;flex:1;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap}
+  #mentionPop .item .meta{font-size:10.5px;color:var(--fg-faint)}
+  #mentionPop .empty{padding:10px 12px;font-size:12px;color:var(--fg-faint)}
+
   /* Sidebar drag-to-resize handle (desktop only — drawer on mobile) */
   .side-resize{position:absolute;top:0;right:-3px;width:6px;height:100%;
     cursor:col-resize;z-index:10;background:transparent}
@@ -1173,6 +1197,7 @@
 
 <!-- Floating menu shown when the ⋮ on a session row is clicked -->
 <div id="popmenu" role="menu"></div>
+<div id="mentionPop" role="listbox" aria-label="Reference a chat"></div>
 
 <!-- Settings sheet — two tabs: Theme + Personas. Theme is the default
      landing tab. Personas tab itself has TWO sub-views: a compact list
@@ -2591,8 +2616,157 @@
   }
   input.addEventListener('input', autosize);
   input.addEventListener('keydown', e => {
+    // @-mention autocomplete intercepts Up/Down/Enter/Tab/Esc when
+    // the popover is open. Only fall through to send-on-Enter when
+    // the popover isn't claiming the keypress.
+    if (mention.handleKeydown(e)) return;
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); }
   });
+
+  // ───── @-mention autocomplete ─────
+  // Type `@` in the composer, get a popover listing recent chats by
+  // their short id (`@c1`, `@g3`, …). Filters as you keep typing
+  // (matches chatId AND title). Enter / Tab / click selects.
+  const mention = (() => {
+    const pop = $('mentionPop');
+    let active   = false;
+    let startIdx = -1;        // index of `@` in the textarea
+    let query    = '';        // text typed after `@`
+    let items    = [];        // currently rendered candidates
+    let selIdx   = 0;         // highlighted row
+
+    function close(){
+      if (!active) return;
+      active = false; query = ''; startIdx = -1; selIdx = 0;
+      pop.classList.remove('on');
+      pop.innerHTML = '';
+    }
+
+    function render(){
+      pop.innerHTML = '';
+      if (!items.length){
+        const e = document.createElement('div');
+        e.className = 'empty';
+        e.textContent = query
+          ? `No chat matches "${query}"`
+          : 'No other chats yet';
+        pop.appendChild(e);
+        return;
+      }
+      items.forEach((s, i) => {
+        const it = document.createElement('button');
+        it.type = 'button'; it.className = 'item' + (i === selIdx ? ' sel' : '');
+        const r1 = document.createElement('div'); r1.className = 'row1';
+        const cid = document.createElement('span'); cid.className = 'cid';
+        cid.textContent = '@' + s.chatId;
+        const ttl = document.createElement('span'); ttl.className = 'ttl';
+        ttl.textContent = s.title || 'Untitled';
+        r1.appendChild(cid); r1.appendChild(ttl);
+        it.appendChild(r1);
+        const ts = s.lastActiveAt || s.createdAt;
+        if (ts){
+          const meta = document.createElement('span'); meta.className = 'meta';
+          meta.textContent = fmtRel(ts);
+          it.appendChild(meta);
+        }
+        it.addEventListener('mousedown', ev => { ev.preventDefault(); pick(i); });
+        pop.appendChild(it);
+      });
+    }
+
+    function position(){
+      // Anchor the popover above the textarea (composer is at the
+      // bottom of the screen). Right-align so it doesn't overflow
+      // when the input is short.
+      const r = input.getBoundingClientRect();
+      pop.style.left   = Math.max(8, r.left) + 'px';
+      pop.style.bottom = (window.innerHeight - r.top + 6) + 'px';
+      pop.style.top    = '';
+      pop.style.maxWidth = Math.min(420, window.innerWidth - 16) + 'px';
+    }
+
+    function recompute(){
+      const text = input.value;
+      const caret = input.selectionStart;
+      // Look back from caret for `@<word>` with a word boundary
+      // before the `@` (start-of-string or whitespace).
+      let i = caret - 1;
+      while (i >= 0 && /[A-Za-z0-9_\-]/.test(text[i])) i--;
+      if (i < 0 || text[i] !== '@'){
+        close(); return;
+      }
+      // Word boundary before `@`?
+      if (i > 0 && !/\s/.test(text[i - 1])){
+        close(); return;
+      }
+      startIdx = i;
+      query    = text.slice(i + 1, caret);
+      const all = (sessions || []).filter(s => s.chatId && s.id !== activeId);
+      const q   = query.toLowerCase();
+      const matched = q
+        ? all.filter(s =>
+            (s.chatId || '').toLowerCase().startsWith(q) ||
+            (s.title  || '').toLowerCase().includes(q))
+        : all;
+      matched.sort((a, b) =>
+        (b.lastActiveAt || b.createdAt || 0) - (a.lastActiveAt || a.createdAt || 0));
+      items = matched.slice(0, 8);
+      selIdx = 0;
+      if (!active){ active = true; pop.classList.add('on'); }
+      position();
+      render();
+    }
+
+    function pick(i){
+      if (i == null) i = selIdx;
+      const s = items[i]; if (!s) { close(); return; }
+      const text = input.value;
+      const caret = input.selectionStart;
+      const before = text.slice(0, startIdx);
+      const after  = text.slice(caret);
+      const insert = '@' + s.chatId + ' ';
+      input.value = before + insert + after;
+      const newCaret = (before + insert).length;
+      input.focus();
+      input.setSelectionRange(newCaret, newCaret);
+      close();
+      autosize();
+    }
+
+    function move(delta){
+      if (!items.length) return;
+      selIdx = (selIdx + delta + items.length) % items.length;
+      render();
+    }
+
+    function handleKeydown(e){
+      if (!active) {
+        // Re-evaluate after the keypress, in case typing `@` opens
+        // the popover. Use a tiny defer so input.value is updated.
+        if (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Delete'){
+          setTimeout(recompute, 0);
+        }
+        return false;
+      }
+      switch (e.key){
+        case 'ArrowDown': e.preventDefault(); move(+1); return true;
+        case 'ArrowUp':   e.preventDefault(); move(-1); return true;
+        case 'Enter':
+        case 'Tab':       e.preventDefault(); pick(); return true;
+        case 'Escape':    e.preventDefault(); close(); return true;
+        default:
+          // Let the keypress through, then recompute.
+          setTimeout(recompute, 0);
+          return false;
+      }
+    }
+
+    // External hooks
+    input.addEventListener('blur', () => setTimeout(close, 120));
+    window.addEventListener('resize', () => { if (active) position(); });
+
+    return { handleKeydown, close };
+  })();
 
   // ───── attachments ─────
   attachBtn.addEventListener('click', () => fileInput.click());

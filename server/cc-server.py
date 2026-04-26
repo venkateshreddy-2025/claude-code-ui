@@ -688,7 +688,7 @@ async def new_session(cwd_override: str | None = None,
         cwd = Path(cwd_override).expanduser().resolve()
         cwd.mkdir(parents=True, exist_ok=True)
     else:
-        stamp_fs = time.strftime('%Y-%m-%d_%H-%M-%S')
+        stamp_fs = time.strftime('%Y-%m-%d-%H-%M-%S')
         cwd = CWD_ROOT / stamp_fs
         cwd.mkdir(parents=True, exist_ok=True)
 
@@ -828,7 +828,7 @@ async def fork_session(source_id: str, last_n: int = 200):
         return
 
     sid = str(uuid.uuid4())
-    stamp_fs = time.strftime('%Y-%m-%d_%H-%M-%S')
+    stamp_fs = time.strftime('%Y-%m-%d-%H-%M-%S')
     cwd = CWD_ROOT / stamp_fs
     cwd.mkdir(parents=True, exist_ok=True)
 
@@ -1425,7 +1425,7 @@ async def summarize_session(sid: str):
                          'message': 'empty summary returned'})
         return
 
-    out = cwd / f'PROGRESS-{time.strftime("%Y-%m-%d_%H-%M-%S")}.md'
+    out = cwd / f'PROGRESS-{time.strftime("%Y-%m-%d-%H-%M-%S")}.md'
     try:
         out.write_text(md, encoding='utf-8')
     except Exception as e:
