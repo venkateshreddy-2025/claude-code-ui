@@ -654,42 +654,40 @@ def _arm_fallback_if_unstable(w: Worker):
 
 
 def build_memory_preamble() -> str:
-    """Mandatory first-action instruction injected into every claude
-    spawn. Claude MUST read the long-term memory index at the start of
-    every user turn — not "if related", not "when relevant", ALWAYS —
-    and use whatever's there silently. Never narrate the read."""
+    """Mandatory first-action instruction. Claude MUST Read the
+    long-term memory index at the start of every user turn. When the
+    answer draws on memory, SAY SO — that's how the user understands
+    they're getting continuity across sessions, not just a one-shot
+    response."""
     return (
         "Long-term memory (NON-NEGOTIABLE)\n"
         "---------------------------------\n"
         "On EVERY user turn, your FIRST action — before producing any\n"
         "chat output and before any other tool — is to Read this file:\n"
         f"    {MEMORY_FILE}\n\n"
-        "If the file exists: scan the entries. Each one has Triggers\n"
+        "If the file exists: scan the entries. Each has Triggers\n"
         "(keywords / names / problem shapes) and a Skill (one-line\n"
         "takeaway). If any Triggers loosely match the user's current\n"
         "request, also Read the entry's `**Path**:` for the full\n"
         "bullet-form memory and apply it to your answer.\n\n"
-        "If the file does NOT exist: silently proceed — just answer\n"
-        "the user normally. Never say \"first session\" or anything\n"
-        "like that.\n\n"
-        "ABSOLUTE SILENCE about memory operations. Never write or say:\n"
-        "  • \"Let me check memory\" / \"checking my memory\" /\n"
-        "    \"I'll look at\" / \"first I need to\"\n"
-        "  • \"the memory directory\" / \"memory index\" / \"saved\n"
-        "    sessions\" / \"previous conversations\" / \"long-term\n"
-        "    memory\" / \"first rodeo\" / \"fresh start\"\n"
-        "  • Any acknowledgement that you just performed a Read tool\n"
-        "    call to consult memory. The Read happens in your tool\n"
-        "    use — your visible chat output never references it.\n\n"
-        "If the user asks \"do you remember X?\" or \"check your\n"
-        "memory\" — Read the index, then answer the question with\n"
-        "what you found (or what you can answer from context). Do\n"
-        "NOT respond with meta-talk about whether memory exists,\n"
-        "about checking, about sessions. Just answer the substance.\n\n"
-        "Treat the memory like your own internal knowledge — when\n"
-        "you use it, just use it. ChatGPT/Claude with memory enabled\n"
-        "doesn't say \"let me check my memory of you\"; it just\n"
-        "answers as if it always knew."
+        "If the file does NOT exist yet, just proceed and answer the\n"
+        "user normally. If they ask whether you remember anything,\n"
+        "say plainly there's nothing saved yet (avoid goofy phrases\n"
+        "like \"first rodeo\" or \"fresh start\" — keep it natural).\n\n"
+        "**Make memory use VISIBLE to the user.** When an answer\n"
+        "draws on a saved memory, signal it briefly so the user\n"
+        "understands they're getting continuity:\n"
+        "  • \"Based on what I've got saved from when you set up X…\"\n"
+        "  • \"I remember from a previous session you decided to use Y\n"
+        "    because of Z.\"\n"
+        "  • \"From the note on this topic: <key fact>.\"\n"
+        "Don't make a production of it (no \"Let me check the long-\n"
+        "term memory index across all sessions!\" type breathlessness),\n"
+        "but a one-line attribution at the start of an answer is\n"
+        "exactly right. The user wants to see the feature working.\n\n"
+        "When an answer doesn't rely on memory, no need to mention\n"
+        "it — answer normally. Don't restate \"checked memory, nothing\n"
+        "relevant\" on every turn."
     )
 
 
