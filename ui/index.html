@@ -1036,6 +1036,47 @@
     z-index:55;display:none;backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)}
   .modal-backdrop.on{display:block;animation:fadein .15s}
 
+  /* Routines list inside the routines modal. */
+  .routines-list{display:flex;flex-direction:column;gap:8px;
+    margin-top:14px;max-height:54vh;overflow-y:auto;padding-right:4px}
+  .routines-empty{padding:24px 8px;text-align:center;color:var(--fg-faint);font-size:13px}
+  .routine-row{display:flex;align-items:flex-start;gap:10px;
+    padding:10px 12px;border-radius:10px;
+    border:1px solid var(--border);background:rgba(255,255,255,.02);
+    transition:background .12s,border-color .12s}
+  .routine-row:hover{background:rgba(255,255,255,.04);border-color:var(--border-soft)}
+  .routine-row.cancelled{opacity:.55}
+  .routine-row.dead{border-color:rgba(220,80,80,.4)}
+  .routine-row .rmain{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+  .routine-row .rtitle{font-size:13.5px;font-weight:600;color:var(--fg);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .routine-row .rmeta{font-size:11.5px;color:var(--fg-dim);
+    display:flex;flex-wrap:wrap;gap:8px;line-height:1.55}
+  .routine-row .rmeta .rsched{color:var(--accent-2)}
+  .routine-row .rmeta .rmech{font-family:"SF Mono",Menlo,Monaco,monospace;font-size:10.5px;
+    background:rgba(255,255,255,.04);padding:1px 6px;border-radius:4px;
+    color:var(--fg-dim)}
+  .routine-row .rprompt{font-size:12px;color:var(--fg-dim);margin-top:4px;
+    overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+  .routine-row .rkill{flex:0 0 auto;background:transparent;border:1px solid var(--border);
+    border-radius:8px;padding:6px 12px;color:var(--fg-dim);
+    font:inherit;font-size:12px;cursor:pointer;transition:color .12s,background .12s,border-color .12s}
+  .routine-row .rkill:hover{color:#ff7878;border-color:#ff7878;background:rgba(255,120,120,.06)}
+  .routine-row.cancelled .rkill{display:none}
+  .routine-row .rstatus{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;
+    padding:1px 6px;border-radius:8px;border:1px solid var(--border);color:var(--fg-faint)}
+  .routine-row .rstatus.alive{color:var(--accent);border-color:rgba(199,143,91,.4)}
+  .routine-row .rstatus.dead{color:#ff7878;border-color:rgba(255,120,120,.35)}
+  .routine-row .rstatus.cancelled{color:var(--fg-faint)}
+
+  /* Header-button counter badge for routines */
+  .header-action{position:relative}
+  .routines-count{position:absolute;top:0;right:0;
+    background:var(--accent);color:#0f0f15;
+    font-size:9.5px;font-weight:700;line-height:1;
+    padding:2px 5px;border-radius:8px;min-width:14px;text-align:center;
+    pointer-events:none}
+
   /* Per-chat "Saving…" pill — sits inside the composer area, above
      the input. ALWAYS visible (no scroll dependency) and disabled
      composer makes it clear the chat is locked. Switching to another
@@ -1237,6 +1278,16 @@
           <polyline points="7 3 7 8 15 8"/>
         </svg>
       </button>
+      <button class="header-action" id="routinesBtn" type="button"
+              title="Routines — scheduled wake-ups" aria-label="Routines">
+        <!-- clock glyph -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="9"/>
+          <polyline points="12 7 12 12 15 14"/>
+        </svg>
+        <span class="routines-count" id="routinesCount" hidden>0</span>
+      </button>
       <button class="header-action" id="searchBtn" type="button"
               title="Search across all chats (⌘K / Ctrl-K)" aria-label="Search">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -1355,6 +1406,26 @@
 <!-- Brief "Saved" confirmation toast — shown for ~1.8s when a save
      completes. No path / no internals — just acknowledgment. -->
 <div id="savedToast" hidden>✓ Saved</div>
+
+<!-- Routines panel (scheduled wake-ups). Lists every active routine,
+     filterable by chat, with a kill button per row. The bridge owns
+     the registry; this UI just renders + sends `routine_cancel`. -->
+<div class="modal-backdrop" id="routinesBackdrop"></div>
+<div class="modal" id="routinesModal" hidden>
+  <button class="close" id="routinesClose" aria-label="Close">×</button>
+  <h3>Routines · scheduled wake-ups</h3>
+  <p class="setting-help" style="margin-top:6px">
+    Active wake-ups across all chats. Cancel any without re-opening
+    its chat. Cancelling kills the process the chat started, removes
+    its crontab line if it had one, and stops the routine from
+    firing again.
+  </p>
+  <div id="routinesList" class="routines-list"></div>
+  <div class="modal-actions">
+    <button type="button" class="btn-ghost" id="routinesRefresh">Refresh</button>
+    <button type="button" class="btn-primary" id="routinesOk">Done</button>
+  </div>
+</div>
 <div id="lightbox">
   <div class="lb-bar">
     <a class="lb-btn" id="lightboxOpen" target="_blank" rel="noopener" title="Open in new tab">
@@ -1667,13 +1738,19 @@
   // clean — but during streaming the marker arrives in deltas and
   // would briefly flash on screen until turn_done fixes the bubble.
   // Strip on render so it never appears.
-  const SEND_MARKER_RE     = /\|\s*SEND\s*\|\s*[^|\n]+?\s*\|/g;
-  const ARTIFACT_MARKER_RE = /\|\s*ARTIFACT\s*\|\s*[^|\n]+?\s*\|/g;
+  const SEND_MARKER_RE       = /\|\s*SEND\s*\|\s*[^|\n]+?\s*\|/g;
+  const ARTIFACT_MARKER_RE   = /\|\s*ARTIFACT\s*\|\s*[^|\n]+?\s*\|/g;
+  // |ROUTINE| takes a JSON object that may contain newlines; allow
+  // multi-line non-greedy match. |ROUTINE_CANCEL| is single-line.
+  const ROUTINE_MARKER_RE    = /\|\s*ROUTINE\s*\|\s*\{[\s\S]*?\}\s*\|/g;
+  const ROUTINE_CANCEL_RE    = /\|\s*ROUTINE_CANCEL\s*\|\s*[^|\n]+?\s*\|/g;
   function stripSendMarkers(text){
     if (!text || text.indexOf('|') < 0) return text;
     return text
       .replace(SEND_MARKER_RE, '')
       .replace(ARTIFACT_MARKER_RE, '')
+      .replace(ROUTINE_MARKER_RE, '')
+      .replace(ROUTINE_CANCEL_RE, '')
       .replace(/[ \t]+\n/g,'\n').replace(/\n{3,}/g,'\n\n').replace(/\s+$/, '');
   }
 
@@ -2948,6 +3025,10 @@
     switch (m.type){
       case 'state': {
         sessions = m.sessions || [];
+        if (Array.isArray(m.routines)){
+          routines = m.routines;
+          refreshRoutinesUI();
+        }
         cwd  = m.cwd || cwd;
         const newActive = m.activeId;
         const c = getChat(newActive) || {messages: [], busy: false, current: null, unread: false, turnHadAssistant: false};
@@ -3192,6 +3273,17 @@
           }
         }
         refreshSaveButton();
+        break;
+      case 'routines':
+        // Authoritative list of all routines from the server.
+        // Updates the header counter + repaints the modal if open.
+        routines = m.routines || [];
+        refreshRoutinesUI();
+        break;
+      case 'routine_cancel_result':
+        // Server's response to a UI-driven cancel. We don't surface
+        // this directly — the followup `routines` broadcast is what
+        // actually updates the panel. Optional: log for debugging.
         break;
       case 'summary_error':     // legacy alias
       case 'save_error':
@@ -4032,6 +4124,90 @@
     savingChats.add(activeId);
     applySavingUI();
     send({ type: 'save_progress', id: activeId });
+  });
+
+  // ───── Routines (scheduled wake-ups) ─────
+  // Server is authoritative; we just render its `routines` broadcast.
+  // Header button → modal listing all routines; per-row Kill action
+  // sends `routine_cancel`. Bridge does the SIGTERM + crontab cleanup.
+  let routines = [];
+  function refreshRoutinesUI(){
+    const enabled = routines.filter(r => r.enabled);
+    const counter = document.getElementById('routinesCount');
+    if (counter){
+      counter.textContent = String(enabled.length);
+      counter.hidden = enabled.length === 0;
+    }
+    const modalOpen = !document.getElementById('routinesModal')?.hidden;
+    if (modalOpen) renderRoutinesList();
+  }
+  function renderRoutinesList(){
+    const list = document.getElementById('routinesList');
+    if (!list) return;
+    if (!routines.length){
+      list.innerHTML = '<div class="routines-empty">No routines yet. Ask in any chat for something scheduled — "text me at 4:30", "every hour check X" — and it will show up here.</div>';
+      return;
+    }
+    const sessionTitle = (sid) => {
+      const s = sessions.find(x => x.id === sid);
+      return s ? (s.title || 'New chat') : '(unknown chat)';
+    };
+    let html = '';
+    for (const r of routines){
+      const cls = r.enabled
+        ? (r.alive ? 'routine-row' : (r.pid ? 'routine-row dead' : 'routine-row'))
+        : 'routine-row cancelled';
+      const status = !r.enabled
+        ? `<span class="rstatus cancelled">cancelled</span>`
+        : (r.pid && !r.alive
+            ? `<span class="rstatus dead">dead pid</span>`
+            : `<span class="rstatus alive">live</span>`);
+      const sched = r.schedule ? `<span class="rsched">${escHtml(r.schedule)}</span>` : '';
+      const mech  = r.mechanism ? `<span class="rmech">${escHtml(r.mechanism)}</span>` : '';
+      const pid   = r.pid ? `pid ${r.pid}` : '';
+      const fires = r.fires ? `${r.fires}× fired` : '';
+      const session = `chat: ${escHtml(sessionTitle(r.sid))}`;
+      const meta = [sched, session, pid, fires].filter(Boolean).join(' · ');
+      const prompt = r.prompt
+        ? `<div class="rprompt">${escHtml(r.prompt)}</div>`
+        : '';
+      html += `<div class="${cls}" data-id="${escHtml(r.id)}">
+        <div class="rmain">
+          <div class="rtitle">${escHtml(r.title || 'Routine')}</div>
+          <div class="rmeta">${meta} ${mech}</div>
+          ${prompt}
+        </div>
+        ${status}
+        <button class="rkill" data-id="${escHtml(r.id)}" type="button">Kill</button>
+      </div>`;
+    }
+    list.innerHTML = html;
+    list.querySelectorAll('.rkill').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const rid = btn.dataset.id;
+        if (!rid) return;
+        if (!confirm('Kill this routine? The bridge will SIGTERM the process and remove its crontab line if any.')) return;
+        send({ type: 'routine_cancel', id: rid });
+      });
+    });
+  }
+  function openRoutinesPanel(){
+    document.getElementById('routinesBackdrop').classList.add('on');
+    document.getElementById('routinesModal').hidden = false;
+    // Fresh fetch so we don't rely on stale state.
+    send({ type: 'routines_list' });
+    renderRoutinesList();
+  }
+  function closeRoutinesPanel(){
+    document.getElementById('routinesBackdrop').classList.remove('on');
+    document.getElementById('routinesModal').hidden = true;
+  }
+  document.getElementById('routinesBtn')?.addEventListener('click', openRoutinesPanel);
+  document.getElementById('routinesClose')?.addEventListener('click', closeRoutinesPanel);
+  document.getElementById('routinesOk')?.addEventListener('click', closeRoutinesPanel);
+  document.getElementById('routinesBackdrop')?.addEventListener('click', closeRoutinesPanel);
+  document.getElementById('routinesRefresh')?.addEventListener('click', () => {
+    send({ type: 'routines_list' });
   });
 
   // ───── mic / speech-to-text (Web Speech API) ─────

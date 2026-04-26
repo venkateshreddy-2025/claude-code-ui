@@ -85,6 +85,11 @@ import websockets
 from websockets.datastructures import Headers
 from websockets.http11 import Response
 
+from routines import (
+    RoutineManager,
+    extract_routine_markers,
+)
+
 # ───────────────────  paths + config  ───────────────────
 HOST = os.environ.get('CC_SERVER_HOST', '127.0.0.1')
 PORT = int(os.environ.get('CC_SERVER_PORT', 8765))
@@ -339,6 +344,9 @@ class State:
         self.active_id: str | None = None
         self.clients: set = set()
         self.workers: dict[str, Worker] = {}
+        # Routines (scheduled wake-ups). Initialised lazily in main()
+        # because it needs broadcast() defined and a running event loop.
+        self.routines: 'RoutineManager | None' = None
 
     def worker_for(self, sid: str) -> Worker:
         w = self.workers.get(sid)
@@ -610,6 +618,7 @@ def state_snapshot() -> dict:
         'sessions': list_sessions_brief(),
         'messages': msgs,
         'workers': workers_summary(),
+        'routines': state.routines.all_brief() if state.routines else [],
         'cwd': (sess or {}).get('cwd') or DEFAULT_CWD,
     }
 
@@ -702,6 +711,104 @@ def build_memory_preamble() -> str:
     )
 
 
+def build_routines_preamble(sid: str) -> str:
+    """System-prompt section appended to every spawn that teaches
+    claude how to handle scheduling / recurring requests. Claude owns
+    the implementation (writes the python, picks the mechanism, starts
+    the process); the bridge just keeps a registry + kill switch.
+
+    Includes:
+      - The session id (so any code claude writes can target it)
+      - The bridge WebSocket URL
+      - The list of routines already active for this session
+      - Strict marker contract for register / cancel
+    """
+    ws_url = f'ws://{HOST}:{PORT}{PATH_PREFIX}/ws'
+    # Active routines for THIS session — claude needs the ids if the
+    # user says "cancel my 4:30 reminder" (claude looks up the matching
+    # one and emits |ROUTINE_CANCEL|).
+    active = []
+    if state.routines is not None:
+        for r in state.routines.list_for_session(sid, only_enabled=True):
+            active.append({
+                'id':       r.id,
+                'title':    r.title,
+                'schedule': r.schedule,
+                'pid':      r.pid,
+            })
+    active_block = ''
+    if active:
+        active_block = ('\nCurrently active routines for this chat:\n'
+                        + json.dumps(active, indent=2) + '\n')
+    return (
+        "Routines (scheduled wake-ups)\n"
+        "-----------------------------\n"
+        "When the user asks for ANYTHING that has a time component —\n"
+        "  • \"text me at 4:30\"\n"
+        "  • \"every hour check my emails\"\n"
+        "  • \"remind me tomorrow at 9 to call X\"\n"
+        "  • \"do this research weekly and DM me the result\"\n"
+        "— do NOT just acknowledge. Set up an actual scheduled job\n"
+        "yourself, then register it with the bridge so the user can\n"
+        "see + cancel it without going back into this chat.\n\n"
+        "Mechanism is YOUR choice — you have the Bash and Write tools.\n"
+        "Pick whichever fits the schedule:\n"
+        "  • One-shot in the next ~24h: a python script you start with\n"
+        "    `nohup python3 path.py >/tmp/log 2>&1 &` (or with\n"
+        "    `subprocess.Popen` so you can record the PID).\n"
+        "  • Recurring at fixed wall-clock times: `crontab` is fine.\n"
+        "    Embed a unique marker comment in the line so it can be\n"
+        "    grep-removed on cancel.\n"
+        "  • Recurring at simple intervals: a tiny daemon python file\n"
+        "    with `while True: time.sleep(N); fire(); …`, started\n"
+        "    backgrounded. Record its PID.\n\n"
+        f"This chat's session id (route messages here):\n"
+        f"    {sid}\n\n"
+        f"Bridge WebSocket URL (use this to inject the wake-up message\n"
+        f"into THIS chat when the schedule fires):\n"
+        f"    {ws_url}\n\n"
+        "When the schedule fires, your script should connect to the\n"
+        "WebSocket and send:\n"
+        '    {"type":"send","id":"<this-session-id>","text":"<wake-up prompt>","source":"routine"}\n'
+        "The bridge routes that message into this chat's worker —\n"
+        "same conversational context — and the user sees a normal\n"
+        "user→assistant exchange (badged 'via routine'). The text you\n"
+        "send becomes the new user turn; YOU (this same session) will\n"
+        "wake up and act on it. So write the wake-up prompt as the\n"
+        "exact instruction you want future-you to follow, e.g.\n"
+        '    "[wake-up] It is 4:30 PM. Compose a short text to the user\n'
+        '     about the weather forecast for tonight."\n\n'
+        "Reference helper script (already in the repo, copy its WS\n"
+        "code if useful):\n"
+        "    /Users/venkateshreddy/Documents/claude-code-ui/tools/cc-talk.py\n\n"
+        "AFTER you've actually started the job, register it with the\n"
+        "bridge by emitting this marker on its own line at the END\n"
+        "of your reply:\n\n"
+        '    |ROUTINE| {"title":"<≤8 words>","prompt":"<wake-up text>",\n'
+        '               "schedule":"<plain English: \'every hour\' / \'at 4:30 PM today\'>",\n'
+        '               "user_request":"<the user\'s exact ask>",\n'
+        '               "script_path":"/abs/path/to/your.py",\n'
+        '               "pid":<the integer PID you started>,\n'
+        '               "mechanism":"<background python | crontab | launchd | …>",\n'
+        '               "cron_marker":"<unique substring of your crontab line, if any>"} |\n\n'
+        "The marker is JSON, all on one line OK; the bridge strips it\n"
+        "from the displayed reply (the user never sees it). The bridge\n"
+        "auto-assigns the routine id and adds it to the registry.\n\n"
+        "To CANCEL a routine when the user asks:\n"
+        "  1. Kill the process / remove the crontab line yourself\n"
+        "     (using your Bash tool — you started it, you stop it).\n"
+        "  2. Emit:\n"
+        '        |ROUTINE_CANCEL| <routine-id> |\n'
+        "  3. Tell the user briefly that it's cancelled.\n\n"
+        "The user can ALSO cancel from the Routines panel in the UI\n"
+        "without going through you. In that case the bridge SIGTERMs\n"
+        "the PID it has on file and best-effort scrubs the crontab\n"
+        "line by `cron_marker`. So pick a unique marker and record\n"
+        "the real PID — those two fields make user-side cancel work.\n"
+        + active_block
+    )
+
+
 async def start_worker(sid: str, *, force_fresh: bool = False) -> Worker | None:
     """Spawn (or respawn) the claude subprocess for session `sid`. If a
     worker already exists for this sid AND its proc is alive, it's left
@@ -737,6 +844,7 @@ async def start_worker(sid: str, *, force_fresh: bool = False) -> Worker | None:
     if persona_prompt:
         parts.append(persona_prompt)
     parts.append(build_memory_preamble())
+    parts.append(build_routines_preamble(sid))
     system_prompt = '\n\n---\n\n'.join(parts)
 
     # Decide whether to use --resume <sid> (fast path: claude has its
@@ -904,6 +1012,13 @@ async def delete_session(sid: str):
     # Stop the worker if one is running for this sid.
     await stop_worker(sid, broadcast_end=False)
     state.workers.pop(sid, None)
+    # Cancel any routines bound to this session — kills their PIDs
+    # and clears them from the registry so they don't keep firing
+    # against a chat that no longer exists.
+    if state.routines is not None:
+        n = state.routines.cancel_all_for_session(sid, reason='session_deleted')
+        if n:
+            log(f'  cancelled {n} routine(s) for deleted session {sid[:8]}')
 
     if state.active_id == sid:
         state.active_id = None
@@ -1881,6 +1996,7 @@ async def claude_reader(w: Worker):
                     return out
 
                 sess_after = load_session(sid)
+                routines_changed = False
                 if sess_after:
                     msgs_after = sess_after.get('messages') or []
                     last_idx = -1
@@ -1891,6 +2007,21 @@ async def claude_reader(w: Worker):
                         original = msgs_after[last_idx].get('text') or ''
                         cleaned, send_paths, artifact_paths = \
                             extract_markers(original)
+                        # Routine markers: register / cancel scheduled
+                        # wake-ups claude set up. The chat's claude
+                        # owns the actual mechanism (python + cron +
+                        # PID); we just track the registry entry.
+                        cleaned, routine_specs, routine_cancels = \
+                            extract_routine_markers(cleaned)
+                        if state.routines is not None:
+                            for spec in routine_specs:
+                                r = state.routines.register(sid=sid, spec=spec)
+                                if r is not None:
+                                    routines_changed = True
+                            for cid in routine_cancels:
+                                ok, _ = state.routines.cancel(cid, reason='claude')
+                                if ok:
+                                    routines_changed = True
                         if send_paths:
                             attached_records = _process_marker_paths(
                                 send_paths, 'SEND')
@@ -1900,7 +2031,7 @@ async def claude_reader(w: Worker):
                         # If markers existed at all (even if no file
                         # was deliverable), strip them from the
                         # persisted reply so the user never sees the
-                        # literal `|SEND|`/`|ARTIFACT|` text.
+                        # literal `|SEND|`/`|ARTIFACT|`/`|ROUTINE|` text.
                         if cleaned != original:
                             msgs_after[last_idx]['text'] = cleaned
                             if attached_records:
@@ -1941,6 +2072,9 @@ async def claude_reader(w: Worker):
                                  'sessionId': sid,
                                  'sessions': list_sessions_brief(),
                                  'artifacts': artifact_records or None})
+                if routines_changed and state.routines is not None:
+                    await broadcast({'type': 'routines',
+                                     'routines': state.routines.all_brief()})
                 if attached_records:
                     asyncio.create_task(
                         tg_deliver_attached_records(sid, attached_records))
@@ -2366,6 +2500,26 @@ async def handle_client(websocket):
                     'reqId': msg.get('reqId'),
                     'result': detail,
                 }))
+            elif cmd == 'routines_list':
+                await websocket.send(json.dumps({
+                    'type': 'routines',
+                    'routines': state.routines.all_brief() if state.routines else [],
+                }))
+            elif cmd == 'routine_cancel':
+                rid = msg.get('id') or msg.get('routineId') or ''
+                if state.routines and rid:
+                    ok, info = state.routines.cancel(rid, reason='user-ui')
+                    await broadcast({'type': 'routine_cancel_result',
+                                     'id': rid, 'ok': ok, 'info': info})
+                    await broadcast({'type': 'routines',
+                                     'routines': state.routines.all_brief()})
+            elif cmd == 'routine_remove':
+                rid = msg.get('id') or msg.get('routineId') or ''
+                if state.routines and rid:
+                    state.routines.cancel(rid, reason='user-ui')
+                    state.routines.remove(rid)
+                    await broadcast({'type': 'routines',
+                                     'routines': state.routines.all_brief()})
             elif cmd == 'state':
                 await websocket.send(json.dumps(state_snapshot()))
             elif cmd == 'stop':
@@ -3447,6 +3601,9 @@ async def main():
         state.active_id = None
         set_active(None)
 
+    # Routine registry (scheduled wake-ups the user requested).
+    state.routines = RoutineManager(DATA_DIR, broadcast, log)
+    state.routines.start_sweep(30)
     log(f'cc-server starting')
     log(f'  host       : {HOST}:{PORT}')
     log(f'  data dir   : {DATA_DIR}')
@@ -3456,6 +3613,8 @@ async def main():
     log(f'  path pfx   : {PATH_PREFIX or "(none)"}')
     log(f'  model      : {MODEL_DEFAULT}')
     log(f'  active     : {state.active_id}')
+    log(f'  routines   : {len([r for r in state.routines.routines if r.enabled])} '
+        f'enabled / {len(state.routines.routines)} total')
     log(f'  telegram   : {"on" if TELEGRAM_TOKEN else "off"}')
     if SERVE_STATIC:
         log(f'  open       : http://{HOST}:{PORT}/')
