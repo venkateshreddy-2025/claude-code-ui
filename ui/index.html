@@ -1036,25 +1036,26 @@
     z-index:55;display:none;backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)}
   .modal-backdrop.on{display:block;animation:fadein .15s}
 
-  /* Per-chat saving overlay — locks the focused chat with a spinner
-     while a silent save is in flight. Sits inside #scrollarea so
-     switching to another chat (which doesn't have the overlay
-     attached) gets a fully-usable view. */
-  #savingOverlay{position:absolute;inset:0;z-index:40;
-    display:flex;align-items:center;justify-content:center;
-    background:rgba(8,8,12,.55);
-    backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+  /* Per-chat "Saving…" pill — sits inside the composer area, above
+     the input. ALWAYS visible (no scroll dependency) and disabled
+     composer makes it clear the chat is locked. Switching to another
+     chat hides it (the overlay is bound to the active chat's saving
+     state via applySavingUI()). */
+  #savingOverlay{display:flex;align-items:center;gap:10px;
+    padding:8px 14px;margin:0 auto 6px;
+    background:var(--bg-2);border:1px solid var(--accent);
+    border-radius:18px;
+    color:var(--accent);font-size:12.5px;font-weight:600;
+    letter-spacing:.01em;
+    box-shadow:0 4px 14px -6px rgba(0,0,0,.4);
+    align-self:center;
     animation:fadein .15s ease-out}
   #savingOverlay[hidden]{display:none}
-  .saving-card{display:flex;flex-direction:column;align-items:center;gap:14px;
-    padding:24px 32px;border-radius:14px;
-    background:var(--bg-2);border:1px solid var(--border);
-    box-shadow:0 16px 40px -16px rgba(0,0,0,.6)}
-  .saving-label{font-size:13.5px;color:var(--fg);letter-spacing:.005em}
-  .spinner-large{width:30px;height:30px;
-    border:3px solid rgba(255,255,255,.10);
+  .saving-label{color:var(--accent)}
+  .spinner-large{display:inline-block;width:14px;height:14px;
+    border:2px solid rgba(255,255,255,.10);
     border-top-color:var(--accent);border-radius:50%;
-    animation:spin .9s linear infinite}
+    animation:spin .9s linear infinite;flex:0 0 14px}
   @keyframes spin{to{transform:rotate(360deg)}}
 
   /* "Saved" confirmation toast — appears briefly when a save
@@ -1262,18 +1263,17 @@
         </svg>
         <span>Jump to latest</span>
       </button>
-      <!-- Per-chat saving overlay: locks the focused chat while a
-           silent save is in flight. Switching to another chat hides
-           it (applySavingUI() runs on every focus change). -->
-      <div id="savingOverlay" hidden>
-        <div class="saving-card">
-          <div class="spinner-large"></div>
-          <div class="saving-label">Saving…</div>
-        </div>
-      </div>
     </main>
     <footer>
       <div class="composer-wrap">
+        <!-- Per-chat "Saving…" pill — sits right above the composer
+             so it's always in view (not buried at the top of a long
+             chat). Bound to applySavingUI() which toggles its hidden
+             attribute based on whether the focused chat is saving. -->
+        <div id="savingOverlay" hidden>
+          <span class="spinner-large"></span>
+          <span class="saving-label">Saving…</span>
+        </div>
         <div class="tray" id="tray"></div>
         <form id="form">
           <button class="attach" id="attach" type="button" aria-label="Attach file">

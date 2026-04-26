@@ -1515,6 +1515,18 @@ async def save_progress_silent(sid: str):
     timestamp = time.strftime('%Y-%m-%d_%H-%M-%S')
     md_path = cwd / f'PROGRESS-{timestamp}.md'
     title   = sess.get('title') or 'Untitled chat'
+    # Pre-create the memory index header if missing — saves one Read
+    # tool call on claude's side. Idempotent: if the file already
+    # exists with content, we leave it alone.
+    if not MEMORY_FILE.exists():
+        MEMORY_FILE.write_text(
+            '# Long-term memory index\n\n'
+            'Pointers to skill / experience notes. Each entry has\n'
+            'Triggers (keywords / names / problem shapes) and a\n'
+            'one-sentence Skill. Read this file first when a request\n'
+            'might match a past topic, then Read the relevant `**Path**:`\n'
+            'for the full bullet-form memory.\n',
+            encoding='utf-8')
 
     # The prompt — silent-mode instructions for two Write calls.
     # We deliberately do NOT include a JSON dump of the conversation:
@@ -1527,109 +1539,57 @@ async def save_progress_silent(sid: str):
     # action-form heuristics so a stateless future-claude (no context
     # from this session) can grep the index, hit the right entry, and
     # answer the user without re-deriving everything.
-    prompt = f"""[INTERNAL — produce no chat output.]
+    prompt = f"""[INTERNAL — silent turn, NO chat output.]
 
-FAST. Two Write calls. Stop. No narration, no response, no
-acknowledgement. Be quick — bias toward brevity. Don't think out
-loud, don't plan, just write the two files and end the turn.
+FAST. Issue BOTH Write tool calls in a SINGLE assistant message —
+in PARALLEL, not sequentially. Don't say anything between them.
+Don't think out loud. Don't plan. Don't preamble. Just the two
+Write blocks, in one message.
 
-This is NOT a summary. It is a memory / skill / experience artifact —
-something a future claude with NO context from this session can
-RETRIEVE fast and use to answer a similar question. Aim for 100-800
-words total. 2500 words only if the session genuinely had that much
-substance. 5000 is a hard ceiling that should almost never apply.
-Don't pad. Don't fluff. Stop early when you've captured the meat.
+WRITE 1 — memory file at: {md_path}
 
-Format = mostly BULLETS. Strip the prose. Capture the things that
-are hard to re-derive:
+Bullet-form, 100-300 words ideal, 800 max. Skip any section that's
+empty. Capture the hard-to-re-derive stuff: names, versions, paths,
+URLs, numbers, exact commands, gotchas.
 
-    • main facts / decisions
-    • names (people, services, files, libraries, repos)
-    • important info (gotchas, settings, error messages)
-    • URLs
-    • details (versions, paths, ports, env vars)
-    • numbers (sizes, latencies, thresholds, counts)
+```markdown
+# <≤8-word title — keywords future-you will search for>
 
-If a section has nothing concrete to say, omit it entirely. No
-filler.
+> **Quick answer** — 1-3 imperative bullets. Skim-only, you
+> already know what to do.
 
-TASK 1 — encode the memory
-File path:
-    {md_path}
+## Triggers
+- keyword / problem-shape 1
+- keyword / problem-shape 2
 
-Use this structure (bullets unless a section explicitly needs prose):
+## Key facts
+- <name> — <value>
+- <thing> — <detail>
 
-  # <≤8-word title — the keywords future-you will search for>
+## Steps that worked
+exact commands / code in fenced blocks (no paraphrase)
 
-  > **Quick answer** — 1–3 short bullets. The single most useful
-  > thing first. Imperative voice. A future-you skimming only this
-  > block should already know what to do.
+## What didn't work        ← skip if nothing failed
+- <attempt> — <symptom> — <fix>
 
-  ## Triggers (when this memory applies)
-     - keyword 1
-     - keyword 2
-     - problem shape …
-     Future-you pattern-matches the user's request against these.
+## Don't apply when         ← skip if no boundary
+- <case>
+```
 
-  ## Key facts
-     - <name / fact> — <value or detail>
-     - ...
-     The "lookup table" — names, versions, paths, URLs, numbers.
+WRITE 2 — append to the memory index at: {MEMORY_FILE}
 
-  ## Heuristic / rule
-     - "Do X when you see Y."  (instruction form, not narrative)
-     - ...
+The file already exists with a header. APPEND (don't rewrite) this
+exact 4-line block to the bottom:
 
-  ## What worked (steps / commands)
-     Exact commands or code in fenced blocks. No paraphrase. Future-
-     you copy-pastes these.
+```
+## {timestamp.replace('_', ' ')} — {title}
+- **Path**: {md_path}
+- **Triggers**: <comma-separated keywords/names/numbers, e.g. "Postgres, NOT NULL, 50M rows">
+- **Skill**: <ONE sentence ≤25 words in instruction form>
+```
 
-  ## What didn't work
-     - <attempt> — <symptom> — <real fix>
-     Often the highest-value section. Skip if nothing failed.
-
-  ## Don't apply when
-     - <case 1>
-     - <case 2>
-     The boundary of the heuristic.
-
-  ## Open questions
-     - …
-     Skip this section if there are none.
-
-Bullet-first. Concrete identifiers, copy-pasteable specifics, exact
-numbers. Stay under 5000 words but go MUCH shorter when the topic
-allows.
-
-TASK 2 — append ONE entry to the memory index
-File path:
-    {MEMORY_FILE}
-
-The index is a flat list of pointers + triggers. Append exactly:
-
-    ## {timestamp.replace('_', ' ')} — {title}
-    - **Path**: {md_path}
-    - **Triggers**: <comma-separated keywords / names / numbers that
-      should fire this memory — e.g. "Postgres, NOT NULL, 50M rows,
-      ALTER TABLE blocking, pg 11+">
-    - **Skill**: <ONE sentence, ≤25 words, the takeaway in
-      action / instruction form>
-
-If {MEMORY_FILE} doesn't exist yet, create it with this header
-(nothing else above your entry):
-
-    # Long-term memory index
-
-    Pointers to skill / experience notes. Read this file first
-    when a request might match a past topic; then Read the relevant
-    `**Path**:` for the full memory.
-
-Then your entry. Otherwise just append the entry to the bottom of
-the file. Never include the body of TASK 1 here — only the entry.
-
-After both Write calls succeed, STOP. Output no chat text. Use no
-other tools beyond Write (and a single Read first if you need to
-check whether the index already exists).
+After both Writes land in your single message, STOP. No chat text.
+Don't acknowledge. Don't summarize. Just end the turn.
 """
 
     # Flip the silent-turn flag BEFORE writing the prompt so the
