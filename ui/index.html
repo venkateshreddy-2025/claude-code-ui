@@ -1035,6 +1035,44 @@
   .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.55);
     z-index:55;display:none;backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)}
   .modal-backdrop.on{display:block;animation:fadein .15s}
+
+  /* Per-chat saving overlay — locks the focused chat with a spinner
+     while a silent save is in flight. Sits inside #scrollarea so
+     switching to another chat (which doesn't have the overlay
+     attached) gets a fully-usable view. */
+  #savingOverlay{position:absolute;inset:0;z-index:40;
+    display:flex;align-items:center;justify-content:center;
+    background:rgba(8,8,12,.55);
+    backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+    animation:fadein .15s ease-out}
+  #savingOverlay[hidden]{display:none}
+  .saving-card{display:flex;flex-direction:column;align-items:center;gap:14px;
+    padding:24px 32px;border-radius:14px;
+    background:var(--bg-2);border:1px solid var(--border);
+    box-shadow:0 16px 40px -16px rgba(0,0,0,.6)}
+  .saving-label{font-size:13.5px;color:var(--fg);letter-spacing:.005em}
+  .spinner-large{width:30px;height:30px;
+    border:3px solid rgba(255,255,255,.10);
+    border-top-color:var(--accent);border-radius:50%;
+    animation:spin .9s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* "Saved" confirmation toast — appears briefly when a save
+     completes for the focused chat. Auto-dismisses via CSS animation. */
+  #savedToast{position:fixed;top:60px;left:50%;
+    transform:translateX(-50%);z-index:60;
+    background:var(--bg-3);border:1px solid var(--accent);
+    color:var(--accent);
+    padding:9px 18px;border-radius:24px;
+    font-size:13px;font-weight:600;letter-spacing:.01em;
+    box-shadow:0 8px 24px -10px rgba(0,0,0,.5);
+    animation:savedToast 1.8s ease-out forwards}
+  #savedToast[hidden]{display:none}
+  @keyframes savedToast{
+    0%   {opacity:0;transform:translate(-50%, -8px)}
+    12%, 75% {opacity:1;transform:translate(-50%, 0)}
+    100% {opacity:0;transform:translate(-50%, -10px)}
+  }
   .modal{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:56;
     width:min(480px,calc(100% - 24px));background:var(--bg-2);
     border:1px solid var(--border);border-radius:14px;padding:18px 20px 16px;
@@ -1224,6 +1262,15 @@
         </svg>
         <span>Jump to latest</span>
       </button>
+      <!-- Per-chat saving overlay: locks the focused chat while a
+           silent save is in flight. Switching to another chat hides
+           it (applySavingUI() runs on every focus change). -->
+      <div id="savingOverlay" hidden>
+        <div class="saving-card">
+          <div class="spinner-large"></div>
+          <div class="saving-label">Saving…</div>
+        </div>
+      </div>
     </main>
     <footer>
       <div class="composer-wrap">
@@ -1305,6 +1352,9 @@
 </div>
 
 <div class="drawer-bg" id="drawerBg"></div>
+<!-- Brief "Saved" confirmation toast — shown for ~1.8s when a save
+     completes. No path / no internals — just acknowledgment. -->
+<div id="savedToast" hidden>✓ Saved</div>
 <div id="lightbox">
   <div class="lb-bar">
     <a class="lb-btn" id="lightboxOpen" target="_blank" rel="noopener" title="Open in new tab">
@@ -2866,6 +2916,7 @@
     renderSessions();
     refreshHeaderTitle();
     refreshSaveButton();
+    applySavingUI();    // show/hide saving overlay based on new active chat
   }
 
   function setOnline(on){
@@ -3118,18 +3169,38 @@
         break;
       case 'summarizing':       // legacy alias for save_started
       case 'save_started':
-        // Server confirms the silent save inject reached claude.
-        // Save button stays disabled until save_done lands.
-        setSummarizing(true);
+        // Server confirms the silent save inject reached claude
+        // for `sid`. Mark THAT chat as saving — other chats stay
+        // fully usable. Only the currently-focused chat gets
+        // the visual "saving" affordances (disabled input, status,
+        // button busy).
+        if (sid){
+          savingChats.add(sid);
+          if (sid === activeId) applySavingUI();
+          renderSessions();    // sidebar may show a small saving cue
+        }
         break;
       case 'summary_done':      // legacy alias
       case 'save_done':
         if (m.sessions){ sessions = m.sessions; renderSessions(); }
-        onSaveDone(m);
+        if (sid){
+          const wasOnSavingChat = (sid === activeId);
+          savingChats.delete(sid);
+          if (wasOnSavingChat){
+            applySavingUI();    // hide overlay, re-enable composer
+            showSavedToast();   // ✓ Saved confirmation
+          }
+        }
+        refreshSaveButton();
         break;
       case 'summary_error':     // legacy alias
       case 'save_error':
-        setSummarizing(false);
+        if (sid){
+          savingChats.delete(sid);
+          if (sid === activeId) applySavingUI();
+        }
+        // Brief banner only on save FAILURE — that's a real error
+        // the user needs to see.
         showBanner('Save failed: ' + (m.message || 'unknown'));
         setTimeout(hideBanner, 5000);
         break;
@@ -3883,18 +3954,50 @@
   // ───── save progress (Markdown summary via opus 4.6 1M) ─────
   // Spawns a SEPARATE claude subprocess on the server side so the active
   // session's claude isn't disturbed. Disables the composer in the
-  // Save runs invisibly. The only user-visible signal is the save
-  // button's own state (busy → saved → busy again on new content).
-  // No banner, no modal, no toast — the user shouldn't be told the
-  // bridge is doing internal bookkeeping.
-  let summarizing = false;
-  function setSummarizing(on){
-    summarizing = !!on;
-    const saveBtn = document.getElementById('saveProgressBtn');
-    if (saveBtn){
-      saveBtn.disabled = summarizing || !isSaveEligible();
-      saveBtn.classList.toggle('busy', summarizing);
+  // PER-CHAT saving state. Saving chat A while focused on chat B
+  // must NOT disable B's input, NOT flash B's save button, NOT
+  // change B's status. Each chat saves independently.
+  const savingChats = new Set();   // sids currently in a silent save
+
+  function isCurrentSaving(){ return !!activeId && savingChats.has(activeId); }
+
+  // Toggle the visual "saving" affordances ONLY for the currently-
+  // focused chat: lock with overlay (spinner + "Saving…"), disable
+  // composer, put the save button in busy mode. Other chats stay
+  // fully usable in the background. Called on save_started/save_done
+  // for the active chat, and on chat-switch to sync the overlay.
+  function applySavingUI(){
+    const saving = isCurrentSaving();
+    const inp = document.getElementById('input');
+    const sendBtn = document.getElementById('send');
+    const overlay = document.getElementById('savingOverlay');
+    if (inp) inp.disabled = saving;
+    if (sendBtn) sendBtn.disabled = saving || !inp || !inp.value.trim();
+    if (overlay) overlay.hidden = !saving;
+    if (saving){
+      setStatus('saving…','busy');
+    } else {
+      // Restore status based on actual chat state.
+      const c = activeChat();
+      const isBusyChat = !!(c && (c.busy || c.current));
+      setStatus(isBusyChat ? 'thinking…' : (online ? 'online' : 'disconnected'),
+                isBusyChat ? 'busy' : (online ? 'live' : 'warn'));
     }
+    refreshSaveButton();
+  }
+
+  // Brief "✓ Saved" toast — fires when a save completes for the
+  // focused chat. Auto-dismisses via CSS animation.
+  let _savedToastTimer = null;
+  function showSavedToast(){
+    const toast = document.getElementById('savedToast');
+    if (!toast) return;
+    // Restart animation by toggling display
+    toast.hidden = true;
+    void toast.offsetWidth;       // force reflow
+    toast.hidden = false;
+    if (_savedToastTimer) clearTimeout(_savedToastTimer);
+    _savedToastTimer = setTimeout(() => { toast.hidden = true; }, 1900);
   }
 
   // The Save button is enabled iff the active chat has unsaved
@@ -3911,25 +4014,25 @@
   function refreshSaveButton(){
     const saveBtn = document.getElementById('saveProgressBtn');
     if (!saveBtn) return;
+    const saving   = isCurrentSaving();
     const eligible = isSaveEligible();
-    saveBtn.disabled = summarizing || !eligible;
-    // Tooltip stays neutral — no internals leak.
-    saveBtn.title = summarizing ? 'Saving…' : (eligible ? 'Save' : 'Saved');
-    saveBtn.classList.toggle('saved', !summarizing && !eligible && !!activeId);
+    saveBtn.disabled = saving || !eligible;
+    saveBtn.title    = saving ? 'Saving…' : (eligible ? 'Save' : 'Saved');
+    // .busy ONLY when the focused chat is saving. Other chats saving
+    // in the background don't paint the focused button.
+    saveBtn.classList.toggle('busy',  saving);
+    saveBtn.classList.toggle('saved', !saving && !eligible && !!activeId);
   }
 
   document.getElementById('saveProgressBtn').addEventListener('click', () => {
-    if (summarizing) return;
     if (!activeId || !isSaveEligible()) return;
-    setSummarizing(true);
+    if (savingChats.has(activeId)) return;
+    // Optimistically mark the chat as saving so the UI updates
+    // immediately; server's `save_started` will confirm.
+    savingChats.add(activeId);
+    applySavingUI();
     send({ type: 'save_progress', id: activeId });
   });
-
-  // save_done: just flip the button. No modal, no toast, no banner.
-  function onSaveDone(m){
-    setSummarizing(false);
-    refreshSaveButton();      // muted "saved" state
-  }
 
   // ───── mic / speech-to-text (Web Speech API) ─────
   // Uses the browser's built-in recognition: macOS Safari/Chrome both wire it
