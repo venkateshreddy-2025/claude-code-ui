@@ -381,16 +381,36 @@
   .msg-list{max-width:none;margin:0;padding:18px 14px 14px}
   @media(min-width:600px){.msg-list{padding:24px 28px 18px}}
 
-  .empty-pane{padding:60px 24px;text-align:center;color:var(--fg-faint);font-size:14px;
-    line-height:1.6;display:flex;flex-direction:column;align-items:center;gap:16px}
-  .empty-pane .big-avatar{width:64px;height:64px;border-radius:14px;
+  /* Empty-chat landing — ChatGPT-style centered welcome above the
+     composer. Triggered when the active chat has zero messages. The
+     welcome dominates the pane visually; once the first user message
+     lands, renderAllMessages re-runs with messages.length > 0 and the
+     welcome disappears, restoring the normal scroll layout. */
+  .empty-pane{padding:0 24px;text-align:center;color:var(--fg-faint);
+    font-size:15px;line-height:1.55;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:18px;
+    min-height:60vh;max-width:760px;margin:0 auto}
+  .empty-pane .big-avatar{width:72px;height:72px;border-radius:18px;
     background:linear-gradient(135deg,var(--accent),var(--accent-2));
-    display:grid;place-items:center;color:#fff;font-weight:600;font-size:22px;
-    letter-spacing:.02em;box-shadow:0 12px 30px -10px rgba(0,0,0,.5)}
-  .empty-pane h2{font-size:20px;font-weight:600;color:var(--fg);margin:0}
-  .empty-pane p{margin:0;max-width:380px}
+    display:grid;place-items:center;color:#fff;font-weight:600;font-size:26px;
+    letter-spacing:.02em;box-shadow:0 16px 40px -12px rgba(0,0,0,.55)}
+  .empty-pane h2{font-size:30px;font-weight:600;color:var(--fg);margin:0;
+    letter-spacing:-0.01em}
+  .empty-pane p{margin:0;max-width:540px;font-size:15px}
   .empty-pane code{background:#1a1c20;padding:2px 6px;border-radius:4px;font-size:12.5px;
     color:var(--fg-dim)}
+  .empty-pane .ep-hints{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;
+    margin-top:8px;max-width:620px}
+  .empty-pane .ep-hint{padding:8px 14px;border:1px solid var(--border);border-radius:10px;
+    background:transparent;color:var(--fg-dim);font-size:13px;cursor:pointer;
+    transition:background 120ms,border-color 120ms,color 120ms}
+  .empty-pane .ep-hint:hover{background:rgba(255,255,255,0.04);border-color:var(--accent);
+    color:var(--fg)}
+  /* When in empty-chat mode, beef up the composer so it reads like
+     ChatGPT's giant landing input. */
+  body.empty-chat #form textarea{font-size:16px;min-height:54px;
+    line-height:1.45;padding-top:14px}
+  body.empty-chat #scrollarea{display:flex;align-items:center}
 
   /* Messages stretch edge-to-edge across the chat pane — no centred
      reading column, no max-width cap. Very subtle directional padding
@@ -2226,17 +2246,61 @@
   function clearMessages(){messagesEl.innerHTML='';streamingId=streamingBubble=null;}
 
   function emptyPane(){
+    // Surface the active session's persona so the welcome heading reads
+    // like a real greeting from that persona ("Hello — I'm Aurora.")
+    // rather than a generic empty-state.
+    const sess = activeId ? sessions.find(s => s.id === activeId) : null;
+    const personaName = sess && sess.persona ? sess.persona.name : null;
+    const initial = (personaName || 'CC').slice(0, 1).toUpperCase();
+
+    let heading, sub, hints = [];
+    if (!activeId){
+      heading = 'No active chat';
+      sub = 'Click <strong>New session</strong> in the sidebar to start a fresh Claude session.';
+    } else if (personaName === 'Aurora'){
+      heading = 'Hi, I\'m Aurora — what should we work on?';
+      sub = 'Tell me a task. I\'ll spawn the right specialist (Claudy, Atlas, Forge, Quill, Sentry), brief them, and follow up — pinging you only when needed.';
+      hints = [
+        'Build me a landing page in Forge',
+        'Research the top 5 AI agent frameworks',
+        'Review my last commit for security issues',
+        'Write release notes for v0.4',
+      ];
+    } else if (personaName){
+      heading = `Hi, I'm ${escapeHTML(personaName)}.`;
+      sub = `Working in <code>${escapeHTML(cwd)}</code>. What can I help with?`;
+    } else {
+      heading = 'New chat';
+      sub = `Send a message — Claude will spawn here. Working in <code>${escapeHTML(cwd)}</code>.`;
+    }
+
+    const hintsHtml = hints.length
+      ? '<div class="ep-hints">' +
+          hints.map(h => `<button type="button" class="ep-hint">${escapeHTML(h)}</button>`).join('') +
+        '</div>'
+      : '';
+
     const div = document.createElement('div');
     div.className = 'empty-pane';
     div.innerHTML =
-      '<div class="big-avatar">CC</div>' +
-      '<h2>' + (activeId ? 'Empty chat' : 'No active chat') + '</h2>' +
-      '<p>' +
-      (activeId
-        ? 'Send a message — Claude will spawn here. Working in <code>' + escapeHTML(cwd) + '</code>.'
-        : 'Click <strong>New session</strong> in the sidebar to start a fresh Claude session.') +
-      '</p>';
+      `<div class="big-avatar">${escapeHTML(initial)}</div>` +
+      `<h2>${heading}</h2>` +
+      `<p>${sub}</p>` +
+      hintsHtml;
     messagesEl.appendChild(div);
+
+    // Wire hint chips: clicking pre-fills the composer + focuses it,
+    // user can edit before sending. Mirrors ChatGPT's suggestion chips.
+    div.querySelectorAll('.ep-hint').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const inp = document.getElementById('input');
+        if (inp){
+          inp.value = btn.textContent;
+          inp.dispatchEvent(new Event('input'));
+          inp.focus();
+        }
+      });
+    });
   }
 
   function renderAttachments(atts){
@@ -2457,6 +2521,10 @@
     clearMessages();
     const c = activeChat();
     const msgs = c ? c.messages : [];
+    // Toggle the ChatGPT-style centered landing whenever the focused
+    // chat has nothing in it. The body class beefs up the composer +
+    // centers the welcome card vertically.
+    document.body.classList.toggle('empty-chat', !msgs.length);
     if (!msgs.length){
       emptyPane();
       return;

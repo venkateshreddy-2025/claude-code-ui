@@ -422,11 +422,17 @@ def scrubbed_env():
     )
     for k in explicit:
         env.pop(k, None)
-    # Defensive blanket: any other `CLAUDE_CODE_*` knob is parent-process
-    # state we don't want polluting the child. The user's persistent
-    # config lives in ~/.claude — claude will read that on startup.
+    # Defensive blanket strip — anything starting with `CLAUDE` or
+    # `ANTHROPIC` (with or without the underscore) is parent-process
+    # state we don't want polluting the child. This catches future
+    # Anthropic/Claude env vars without needing a code update. The
+    # user's persistent claude config lives in ~/.claude and is read
+    # by the spawned CLI on startup; that's what we want it to use,
+    # and ONLY that (so the spawned claude uses the user's `claude
+    # login` subscription credentials, never an inherited API key).
     for k in list(env.keys()):
-        if k.startswith('CLAUDE_CODE_') or k.startswith('CLAUDE_INTERNAL_'):
+        ku = k.upper()
+        if ku.startswith('CLAUDE') or ku.startswith('ANTHROPIC'):
             env.pop(k, None)
     return env
 
@@ -1190,14 +1196,11 @@ async def new_session(cwd_override: str | None = None,
                      'sessionId': sid, 'title': 'New chat'})
     # New session — first spawn never uses --resume (no memory yet).
     await start_worker(sid, force_fresh=True)
-    # If this chat is Aurora, auto-spawn her 5-minute heartbeat in the
-    # background. Idempotent + non-blocking; swallows its own errors.
-    try:
-        maybe_spawn_orchestrator_heartbeat(sess)
-    except Exception as e:
-        log(f'orchestrator heartbeat dispatch failed: {e}')
-    # Persona-list state may have changed (Aurora locks once she's spawned),
-    # so refresh the picker for any open client.
+    # NOTE: Aurora's heartbeat is intentionally NOT started here. We defer
+    # it to the first real user message (see send_to_session) so a freshly-
+    # created Aurora chat doesn't burn rate-limit / tokens before the user
+    # has even said hello. Persona-list state changes regardless (Aurora
+    # locks once she's spawned), so refresh that.
     await broadcast({'type': 'personas', **list_personas_brief()})
     await broadcast(state_snapshot())
 
@@ -1247,7 +1250,13 @@ def maybe_spawn_orchestrator_heartbeat(sess: dict) -> None:
     script_src = (
         '#!/usr/bin/env python3\n'
         '"""Aurora heartbeat — wake the orchestrator chat every N seconds.\n'
-        'Lightweight: opens a WS, sends one message, closes. Stateless."""\n'
+        '\n'
+        'Memory + rate-limit discipline:\n'
+        '  • initial delay = one full interval (lets the user have his\n'
+        '    first conversation with Aurora before any heartbeat hits).\n'
+        '  • busy backpressure: if her worker is mid-reply, skip this\n'
+        '    cycle (prevents prompt-stacking + extra token burn).\n'
+        '  • stateless: open WS, peek at state, send-or-skip, close."""\n'
         'import asyncio, json, time\n'
         'from datetime import datetime\n'
         'import websockets\n\n'
@@ -1256,23 +1265,43 @@ def maybe_spawn_orchestrator_heartbeat(sess: dict) -> None:
         f'INTERVAL_SECONDS = {ORCHESTRATOR_HEARTBEAT_INTERVAL}\n'
         f'PROMPT = {ORCHESTRATOR_HEARTBEAT_PROMPT!r}\n\n'
         'async def fire_once():\n'
+        '    """Connect, peek at the bridge\\\'s state, only send if Aurora\\\'s\n'
+        '    worker exists and is not busy. Returns a short status string."""\n'
         '    try:\n'
-        '        async with websockets.connect(WS_URL) as ws:\n'
+        '        async with websockets.connect(WS_URL, open_timeout=5,\n'
+        '                                       close_timeout=3) as ws:\n'
+        '            # Bridge sends a `state` event on connect; use it as\n'
+        '            # the single source of truth for liveness + busy.\n'
+        '            try:\n'
+        '                msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=4))\n'
+        '            except (asyncio.TimeoutError, Exception):\n'
+        '                msg = {}\n'
+        '            workers = (msg.get("workers") or {}) if msg.get("type") == "state" else {}\n'
+        '            w = workers.get(SESSION_ID)\n'
+        '            if not w:\n'
+        '                return "skip:no-worker"\n'
+        '            if w.get("busy"):\n'
+        '                return "skip:busy"\n'
         '            await ws.send(json.dumps({\n'
-        '                "type": "send",\n'
-        '                "id": SESSION_ID,\n'
-        '                "text": PROMPT,\n'
+        '                "type":   "send",\n'
+        '                "id":     SESSION_ID,\n'
+        '                "text":   PROMPT,\n'
         '                "source": "routine",\n'
         '            }))\n'
-        '        print(f"[{datetime.now().isoformat()}] heartbeat", flush=True)\n'
+        '            return "fired"\n'
         '    except Exception as e:\n'
-        '        print(f"[{datetime.now().isoformat()}] error: {e}", flush=True)\n\n'
+        '        return f"error:{e!r}"\n\n'
         'def main():\n'
+        '    # First-run grace period — let the user actually use Aurora\n'
+        '    # before barging in. Without this the heartbeat fires within\n'
+        '    # ~10s of Aurora\\\'s birth and stomps on the first turn.\n'
+        '    time.sleep(INTERVAL_SECONDS)\n'
         '    while True:\n'
         '        try:\n'
-        '            asyncio.run(fire_once())\n'
+        '            status = asyncio.run(fire_once())\n'
         '        except Exception as e:\n'
-        '            print(f"[{datetime.now().isoformat()}] outer error: {e}", flush=True)\n'
+        '            status = f"outer-error:{e!r}"\n'
+        '        print(f"[{datetime.now().isoformat()}] {status}", flush=True)\n'
         '        time.sleep(INTERVAL_SECONDS)\n\n'
         "if __name__ == '__main__':\n"
         '    main()\n'
@@ -2613,6 +2642,18 @@ async def send_to_session(sid: str, text: str, attachments: list[dict],
     w.busy = True
     w.turn_started_at = time.time()
     await broadcast({'type': 'user', 'sessionId': sid, 'msg': user_msg})
+
+    # First-real-message trigger for Aurora's heartbeat: if this is an
+    # Aurora session AND this message came from a human (not a routine
+    # echoing itself), make sure her 5-min heartbeat is running. The
+    # helper is idempotent — second call is a no-op. We deliberately
+    # skip routine-source messages so the heartbeat can't recursively
+    # trigger itself.
+    try:
+        if source != 'routine':
+            maybe_spawn_orchestrator_heartbeat(sess)
+    except Exception as e:
+        log(f'orchestrator heartbeat (lazy) dispatch failed: {e}')
 
     content = []
     if text:
