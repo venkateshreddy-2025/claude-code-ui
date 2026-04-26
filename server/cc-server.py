@@ -2224,13 +2224,13 @@ def tg_format_recent_transcript(sess: dict, n: int = 10,
         return [f'✓ Continuing chat: {title}\n\n(no messages yet)']
 
     header = (f'✓ Continuing chat: {title}\n'
-              f'📜 Last {len(msgs)} message{"s" if len(msgs)!=1 else ""}:\n')
+              f'Last {len(msgs)} message{"s" if len(msgs)!=1 else ""}:\n')
 
     blocks: list[str] = []
     cur = header
     for m in msgs:
         role = m.get('role') or ''
-        who  = '👤 You' if role == 'user' else ('🤖 Claudy' if role == 'assistant' else role.title())
+        who  = 'You' if role == 'user' else ('Claude' if role == 'assistant' else role.title())
         when = _humanize_age(m.get('ts') or 0)
         text = (m.get('text') or '').strip()
         if len(text) > per_msg_cap:
@@ -2312,6 +2312,9 @@ async def tg_handle_new(chat_id: int, uid: int, title: str | None = None):
 
 
 async def tg_handle_here(chat_id: int, uid: int):
+    """Quick "where am I?" — short title + id only. The full transcript
+    view is reserved for /list selection (when the user actually
+    switches chats); /here is just a status ping."""
     sid = state.tg_user_state.get(str(uid), {}).get('sid')
     if sid is None or not load_session(sid):
         sid = tg_resolve_session_for(uid)
@@ -2321,16 +2324,9 @@ async def tg_handle_here(chat_id: int, uid: int):
         # Auto-bind to most recent on first /here so the answer is honest.
         tg_bind(uid, chat_id, sid)
     sess = load_session(sid)
-    if sess is None:
-        await tg_send(chat_id, 'No active chat yet. Use /new to start one.')
-        return
-    # Same transcript view as /list selection so you always have a way
-    # to recall recent context without rebinding.
-    for block in tg_format_recent_transcript(sess, n=10):
-        try: await tg_send(chat_id, block)
-        except Exception: pass
-    # Footer with the session id for power-users.
-    await tg_send(chat_id, f'ID: `{sid[:8]}…`', parse_mode='Markdown')
+    title = (sess.get('title') if sess else None) or 'Untitled'
+    await tg_send(chat_id, f'You\'re in: {title}\nID: `{sid[:8]}…`',
+                   parse_mode='Markdown')
 
 
 async def tg_handle_fork(chat_id: int, uid: int):

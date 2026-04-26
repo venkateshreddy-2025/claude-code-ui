@@ -279,7 +279,7 @@ share the same workers and the same on-disk session.
 | (any plain text) | Routes to your bound (or most-recent) session. Reply streams back via `editMessageText`. |
 | `/list` | Numbered list + tappable inline keyboard of recent chats. Tap → binds, then replays the **last 10 messages** as a transcript so you have context. |
 | `/new <title?>` | Creates a fresh session, binds you to it. |
-| `/here` | Shows the last 10 messages of the currently bound session, plus the session id. |
+| `/here` | Shows the title and id of the currently bound session. (Use `/list` and tap the same chat to re-load its history.) |
 | `/fork` | Forks the bound chat (last 200 turns) and binds you to the new one. |
 | `/start` | Onboarding text. |
 
