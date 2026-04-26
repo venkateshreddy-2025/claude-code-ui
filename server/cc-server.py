@@ -422,17 +422,24 @@ def scrubbed_env():
     )
     for k in explicit:
         env.pop(k, None)
-    # Defensive blanket strip — anything starting with `CLAUDE` or
-    # `ANTHROPIC` (with or without the underscore) is parent-process
-    # state we don't want polluting the child. This catches future
-    # Anthropic/Claude env vars without needing a code update. The
-    # user's persistent claude config lives in ~/.claude and is read
-    # by the spawned CLI on startup; that's what we want it to use,
-    # and ONLY that (so the spawned claude uses the user's `claude
-    # login` subscription credentials, never an inherited API key).
+    # Defensive blanket strip — anything starting with these prefixes
+    # is parent-process state we don't want polluting the child claude:
+    #   • CLAUDE*       — Claude Code internals + auth tokens
+    #   • ANTHROPIC*    — anything API/auth/routing-related
+    #   • CC_           — bridge config including secrets like
+    #                     CC_TELEGRAM_BOT_TOKEN, CC_TG_TOKEN_FILE,
+    #                     CC_TELEGRAM_ALLOWED_USERS. Spawned claude
+    #                     does not read any CC_* var; stripping is
+    #                     pure defense-in-depth so a compromised
+    #                     subagent / tool can never read the bot token.
+    # The user's persistent claude config lives in ~/.claude and is
+    # read by the spawned CLI on startup; that's what we want it to
+    # use, and ONLY that.
     for k in list(env.keys()):
         ku = k.upper()
-        if ku.startswith('CLAUDE') or ku.startswith('ANTHROPIC'):
+        if (ku.startswith('CLAUDE')
+                or ku.startswith('ANTHROPIC')
+                or ku.startswith('CC_')):
             env.pop(k, None)
     return env
 
@@ -1213,6 +1220,10 @@ async def new_session(cwd_override: str | None = None,
 # cancellable in the routines panel), and locks her persona in the
 # picker so the user can only have one Aurora chat at a time.
 ORCHESTRATOR_PERSONA_ID = 'aurora'
+# External channels (Telegram, Slack, etc.) default to this persona
+# instead of the web UI default. Aurora is a desktop-bound orchestrator;
+# a Telegram message wants a regular helpful assistant.
+EXTERNAL_DEFAULT_PERSONA = 'claudy'
 ORCHESTRATOR_HEARTBEAT_INTERVAL = 5 * 60  # seconds
 ORCHESTRATOR_HEARTBEAT_PROMPT = (
     "[heartbeat] Time to sweep. Run your standard cycle: scan new "
@@ -1251,11 +1262,13 @@ def maybe_spawn_orchestrator_heartbeat(sess: dict) -> None:
         '#!/usr/bin/env python3\n'
         '"""Aurora heartbeat — wake the orchestrator chat every N seconds.\n'
         '\n'
-        'Memory + rate-limit discipline:\n'
-        '  • initial delay = one full interval (lets the user have his\n'
-        '    first conversation with Aurora before any heartbeat hits).\n'
-        '  • busy backpressure: if her worker is mid-reply, skip this\n'
-        '    cycle (prevents prompt-stacking + extra token burn).\n'
+        'Sliding-window scheduler (no barge-in during chat):\n'
+        '  • initial delay = one full interval before the very first fire.\n'
+        '  • busy check: if the worker is mid-reply, skip this cycle.\n'
+        '  • activity reset: if ANY message landed in this session within\n'
+        '    the last INTERVAL_SECONDS, skip — the timer effectively\n'
+        '    resets to lastActiveAt + INTERVAL. So while the user is\n'
+        '    chatting, no heartbeat barges in.\n'
         '  • stateless: open WS, peek at state, send-or-skip, close."""\n'
         'import asyncio, json, time\n'
         'from datetime import datetime\n'
@@ -1265,23 +1278,40 @@ def maybe_spawn_orchestrator_heartbeat(sess: dict) -> None:
         f'INTERVAL_SECONDS = {ORCHESTRATOR_HEARTBEAT_INTERVAL}\n'
         f'PROMPT = {ORCHESTRATOR_HEARTBEAT_PROMPT!r}\n\n'
         'async def fire_once():\n'
-        '    """Connect, peek at the bridge\\\'s state, only send if Aurora\\\'s\n'
-        '    worker exists and is not busy. Returns a short status string."""\n'
+        '    """Connect, peek at the bridge\\\'s state, fire only if the\n'
+        '    worker is idle AND no recent activity in this session."""\n'
         '    try:\n'
         '        async with websockets.connect(WS_URL, open_timeout=5,\n'
         '                                       close_timeout=3) as ws:\n'
-        '            # Bridge sends a `state` event on connect; use it as\n'
-        '            # the single source of truth for liveness + busy.\n'
         '            try:\n'
         '                msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=4))\n'
         '            except (asyncio.TimeoutError, Exception):\n'
         '                msg = {}\n'
-        '            workers = (msg.get("workers") or {}) if msg.get("type") == "state" else {}\n'
+        '            if msg.get("type") != "state":\n'
+        '                return "skip:no-state"\n'
+        '\n'
+        '            # 1. worker liveness + busy check\n'
+        '            workers = msg.get("workers") or {}\n'
         '            w = workers.get(SESSION_ID)\n'
         '            if not w:\n'
         '                return "skip:no-worker"\n'
         '            if w.get("busy"):\n'
         '                return "skip:busy"\n'
+        '\n'
+        '            # 2. activity-window check — sliding scheduler.\n'
+        '            # Find this session in the brief list, look at\n'
+        '            # lastActiveAt (updated every time a message lands\n'
+        '            # in the chat). Skip if user/assistant has been\n'
+        '            # active inside the interval — the timer naturally\n'
+        '            # rolls forward to lastActiveAt + INTERVAL.\n'
+        '            sess = next((s for s in (msg.get("sessions") or [])\n'
+        '                          if s.get("id") == SESSION_ID), None)\n'
+        '            if sess:\n'
+        '                last_at = sess.get("lastActiveAt") or 0\n'
+        '                idle = time.time() - last_at\n'
+        '                if 0 < idle < INTERVAL_SECONDS:\n'
+        '                    return f"skip:active({int(idle)}s ago)"\n'
+        '\n'
         '            await ws.send(json.dumps({\n'
         '                "type":   "send",\n'
         '                "id":     SESSION_ID,\n'
@@ -1292,9 +1322,8 @@ def maybe_spawn_orchestrator_heartbeat(sess: dict) -> None:
         '    except Exception as e:\n'
         '        return f"error:{e!r}"\n\n'
         'def main():\n'
-        '    # First-run grace period — let the user actually use Aurora\n'
-        '    # before barging in. Without this the heartbeat fires within\n'
-        '    # ~10s of Aurora\\\'s birth and stomps on the first turn.\n'
+        '    # First-run grace period — let the user actually use the chat\n'
+        '    # before any heartbeat hits.\n'
         '    time.sleep(INTERVAL_SECONDS)\n'
         '    while True:\n'
         '        try:\n'
@@ -3574,11 +3603,17 @@ async def tg_handle_list(chat_id: int, uid: int):
 
 async def tg_handle_new(chat_id: int, uid: int, title: str | None = None):
     """Spawn a fresh session via the same code path the UI uses, then
-    bind this Telegram user to it."""
+    bind this Telegram user to it.
+
+    External channels (Telegram, future Slack/etc.) default to Claudy
+    rather than the web UI default (Aurora). Aurora is an orchestrator
+    that lives in the desktop UI alongside her soul folder + heartbeat;
+    a Telegram message expects a normal helpful assistant, not a chief
+    of staff."""
     # `new_session` flips state.active_id which is fine; the focused
     # browser tab will switch too. If that's annoying we can split it
     # into a "create-without-focusing" variant later.
-    await new_session()
+    await new_session(persona_id=EXTERNAL_DEFAULT_PERSONA)
     sid = state.active_id
     if not sid:
         await tg_send(chat_id, '⚠ Could not create a new session.')

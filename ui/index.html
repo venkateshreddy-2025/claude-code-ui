@@ -319,6 +319,17 @@
   .header-action.busy{color:var(--accent);animation:saveBusy 1.2s ease-in-out infinite}
   .header-action.saved{color:var(--fg-faint)}
   @keyframes saveBusy{0%,100%{opacity:.55}50%{opacity:1}}
+  /* `.active` = generic "this toggle is currently ON". Used by the
+     debug eye-button to make the on/off state unmistakable. */
+  .header-action.active{color:var(--accent);background:rgba(255,255,255,.08)}
+  .header-action.active:hover{color:var(--accent);background:rgba(255,255,255,.12)}
+  /* Eye toggle — show only the relevant SVG (open eye when ON,
+     slashed eye when OFF). Default state: scheduler hidden → slashed.
+     `.active` state: scheduler visible → open eye. */
+  #debugBracketBtn .eye-on  { display:none }
+  #debugBracketBtn .eye-off { display:block }
+  #debugBracketBtn.active .eye-on  { display:block }
+  #debugBracketBtn.active .eye-off { display:none }
 
   /* Spawn-pending indicator. Shows while we're starting a claude
      subprocess for a session — replaces the search button on the right
@@ -389,28 +400,30 @@
   .empty-pane{padding:0 24px;text-align:center;color:var(--fg-faint);
     font-size:15px;line-height:1.55;display:flex;flex-direction:column;
     align-items:center;justify-content:center;gap:18px;
-    min-height:60vh;max-width:760px;margin:0 auto}
+    min-height:60vh;width:100%;max-width:760px;margin-left:auto;margin-right:auto;
+    box-sizing:border-box}
+  .empty-pane > *{text-align:center;align-self:center}
   .empty-pane .big-avatar{width:72px;height:72px;border-radius:18px;
     background:linear-gradient(135deg,var(--accent),var(--accent-2));
     display:grid;place-items:center;color:#fff;font-weight:600;font-size:26px;
-    letter-spacing:.02em;box-shadow:0 16px 40px -12px rgba(0,0,0,.55)}
-  .empty-pane h2{font-size:30px;font-weight:600;color:var(--fg);margin:0;
-    letter-spacing:-0.01em}
-  .empty-pane p{margin:0;max-width:540px;font-size:15px}
+    letter-spacing:.02em;box-shadow:0 16px 40px -12px rgba(0,0,0,.55);
+    flex-shrink:0}
+  .empty-pane h2{font-size:30px;font-weight:600;color:var(--fg);margin:0 auto;
+    letter-spacing:-0.01em;text-align:center;max-width:640px}
+  .empty-pane p{margin:0 auto;max-width:540px;font-size:15px;text-align:center}
   .empty-pane code{background:#1a1c20;padding:2px 6px;border-radius:4px;font-size:12.5px;
     color:var(--fg-dim)}
   .empty-pane .ep-hints{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;
-    margin-top:8px;max-width:620px}
+    align-items:center;margin:8px auto 0;max-width:620px}
   .empty-pane .ep-hint{padding:8px 14px;border:1px solid var(--border);border-radius:10px;
     background:transparent;color:var(--fg-dim);font-size:13px;cursor:pointer;
-    transition:background 120ms,border-color 120ms,color 120ms}
+    transition:background 120ms,border-color 120ms,color 120ms;text-align:center}
   .empty-pane .ep-hint:hover{background:rgba(255,255,255,0.04);border-color:var(--accent);
     color:var(--fg)}
-  /* When in empty-chat mode, beef up the composer so it reads like
-     ChatGPT's giant landing input. */
-  body.empty-chat #form textarea{font-size:16px;min-height:54px;
-    line-height:1.45;padding-top:14px}
-  body.empty-chat #scrollarea{display:flex;align-items:center}
+  /* Empty-chat mode: the welcome pane handles its own vertical centering
+     via min-height:60vh + flex column + justify-content:center. Don't
+     touch #scrollarea here — making it flex was breaking horizontal
+     centering by collapsing the inner msg-list to content width. */
 
   /* Messages stretch edge-to-edge across the chat pane — no centred
      reading column, no max-width cap. Very subtle directional padding
@@ -1226,6 +1239,15 @@
     display:grid;place-items:center;transition:color .15s,background .15s}
   .pl-row .pl-edit:hover{color:var(--accent);background:var(--hover)}
   .pl-row .pl-edit svg{width:14px;height:14px}
+  /* Capability blurb under the persona dropdown in the new-session
+     popup. Helps users pick the right persona without opening the
+     editor. Updates on every <select> change. */
+  .persona-cap{margin:8px 0 4px;padding:10px 12px;border:1px solid var(--border);
+    border-radius:8px;background:rgba(255,255,255,0.02);font-size:13px;
+    line-height:1.5;color:var(--fg-dim)}
+  .persona-cap .pc-name{color:var(--fg);font-weight:600;margin-right:4px}
+  .persona-cap .pc-model{font-size:11.5px;color:var(--fg-faint);
+    margin-left:6px;font-family:ui-monospace,monospace}
   .pl-empty{color:var(--fg-faint);font-size:12px;padding:18px;text-align:center;
     line-height:1.5}
 
@@ -1337,6 +1359,22 @@
           <polyline points="12 7 12 12 15 14"/>
         </svg>
         <span class="routines-count" id="routinesCount" hidden>0</span>
+      </button>
+      <button class="header-action" id="debugBracketBtn" type="button"
+              title="Show / hide scheduler messages (those starting with [)"
+              aria-label="Toggle scheduler messages">
+        <!-- Two SVGs: open eye when scheduler msgs are SHOWN, slashed
+             eye when HIDDEN. JS toggles which one is visible. -->
+        <svg class="eye-on" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+          <circle cx="12" cy="12" r="3"/>
+        </svg>
+        <svg class="eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+          <line x1="1" y1="1" x2="23" y2="23"/>
+        </svg>
       </button>
       <button class="header-action" id="searchBtn" type="button"
               title="Search across all chats (⌘K / Ctrl-K)" aria-label="Search">
@@ -1656,6 +1694,9 @@
   <h3>New session</h3>
   <label class="setting-label" for="newSessionPersona">Persona</label>
   <select id="newSessionPersona" class="setting-select wide"></select>
+  <!-- Capability blurb — populated by JS on every selection change so
+       the user knows what they're picking before clicking Create. -->
+  <div id="newSessionPersonaCap" class="persona-cap" hidden></div>
   <p class="setting-help">
     Each persona has its own preferred model — the new session will
     start with whatever the persona is configured to use. Edit personas
@@ -1739,6 +1780,13 @@
   let activeId = null;
   let sessions = [];           // [{id,title,createdAt,lastActiveAt}]
   let cwd = '~';
+  // Show/hide scheduler chatter (messages starting with `[`). Default
+  // hidden. User flips it on via the eye button in the header to
+  // inspect heartbeat / [wake-up] traffic for debugging.
+  let showBracketed = false;
+  try {
+    showBracketed = localStorage.getItem('cc.showBracketed') === '1';
+  } catch (e) {}
   // When the server reports 0 sessions on page load (or after a wipe),
   // auto-fire a default {type:'new'} so the user lands directly inside
   // a fresh chat instead of staring at an empty pane. Guarded by an
@@ -2253,25 +2301,87 @@
     const personaName = sess && sess.persona ? sess.persona.name : null;
     const initial = (personaName || 'CC').slice(0, 1).toUpperCase();
 
+    // Persona-keyed welcome copy — heading + a one-line capability blurb
+    // (what they're good at). No paths, no internals. Hint chips are
+    // canonical examples of work they handle.
+    const PERSONA_WELCOME = {
+      'Aurora': {
+        heading: "Hi, I'm Aurora — what should we work on?",
+        sub: "I run point. Hand me a task and I'll spawn the right specialist, brief them, and follow up.",
+        hints: [
+          'Build me a landing page',
+          'Research the top 5 AI agent frameworks',
+          'Review my last commit for security issues',
+          'Write release notes for v0.4',
+        ],
+      },
+      'Claudy': {
+        heading: "Hi, I'm Claudy.",
+        sub: 'Coding, debugging, system design, web research — whatever technical thing you throw at me.',
+        hints: [
+          'Help me debug this stack trace',
+          'Design a schema for a notes app',
+          'Search the web for the latest on X',
+          'Refactor this function',
+        ],
+      },
+      'Atlas': {
+        heading: "Hi, I'm Atlas.",
+        sub: 'Deep research — sourced, structured, with confidence tags. I pull from multiple angles in parallel.',
+        hints: [
+          'Compare React vs Solid in 2026',
+          'Find primary sources on X',
+          'What did Gartner say about Y',
+          'Pros and cons of approach Z',
+        ],
+      },
+      'Forge': {
+        heading: "Hi, I'm Forge.",
+        sub: 'Full-stack web engineering — modern stacks, clean diffs, ships features fast.',
+        hints: [
+          'Build a contact form with validation',
+          'Wire up a Postgres + Drizzle schema',
+          'Add Tailwind to this project',
+          'Set up a Vitest test suite',
+        ],
+      },
+      'Quill': {
+        heading: "Hi, I'm Quill.",
+        sub: 'Writing — docs, copy, emails, essays. Clear voice, no jargon, ruthless edits.',
+        hints: [
+          'Write a release note for v0.4',
+          'Draft a product page hero',
+          'Tighten this email',
+          'Outline a blog post on X',
+        ],
+      },
+      'Sentry': {
+        heading: "Hi, I'm Sentry.",
+        sub: 'Code review — security, correctness, performance, readability. Read-only by default.',
+        hints: [
+          'Review this PR diff',
+          'Audit this auth flow',
+          'Find perf issues in this function',
+          'Check this for SQL injection',
+        ],
+      },
+    };
+
     let heading, sub, hints = [];
     if (!activeId){
       heading = 'No active chat';
-      sub = 'Click <strong>New session</strong> in the sidebar to start a fresh Claude session.';
-    } else if (personaName === 'Aurora'){
-      heading = 'Hi, I\'m Aurora — what should we work on?';
-      sub = 'Tell me a task. I\'ll spawn the right specialist (Claudy, Atlas, Forge, Quill, Sentry), brief them, and follow up — pinging you only when needed.';
-      hints = [
-        'Build me a landing page in Forge',
-        'Research the top 5 AI agent frameworks',
-        'Review my last commit for security issues',
-        'Write release notes for v0.4',
-      ];
+      sub = 'Click <strong>New session</strong> to start a fresh chat.';
+    } else if (personaName && PERSONA_WELCOME[personaName]){
+      const w = PERSONA_WELCOME[personaName];
+      heading = w.heading;
+      sub = w.sub;
+      hints = w.hints || [];
     } else if (personaName){
       heading = `Hi, I'm ${escapeHTML(personaName)}.`;
-      sub = `Working in <code>${escapeHTML(cwd)}</code>. What can I help with?`;
+      sub = '';
     } else {
       heading = 'New chat';
-      sub = `Send a message — Claude will spawn here. Working in <code>${escapeHTML(cwd)}</code>.`;
+      sub = 'Type a message to get started.';
     }
 
     const hintsHtml = hints.length
@@ -2444,6 +2554,17 @@
   }
 
   function renderMessage(msg){
+    // Hide bracketed scheduler chatter from the UI but keep them in
+    // the persisted log. A leading `[` on either a user OR an assistant
+    // message is the convention for routine traffic ([heartbeat]…,
+    // [wake-up]…, and Aurora's `[heartbeat-ack]` style replies).
+    // The UI just doesn't render them — the bridge still persists
+    // them and any tooling reading chat.json sees the full record.
+    // Debug toggle (eye button in header) flips this off when the user
+    // wants to inspect scheduler traffic in chat.
+    const _t = (msg.text || '').trimStart();
+    if (_t.startsWith('[') && !showBracketed) return;
+
     // remove placeholder if present
     const placeholder = messagesEl.querySelector('.empty-pane');
     if (placeholder) placeholder.remove();
@@ -2741,6 +2862,18 @@
   function appendDelta(id, text){
     if (streamingId !== id || !streamingBubble) startStream(id);
     streamingBubble.dataset.raw = (streamingBubble.dataset.raw || '') + text;
+    // Bracket-prefix scheduler messages stay invisible in the UI but
+    // are still buffered + persisted. Once the assistant's response
+    // begins with `[`, hide the streaming bubble's wrapping `.msg`
+    // element (it'll be skipped on re-render too via renderMessage).
+    // The debug-toggle eye-button in the header flips visibility back
+    // on if the user wants to inspect scheduler traffic.
+    const head = (streamingBubble.dataset.raw || '').trimStart();
+    if (head && head.startsWith('[') && !showBracketed){
+      const wrap = streamingBubble.closest('.msg');
+      if (wrap && wrap.style.display !== 'none') wrap.style.display = 'none';
+      return;  // also skip rAF tick — nothing visible to update
+    }
     ensureStreamRaf();
   }
 
@@ -3867,13 +4000,15 @@
   // Used by the per-persona model dropdown in the persona edit form.
   const KNOWN_MODELS = [
     // ── 1M-context variants ─────────────────────────────────
+    // Note: claude-sonnet-4-6[1m] is intentionally absent — it
+    // hits hard rate-limit on subscription tier. Use plain
+    // claude-sonnet-4-6 (200K context) instead.
     { id: 'claude-opus-4-7[1m]',    label: 'Opus 4.7  ·  1M context' },
     { id: 'claude-opus-4-6[1m]',    label: 'Opus 4.6  ·  1M context' },
-    { id: 'claude-sonnet-4-6[1m]',  label: 'Sonnet 4.6  ·  1M context' },
     // ── Standard context ────────────────────────────────────
     { id: 'claude-opus-4-7',        label: 'Opus 4.7' },
     { id: 'claude-opus-4-6',        label: 'Opus 4.6' },
-    { id: 'claude-sonnet-4-6',     label: 'Sonnet 4.6' },
+    { id: 'claude-sonnet-4-6',      label: 'Sonnet 4.6' },
     { id: 'claude-haiku-4-5',       label: 'Haiku 4.5' },
   ];
   function fillModelSelect(sel, current){
@@ -4056,8 +4191,44 @@
         const firstOk = personasState.personas.find(p => !p.disabled);
         sel.value = firstOk ? firstOk.id : '';
       }
+      // Render the capability blurb for the current selection.
+      renderPersonaCap(sel.value);
     }
   }
+
+  // Capability blurbs keyed by persona id. Mirror of the empty-pane
+  // welcome map, condensed to one tight sentence per persona. Shown
+  // under the persona dropdown in the new-session popup so users see
+  // what each persona is for before they click Create.
+  const PERSONA_CAPABILITIES = {
+    aurora: 'Chief of staff — never does the work herself, spawns the right specialist, briefs them, follows up. Default for new chats.',
+    claudy: 'Friendly engineering generalist — coding, debugging, system design, web research. Most general work.',
+    atlas:  'Research analyst — multi-source web research with inline citations + confidence tags + structured findings.',
+    forge:  'Full-stack web engineer — modern stacks (TypeScript, Vite, Next, Tailwind, Postgres), small reviewable diffs, ships fast.',
+    quill:  'Writer + editor — docs, copy, prose. Active voice, no AI-tells, ruthless cuts.',
+    sentry: 'Code reviewer — security, correctness, performance, readability. Read-only by default; PR-comment style output.',
+  };
+  function renderPersonaCap(personaId){
+    const el = document.getElementById('newSessionPersonaCap');
+    if (!el) return;
+    if (!personaId){
+      el.hidden = true;
+      el.innerHTML = '';
+      return;
+    }
+    const p = personasState.personas.find(x => x.id === personaId);
+    if (!p){ el.hidden = true; return; }
+    const cap = PERSONA_CAPABILITIES[personaId] || '';
+    const model = p.model ? `<span class="pc-model">${escHtml(p.model)}</span>` : '';
+    el.innerHTML =
+      `<span class="pc-name">${escHtml(p.name)}</span>${model}` +
+      (cap ? `<div style="margin-top:4px">${escHtml(cap)}</div>` : '');
+    el.hidden = false;
+  }
+  // Live update on every change of the dropdown.
+  document.getElementById('newSessionPersona')?.addEventListener('change', (e) => {
+    renderPersonaCap(e.target.value);
+  });
 
   // Personas tab navigation: list view ⇄ edit view.
   function showPersonaList(){
@@ -4340,6 +4511,29 @@
     document.getElementById('routinesBackdrop').classList.remove('on');
     document.getElementById('routinesModal').hidden = true;
   }
+  // Debug toggle for scheduler messages. Flips `showBracketed`,
+  // persists to localStorage, re-renders the active chat so already-
+  // hidden bubbles re-appear (or freshly hide). The icon swaps from
+  // an eye-with-slash (OFF, hidden) to an open eye (ON, visible) and
+  // the button gets a `.active` highlight when ON.
+  function applyBracketToggleUI(){
+    const btn = document.getElementById('debugBracketBtn');
+    if (!btn) return;
+    btn.classList.toggle('active', !!showBracketed);
+    btn.title = showBracketed
+      ? 'Scheduler messages: VISIBLE (click to hide)'
+      : 'Scheduler messages: HIDDEN (click to show)';
+    btn.setAttribute('aria-pressed', showBracketed ? 'true' : 'false');
+  }
+  applyBracketToggleUI();
+  document.getElementById('debugBracketBtn')?.addEventListener('click', () => {
+    showBracketed = !showBracketed;
+    try { localStorage.setItem('cc.showBracketed', showBracketed ? '1' : '0'); } catch (e) {}
+    applyBracketToggleUI();
+    // When toggling ON, hidden bubbles need to be un-hidden via re-render.
+    // When toggling OFF, the next render will skip them.
+    renderAllMessages();
+  });
   document.getElementById('routinesBtn')?.addEventListener('click', openRoutinesPanel);
   document.getElementById('routinesClose')?.addEventListener('click', closeRoutinesPanel);
   document.getElementById('routinesOk')?.addEventListener('click', closeRoutinesPanel);
