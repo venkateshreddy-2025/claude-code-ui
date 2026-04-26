@@ -292,9 +292,18 @@ original sender's chat is never echoed back to itself).
 
 ### File delivery
 
-When claude writes a file during a turn (via its `Write`, `Edit`, or
-shell tools), the bridge automatically delivers it to every Telegram
-chat bound to that session. Each file is sent through the API method
+The bridge can deliver files claude writes during a turn (via its
+`Write`, `Edit`, or shell tools) directly into your Telegram chat.
+
+**Opt-in by default.** File delivery only fires when your message
+looks like it's asking for one — phrases like *"send me…"*, *"make a
+PDF"*, *"give me a screenshot"*, or any explicit file extension
+(*"create hello.txt"*, *"export to .csv"*) trigger the post-turn cwd
+scan. Plain coding messages (*"refactor this"*, *"fix the bug"*) leave
+the bot text-only so claude can use scratch files freely without
+spamming your Telegram.
+
+When delivery does fire, each file is sent through the API method
 that gives the best native preview on Telegram clients:
 
 | File extension | API method | What you see in Telegram |
@@ -309,14 +318,18 @@ that gives the best native preview on Telegram clients:
 
 Limits and behaviour:
 
-- Bot API caps single file uploads at **50 MB**. The bridge enforces
-  a 45 MB safety margin — files bigger than that are skipped with a
-  message listing what wasn't delivered.
+- **File size cap: 45 MB per file.** The Telegram Bot API hard-limits
+  single uploads at 50 MB; we leave a 5 MB margin for the multipart
+  envelope. Files bigger than 45 MB are skipped with a message
+  listing what wasn't delivered. (Running your own [local Bot API
+  server](https://core.telegram.org/bots/api#using-a-local-bot-api-server)
+  raises the cap to 2 GB; not configured by default.)
 - A maximum of **10 files per turn** are delivered. If a turn
   produces more, the rest are listed but not uploaded.
-- Hidden files (starting with `.`) and noisy directories
-  (`node_modules`, `.git`, `dist`, `__pycache__`, `.venv`, `target`,
-  `build`, `.cache`, …) are skipped automatically.
+- Hidden files (starting with `.`), noisy directories (`node_modules`,
+  `.git`, `dist`, `__pycache__`, `.venv`, `target`, `build`, `.cache`,
+  …), and cc-server's own bookkeeping files (`chat.json`, `PERSONA.md`,
+  `INSTRUCTIONS.md`) are skipped automatically.
 - If `sendPhoto`/`sendVideo` rejects a file (oversized image
   dimensions, malformed media), the bridge transparently falls back
   to `sendDocument` so the file still gets through.

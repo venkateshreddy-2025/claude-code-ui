@@ -69,6 +69,7 @@ import base64
 import json
 import mimetypes
 import os
+import re
 import signal
 import shutil
 import sys
@@ -188,6 +189,11 @@ class Worker:
         # by `result`). We use it to find files claude wrote during the
         # turn so we can deliver them to bound Telegram chats.
         self.turn_started_at: float | None = None
+        # File delivery is opt-in: only fire when the user's message
+        # actually looked like a file request. Avoids spamming the bot
+        # chat with intermediate scratch files claude writes during
+        # normal coding turns.
+        self.deliver_files_this_turn: bool = False
         # Resilience: if claude keeps crashing on `--resume <sid>` (the
         # session memory is corrupt or got out of sync), we count fails
         # in a rolling window and fall back to a fresh spawn that
@@ -1405,19 +1411,23 @@ async def claude_reader(w: Worker):
                 # one bad spawn early on doesn't permanently arm the
                 # fallback for a now-healthy session.
                 w.recent_failures.clear()
-                # Capture turn-start before we hand off to telegram file
+                # Capture turn-state before we hand off to telegram file
                 # delivery (which is async-scheduled so it doesn't block
                 # the next event).
                 turn_start = w.turn_started_at
+                deliver   = bool(w.deliver_files_this_turn)
                 w.turn_started_at = None
+                w.deliver_files_this_turn = False
 
                 # Pre-scan for files claude wrote during this turn, so
                 # the Telegram final-flush can render a better
                 # placeholder ("📎 file attached below") instead of
                 # "(no text response)" when the turn produced only
-                # files and no chat reply.
+                # files and no chat reply. Skipped entirely when the
+                # user didn't ask for a file in this turn — keeps the
+                # bot quiet during normal coding work.
                 pending_file_count = 0
-                if turn_start is not None and TELEGRAM_TOKEN:
+                if deliver and turn_start is not None and TELEGRAM_TOKEN:
                     sess_for_files = load_session(sid)
                     if sess_for_files:
                         cwd_for_files = Path(
@@ -1435,7 +1445,7 @@ async def claude_reader(w: Worker):
                 await broadcast({'type': 'turn_done',
                                  'sessionId': sid,
                                  'sessions': list_sessions_brief()})
-                if turn_start is not None and pending_file_count > 0:
+                if deliver and turn_start is not None and pending_file_count > 0:
                     asyncio.create_task(
                         tg_deliver_new_files_for_turn(sid, turn_start))
                 continue
@@ -1579,6 +1589,10 @@ async def send_to_session(sid: str, text: str, attachments: list[dict]):
     # deliver any new ones via Telegram. Resolution = whole seconds is
     # fine (filesystem mtimes are usually that granular anyway).
     w.turn_started_at = time.time()
+    # File delivery is gated on the user actually asking for one, to
+    # avoid sending claude's intermediate scratch files during normal
+    # coding turns.
+    w.deliver_files_this_turn = user_wants_files(text)
     await broadcast({'type': 'user', 'sessionId': sid, 'msg': user_msg})
 
     content = []
@@ -2040,9 +2054,51 @@ _FILE_SKIP_DIRS = {
     'dist', 'build', '.cache', '.pytest_cache', '.mypy_cache',
     'target', '.idea', '.vscode', '.DS_Store',
 }
+# Bookkeeping files cc-server writes into the session's cwd. These
+# get a fresh mtime on every turn (chat.json is the conversation
+# mirror, the *.md files are persona materialisations) but they're
+# our own state — never something the user wants delivered.
+_FILE_SKIP_NAMES = {
+    'chat.json',
+    'PERSONA.md',
+    'INSTRUCTIONS.md',
+}
 _IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'}
 _VIDEO_EXTS = {'.mp4', '.mov', '.webm', '.mkv', '.m4v'}
 _AUDIO_EXTS = {'.mp3', '.m4a', '.wav', '.ogg', '.flac', '.aac'}
+
+# Words and extensions in the user's message that signal "I want a
+# file delivered to me". Anything that isn't a clear request stays
+# text-only — the file delivery code is gated on this so claude can
+# write scratch files during normal coding turns without spamming
+# the chat with attachments.
+_FILE_TRIGGER_WORDS = {
+    'send', 'attach', 'attachment', 'attachments', 'download', 'export',
+    'screenshot', 'screenshots', 'picture', 'pictures', 'photo', 'photos',
+    'image', 'images', 'video', 'videos', 'audio',
+    'file', 'files', 'document', 'documents',
+    # Common file types as bare words
+    'pdf', 'pptx', 'docx', 'xlsx', 'csv',
+    'mp3', 'mp4', 'wav', 'png', 'jpg', 'jpeg', 'gif', 'webp',
+}
+_FILE_EXT_RE = re.compile(
+    r'\.(?:pdf|pptx?|docx?|xlsx?|csv|tsv|json|ya?ml|toml|md|txt|log|html?|'
+    r'jpe?g|png|gif|webp|bmp|svg|mp[34]|m4[av]|wav|ogg|flac|mov|webm|mkv|'
+    r'zip|tar|t?gz|7z|epub|key|numbers|pages)\b',
+    re.IGNORECASE,
+)
+
+
+def user_wants_files(text: str) -> bool:
+    """Cheap heuristic for "did the user ask for a file in this turn?".
+    Used to gate the post-turn cwd scan + Telegram delivery so the
+    bot doesn't auto-attach claude's intermediate scratch files."""
+    if not text:
+        return False
+    if _FILE_EXT_RE.search(text):
+        return True
+    words = set(re.findall(r'[A-Za-z]+', text.lower()))
+    return bool(words & _FILE_TRIGGER_WORDS)
 
 
 async def tg_api_upload(method: str, chat_id: int, file_field: str,
@@ -2092,7 +2148,8 @@ async def tg_api_upload(method: str, chat_id: int, file_field: str,
 
 def _scan_files_modified_after(cwd: Path, since: float) -> list[tuple[Path, os.stat_result]]:
     """Walk `cwd` and return files whose mtime > since. Skips hidden
-    files and well-known noisy directories (node_modules etc.).
+    files, well-known noisy directories (node_modules etc.), and our
+    own bookkeeping files (chat.json, PERSONA.md, INSTRUCTIONS.md).
     Returns a list of (Path, stat) tuples sorted by mtime ascending."""
     found: list[tuple[Path, os.stat_result]] = []
     if not cwd.exists() or not cwd.is_dir():
@@ -2103,6 +2160,8 @@ def _scan_files_modified_after(cwd: Path, since: float) -> list[tuple[Path, os.s
                    if d not in _FILE_SKIP_DIRS and not d.startswith('.')]
         for fname in files:
             if fname.startswith('.'):  # .DS_Store, .env, etc.
+                continue
+            if fname in _FILE_SKIP_NAMES:  # chat.json + persona files
                 continue
             p = Path(root) / fname
             try:
