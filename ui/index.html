@@ -262,7 +262,18 @@
   .side-resize:hover::after,body.is-resizing .side-resize::after{background:var(--accent)}
   body.is-resizing{cursor:col-resize;user-select:none}
   body.is-resizing *{user-select:none!important;pointer-events:none}
-  body.is-resizing .side-resize{pointer-events:auto}
+  body.is-resizing .side-resize,
+  body.is-resizing .art-resize{pointer-events:auto}
+
+  /* Artifact panel drag-to-resize handle — sits on the LEFT edge of
+     the panel so the user widens the canvas by pulling left. Mirror
+     of .side-resize but anchored to the opposite edge. */
+  .art-resize{position:absolute;top:0;left:-3px;width:6px;height:100%;
+    cursor:col-resize;z-index:10;background:transparent}
+  @media(max-width:899.98px){.art-resize{display:none}}
+  .art-resize::after{content:"";position:absolute;top:50%;left:1px;width:2px;height:36px;
+    background:var(--border);border-radius:1px;transform:translateY(-50%);transition:background .12s}
+  .art-resize:hover::after,body.is-resizing .art-resize::after{background:var(--accent)}
 
   .empty-list{padding:24px 12px;text-align:center;color:var(--fg-faint);font-size:12.5px;
     line-height:1.6}
@@ -621,7 +632,7 @@
      reading width on the chat itself stays comfortable. */
   #artifactPanel{display:flex;flex-direction:column;height:100dvh;
     background:var(--bg-2);border-left:1px solid var(--border);
-    overflow:hidden;visibility:hidden;
+    overflow:hidden;visibility:hidden;position:relative;
     /* Slide off-screen by default; the grid column is 0px so this
        just keeps it from flashing when grid animates open. */
     transition:visibility 0s linear .3s}
@@ -1250,6 +1261,8 @@
        holds the file name + size + close button; the body swaps
        between iframe / img / pre depending on the file type. -->
   <aside id="artifactPanel" aria-hidden="true">
+    <!-- Drag handle on the left edge — pull left to widen the canvas. -->
+    <div class="art-resize" id="artResize" title="Drag to resize · double-click to reset"></div>
     <div class="art-head">
       <svg class="art-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -2719,6 +2732,90 @@
   }
 
   $('artClose')?.addEventListener('click', closeArtifact);
+
+  // ───── artifact panel: drag-to-resize ─────
+  // The grid column for the panel reads from `--art-w` (CSS variable).
+  // Dragging the left-edge handle leftward widens the panel.
+  // Persisted in localStorage so the user gets the same width back
+  // on reload. Min/max chosen so neither pane gets unusably narrow.
+  const ART_MIN_PX  = 320;                        // narrowest usable canvas
+  const ART_MAX_VW  = 0.88;                       // never eat more than 88% of viewport
+  function getArtMaxPx(){
+    return Math.max(ART_MIN_PX + 100, Math.floor(window.innerWidth * ART_MAX_VW));
+  }
+  function setArtWidth(px){
+    const clamped = Math.max(ART_MIN_PX, Math.min(getArtMaxPx(), px));
+    document.documentElement.style.setProperty('--art-w', clamped + 'px');
+    try { localStorage.setItem('cc.artW', String(clamped)); } catch(e) {}
+    return clamped;
+  }
+  function resetArtWidth(){
+    // Mirror the CSS default `min(58vw, 900px)` — pick whichever is smaller.
+    const def = Math.min(900, Math.floor(window.innerWidth * 0.58));
+    setArtWidth(def);
+  }
+  // Restore persisted width on load (clamped against current viewport).
+  try {
+    const saved = parseInt(localStorage.getItem('cc.artW') || '0', 10);
+    if (saved >= ART_MIN_PX) setArtWidth(saved);
+  } catch(e) {}
+
+  const artResize = $('artResize');
+  if (artResize){
+    artResize.addEventListener('mousedown', e => {
+      // Only resizable on desktop, and only when the panel is open.
+      if (!window.matchMedia('(min-width: 900px)').matches) return;
+      if (!document.body.classList.contains('artifact-on')) return;
+      e.preventDefault();
+      document.body.classList.add('is-resizing');
+      const startX = e.clientX;
+      const startW = artPanel.getBoundingClientRect().width;
+      const onMove = ev => {
+        // Pulling LEFT → wider panel (delta is positive when cursor moves left)
+        const delta = startX - ev.clientX;
+        setArtWidth(startW + delta);
+      };
+      const onUp = () => {
+        document.body.classList.remove('is-resizing');
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup',   onUp);
+      };
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup',   onUp);
+    });
+    // Touch parity for trackpad drags / iPad-with-mouse setups.
+    artResize.addEventListener('touchstart', e => {
+      if (!window.matchMedia('(min-width: 900px)').matches) return;
+      if (!document.body.classList.contains('artifact-on')) return;
+      const t0 = e.touches[0]; if (!t0) return;
+      e.preventDefault();
+      document.body.classList.add('is-resizing');
+      const startX = t0.clientX;
+      const startW = artPanel.getBoundingClientRect().width;
+      const onMove = ev => {
+        const tx = ev.touches[0]; if (!tx) return;
+        const delta = startX - tx.clientX;
+        setArtWidth(startW + delta);
+      };
+      const onUp = () => {
+        document.body.classList.remove('is-resizing');
+        window.removeEventListener('touchmove', onMove);
+        window.removeEventListener('touchend',  onUp);
+        window.removeEventListener('touchcancel', onUp);
+      };
+      window.addEventListener('touchmove', onMove, { passive: false });
+      window.addEventListener('touchend',  onUp);
+      window.addEventListener('touchcancel', onUp);
+    }, { passive: false });
+    artResize.addEventListener('dblclick', resetArtWidth);
+  }
+
+  // Re-clamp on window resize so a previously-saved width that's now
+  // larger than the viewport doesn't push the chat off-screen.
+  window.addEventListener('resize', () => {
+    const cur = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--art-w'), 10);
+    if (Number.isFinite(cur)) setArtWidth(cur);
+  });
 
   // ───── WS ─────
   function connect(){
