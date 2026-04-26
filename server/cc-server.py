@@ -127,6 +127,16 @@ INDEX_FILE = SESS_DIR / 'index.json'
 MEMORY_FILE = Path(os.environ.get('CC_MEMORY_FILE',
                                   str(CWD_ROOT / 'long-term-memory.md')))
 
+# Skills: a GLOBAL folder (not per-chat) of user-curated technique
+# packs. Each subfolder = one skill (mirrors the structure of the
+# clawhub.ai skill page it was downloaded from), with files like
+# SKILL.md / README.md / examples / helper scripts. The bridge keeps
+# a flat index at <SKILLS_DIR>/index.md so every chat's claude can
+# scan + load the right one. Override via CC_SKILLS_DIR.
+SKILLS_DIR = Path(os.environ.get('CC_SKILLS_DIR',
+                                 str(CWD_ROOT / 'skills')))
+SKILLS_INDEX = SKILLS_DIR / 'index.md'
+
 DEFAULT_CWD = str(HOME.resolve())
 
 # Static UI files (only used when CC_SERVE_STATIC=1).
@@ -848,6 +858,160 @@ def build_routines_preamble(sid: str) -> str:
     )
 
 
+# ───────────────────  skills index  ───────────────────
+# A flat index of the global skills folder. Every spawn rebuilds it
+# (cheap — just glob a few files) so dropping a new skill in
+# ~/claude-ui/skills/ shows up to the next claude turn without any
+# manual refresh. Each entry is the skill's folder name + path +
+# entry-point file + first ~200 chars of summary.
+
+# Files we look at as a skill's entry point, in priority order. The
+# first one we find drives the summary text.
+_SKILL_ENTRY_FILES = (
+    'SKILL.md', 'skill.md',
+    'README.md', 'readme.md',
+    'INSTRUCTIONS.md', 'instructions.md',
+    'index.md',
+)
+# Files we'll list briefly. Capped so the index doesn't bloat for
+# skills with hundreds of files (just shows count).
+_SKILL_FILE_BUDGET = 8
+
+
+def build_skills_index() -> int:
+    """Scan SKILLS_DIR for subfolders, write a flat index.md with one
+    entry per skill. Returns the number of skills indexed.
+    Idempotent: safe to call on every spawn / startup."""
+    SKILLS_DIR.mkdir(parents=True, exist_ok=True)
+    if not SKILLS_DIR.exists():
+        return 0
+
+    skills: list[dict] = []
+    for child in sorted(SKILLS_DIR.iterdir()):
+        if not child.is_dir():
+            continue
+        if child.name.startswith('.') or child.name.startswith('_'):
+            continue
+        # Find the entry-point file.
+        entry: Path | None = None
+        for fname in _SKILL_ENTRY_FILES:
+            cand = child / fname
+            if cand.is_file():
+                entry = cand
+                break
+        # Pull a short summary (first non-empty paragraph, capped).
+        summary = ''
+        if entry is not None:
+            try:
+                txt = entry.read_text(encoding='utf-8', errors='replace')
+                # Strip leading h1 / blank lines, take first paragraph.
+                lines = txt.splitlines()
+                buf: list[str] = []
+                started = False
+                for ln in lines:
+                    s = ln.rstrip()
+                    if not started:
+                        if s.startswith('#') or not s.strip():
+                            continue
+                        started = True
+                    if not s.strip() and buf:
+                        break
+                    buf.append(s)
+                summary = ' '.join(buf).strip()
+                summary = re.sub(r'\s+', ' ', summary)
+                if len(summary) > 280:
+                    summary = summary[:277] + '…'
+            except Exception:
+                pass
+        # Sample the file listing.
+        try:
+            files = [p.name for p in sorted(child.rglob('*'))
+                     if p.is_file() and not p.name.startswith('.')]
+        except Exception:
+            files = []
+        files_brief = ', '.join(files[:_SKILL_FILE_BUDGET])
+        if len(files) > _SKILL_FILE_BUDGET:
+            files_brief += f', … (+{len(files) - _SKILL_FILE_BUDGET} more)'
+        skills.append({
+            'name':    child.name,
+            'path':    str(child.resolve()),
+            'entry':   str(entry.resolve()) if entry else '',
+            'files':   files_brief,
+            'count':   len(files),
+            'summary': summary,
+        })
+
+    # Render the index file.
+    out: list[str] = [
+        '# Skills index',
+        '',
+        ('User-curated skill packs. Each entry below points at a folder '
+         'under `' + str(SKILLS_DIR) + '/` containing the full skill '
+         '(usually downloaded from clawhub.ai or hand-written). To use '
+         'one, Read the `**Entry**:` file inside the folder for the '
+         'recipe, plus any other files it references.'),
+        '',
+        f'_{len(skills)} skill(s) indexed; auto-rebuilt on every spawn._',
+        '',
+    ]
+    if not skills:
+        out.append('_(empty — drop a skill folder under '
+                   f'`{SKILLS_DIR}/` and it shows up here on the next '
+                   'chat turn.)_\n')
+    for s in skills:
+        out.append(f'## {s["name"]}')
+        out.append(f'- **Path**: {s["path"]}')
+        if s['entry']:
+            out.append(f'- **Entry**: {s["entry"]}')
+        out.append(f'- **Files** ({s["count"]}): {s["files"]}')
+        if s['summary']:
+            out.append(f'- **Summary**: {s["summary"]}')
+        out.append('')
+    try:
+        SKILLS_INDEX.write_text('\n'.join(out), encoding='utf-8')
+    except Exception as e:
+        log(f'skills: write index failed: {e}')
+    return len(skills)
+
+
+def build_skills_preamble() -> str:
+    """System-prompt section appended to every spawn. Tells claude
+    where the global skills folder lives and how to use it. Cheap on
+    every call — the actual index file is rebuilt by build_skills_index()
+    which runs alongside this."""
+    # Make sure the index is fresh on every spawn.
+    n = build_skills_index()
+    return (
+        "Skills (your toolbox)\n"
+        "---------------------\n"
+        "Two places to look when picking a technique for a request:\n\n"
+        "1. Your own built-in skills / capabilities — what you already\n"
+        "   know how to do without external help.\n\n"
+        "2. User-curated SKILL PACKS downloaded from clawhub.ai (or\n"
+        "   hand-written by the user). Each pack lives in its own\n"
+        "   subfolder of:\n"
+        f"       {SKILLS_DIR}\n\n"
+        "   A flat index of every available pack is at:\n"
+        f"       {SKILLS_INDEX}\n\n"
+        f"   ({n} skill pack(s) currently indexed.)\n\n"
+        "Each entry in the index has:\n"
+        "  • **Path**:    absolute path of the skill's folder\n"
+        "  • **Entry**:   the SKILL.md / README.md to start with\n"
+        "  • **Files**:   what else is in the folder\n"
+        "  • **Summary**: one-line gist\n\n"
+        "Before answering anything that smells domain-specific, scan\n"
+        "the index. If a skill's name / summary matches the user's\n"
+        "request, Read its **Entry** file (and follow up on any other\n"
+        "files it references) BEFORE you respond. Then apply the\n"
+        "technique exactly as the skill describes.\n\n"
+        "When you use a skill, mention it naturally so the user sees\n"
+        "it firing — e.g. \"using the seedance-2-prompt-engineering\n"
+        "skill…\". Don't quote the whole SKILL.md back; just apply it.\n\n"
+        "If the index is empty or no entry matches, just answer from\n"
+        "your inherent capabilities — no need to mention skills at all.\n"
+    )
+
+
 async def start_worker(sid: str, *, force_fresh: bool = False) -> Worker | None:
     """Spawn (or respawn) the claude subprocess for session `sid`. If a
     worker already exists for this sid AND its proc is alive, it's left
@@ -884,6 +1048,7 @@ async def start_worker(sid: str, *, force_fresh: bool = False) -> Worker | None:
         parts.append(persona_prompt)
     parts.append(build_memory_preamble())
     parts.append(build_routines_preamble(sid))
+    parts.append(build_skills_preamble())
     system_prompt = '\n\n---\n\n'.join(parts)
 
     # Decide whether to use --resume <sid> (fast path: claude has its
@@ -2559,6 +2724,17 @@ async def handle_client(websocket):
                     state.routines.remove(rid)
                     await broadcast({'type': 'routines',
                                      'routines': state.routines.all_brief()})
+            elif cmd == 'skills_refresh':
+                # User dropped a new skill folder under SKILLS_DIR
+                # and wants the index rebuilt without waiting for the
+                # next chat turn.
+                n = build_skills_index()
+                await websocket.send(json.dumps({
+                    'type': 'skills_refreshed',
+                    'count': n,
+                    'index': str(SKILLS_INDEX),
+                    'dir':   str(SKILLS_DIR),
+                }))
             elif cmd == 'state':
                 await websocket.send(json.dumps(state_snapshot()))
             elif cmd == 'stop':
@@ -3643,6 +3819,11 @@ async def main():
     # Routine registry (scheduled wake-ups the user requested).
     state.routines = RoutineManager(DATA_DIR, broadcast, log)
     state.routines.start_sweep(30)
+    # Skills (clawhub-style technique packs) — global, shared across
+    # all chats. Build the index up front so the file exists; every
+    # subsequent spawn rebuilds it cheaply.
+    SKILLS_DIR.mkdir(parents=True, exist_ok=True)
+    skills_count = build_skills_index()
     log(f'cc-server starting')
     log(f'  host       : {HOST}:{PORT}')
     log(f'  data dir   : {DATA_DIR}')
@@ -3654,6 +3835,7 @@ async def main():
     log(f'  active     : {state.active_id}')
     log(f'  routines   : {len([r for r in state.routines.routines if r.enabled])} '
         f'enabled / {len(state.routines.routines)} total')
+    log(f'  skills dir : {SKILLS_DIR} ({skills_count} indexed)')
     log(f'  telegram   : {"on" if TELEGRAM_TOKEN else "off"}')
     if SERVE_STATIC:
         log(f'  open       : http://{HOST}:{PORT}/')
