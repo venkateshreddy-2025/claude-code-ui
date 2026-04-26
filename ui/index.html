@@ -312,7 +312,13 @@
     color:var(--fg-dim);border-radius:8px;cursor:pointer;display:grid;place-items:center;
     transition:color .15s, background .15s}
   .header-action:hover{color:var(--fg);background:rgba(255,255,255,.06)}
+  .header-action:disabled{cursor:not-allowed;opacity:.35;pointer-events:none}
   .header-action svg{width:18px;height:18px}
+  /* Save button states: `.busy` = silent save in flight (subtle pulse),
+     `.saved` = nothing new to save (muted check). */
+  .header-action.busy{color:var(--accent);animation:saveBusy 1.2s ease-in-out infinite}
+  .header-action.saved{color:var(--fg-faint)}
+  @keyframes saveBusy{0%,100%{opacity:.55}50%{opacity:1}}
 
   /* Spawn-pending indicator. Shows while we're starting a claude
      subprocess for a session — replaces the search button on the right
@@ -2858,6 +2864,7 @@
     activeId = id;
     renderSessions();
     refreshHeaderTitle();
+    refreshSaveButton();
   }
 
   function setOnline(on){
@@ -2932,7 +2939,7 @@
         focusComposer();
         break;
       }
-      case 'sessions': sessions = m.sessions || []; renderSessions(); refreshHeaderTitle(); break;
+      case 'sessions': sessions = m.sessions || []; renderSessions(); refreshHeaderTitle(); refreshSaveButton(); break;
       case 'user': {
         const msg = m.msg;
         if (!msg) break;
@@ -3067,6 +3074,8 @@
             });
           }
         }
+        // New conversation content → re-enable Save button.
+        refreshSaveButton();
         break;
       }
       case 'session_ended': {
@@ -3106,16 +3115,21 @@
         // focused on. Background spawns happen invisibly.
         if (!sid || focused) showSpawning(true, m.title || 'starting…');
         break;
-      case 'summarizing':
-        // Server confirms it's started the summarize subprocess. We
-        // already toggled the UI optimistically when the user clicked
-        // Save progress, so this is informational.
+      case 'summarizing':       // legacy alias for save_started
+      case 'save_started':
+        // Server confirms the silent save inject reached claude.
+        // Save button stays disabled until save_done lands.
         setSummarizing(true);
         break;
-      case 'summary_done': onSummaryDone(m); break;
-      case 'summary_error':
+      case 'summary_done':      // legacy alias
+      case 'save_done':
+        if (m.sessions){ sessions = m.sessions; renderSessions(); }
+        onSaveDone(m);
+        break;
+      case 'summary_error':     // legacy alias
+      case 'save_error':
         setSummarizing(false);
-        showBanner('Summarize failed: ' + (m.message || 'unknown'));
+        showBanner('Save failed: ' + (m.message || 'unknown'));
         setTimeout(hideBanner, 5000);
         break;
       case 'personas': {
@@ -3876,39 +3890,76 @@
     appEl.classList.toggle('summarizing', summarizing);
     const inp = document.getElementById('input');
     const sendBtn = document.getElementById('send');
-    if (inp) inp.disabled = summarizing;
-    if (sendBtn) sendBtn.disabled = summarizing || !inp || !inp.value.trim();
+    // Composer stays usable — the save runs on the same claude proc
+    // but in silent mode, the user can keep typing. We just tag the
+    // app so a small "saving" hint can show.
     const saveBtn = document.getElementById('saveProgressBtn');
-    if (saveBtn) saveBtn.disabled = summarizing;
+    if (saveBtn){
+      saveBtn.disabled = summarizing || !isSaveEligible();
+      saveBtn.classList.toggle('busy', summarizing);
+    }
     if (summarizing){
-      showBanner('Saving progress…');
+      showBanner('Saving — silent reflection in flight…');
     } else {
       hideBanner();
     }
   }
+
+  // The Save button is enabled iff the active chat has unsaved
+  // content — i.e., something has been said since the last save.
+  // Server emits `lastActiveAt` and `lastSavedAt` on every session
+  // brief; we compare them. Returns false when there's no active
+  // chat or no messages yet.
+  function isSaveEligible(){
+    if (!activeId) return false;
+    const s = sessions.find(x => x.id === activeId);
+    if (!s) return false;
+    const lastActive = s.lastActiveAt || s.createdAt || 0;
+    const lastSaved  = s.lastSavedAt || 0;
+    if (!lastActive) return false;          // brand-new empty chat
+    return lastActive > lastSaved;
+  }
+  function refreshSaveButton(){
+    const saveBtn = document.getElementById('saveProgressBtn');
+    if (!saveBtn) return;
+    const eligible = isSaveEligible();
+    saveBtn.disabled = summarizing || !eligible;
+    saveBtn.title = summarizing
+      ? 'Saving…'
+      : eligible
+        ? 'Save reflection (silent — writes a learning note + memory index entry)'
+        : 'Nothing new to save';
+    saveBtn.classList.toggle('saved', !summarizing && !eligible && !!activeId);
+  }
+
   document.getElementById('saveProgressBtn').addEventListener('click', () => {
     if (summarizing) return;
     if (!activeId){
-      showBanner('No active chat to summarize.');
+      showBanner('No active chat to save.');
       setTimeout(hideBanner, 3000); return;
     }
+    if (!isSaveEligible()){
+      showBanner('Already saved — nothing new to capture.');
+      setTimeout(hideBanner, 2500); return;
+    }
     setSummarizing(true);
-    send({ type: 'summarize', id: activeId });
+    send({ type: 'save_progress', id: activeId });
   });
 
-  function onSummaryDone(m){
+  function onSaveDone(m){
     setSummarizing(false);
-    const path = m.path || '';
-    const bytes = m.bytes || 0;
+    refreshSaveButton();      // turns into "saved" state
+    const md     = m.mdPath     || m.path || '';
+    const memory = m.memoryPath || '';
     document.getElementById('summaryDonePath').innerHTML =
-      path ? 'Saved to: <code>' + escHtml(path) + '</code>'
-           : 'Summary completed (no path returned).';
+      (md     ? 'Reflection: <code>' + escHtml(md)     + '</code><br>' : '') +
+      (memory ? 'Memory index: <code>' + escHtml(memory) + '</code>'   : '');
     document.getElementById('summaryDoneSize').textContent =
-      bytes ? humanBytes(bytes) + ' written.' : '';
+      'Saved silently — no chat narration. New chats will read the index on startup.';
     document.getElementById('summaryDoneBackdrop').classList.add('on');
     document.getElementById('summaryDoneModal').hidden = false;
     document.getElementById('summaryCopyPath').onclick = async () => {
-      try { await navigator.clipboard.writeText(path); showBanner('Path copied'); setTimeout(hideBanner, 1800); } catch(e) {}
+      try { await navigator.clipboard.writeText(md); showBanner('Reflection path copied'); setTimeout(hideBanner, 1800); } catch(e) {}
     };
   }
   function closeSummaryDone(){

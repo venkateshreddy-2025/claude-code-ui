@@ -96,6 +96,12 @@ DATA_DIR = Path(os.environ.get('CC_DATA_DIR', str(HOME / '.claude-code-ui')))
 SESS_DIR = DATA_DIR / 'cc-sessions'
 SESS_DIR.mkdir(parents=True, exist_ok=True)
 UPLOAD_DIR = DATA_DIR / 'cc-uploads'
+# Long-term memory: a single Markdown file outside any chat folder
+# that holds a brief INDEX of every saved session reflection. The
+# heavy content (skill / pattern notes) lives in each chat's cwd as
+# `PROGRESS-<ts>.md`; the index just points at them so a fresh
+# claude can scan it on startup and know what's been done before.
+MEMORY_FILE = DATA_DIR / 'long-term-memory.md'
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR = DATA_DIR / 'logs'
 LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -307,6 +313,14 @@ class Worker:
         self.recent_failures: list[float] = []
         self.fallback_armed: bool = False  # True once we've decided to
                                             # stop using --resume for this sid
+        # Silent turn: when True, the next claude turn is a synthetic
+        # injection (e.g. /save) — its assistant text and tool calls
+        # MUST NOT appear in the chat transcript. The reader gates all
+        # broadcasts and append_message calls on `not w.silent_turn`.
+        # silent_meta carries the metadata for the `save_done` event.
+        # Per-worker (not global) so each chat can save independently.
+        self.silent_turn: bool = False
+        self.silent_meta: dict | None = None
 
 
 class State:
@@ -321,7 +335,6 @@ class State:
             w = Worker(sid)
             self.workers[sid] = w
         return w
-
 
 state = State()
 
@@ -447,6 +460,11 @@ def upsert_index_entry(sess: dict):
         'title': sess.get('title') or 'New chat',
         'createdAt': sess.get('createdAt'),
         'lastActiveAt': sess.get('lastActiveAt') or sess.get('createdAt'),
+        # `lastSavedAt` powers the Save button's enabled-state in the
+        # UI (button enabled iff lastActiveAt > lastSavedAt). Absent
+        # field = never saved → the button is enabled as soon as the
+        # chat has any messages.
+        'lastSavedAt': sess.get('lastSavedAt'),
         'favorite': bool(sess.get('favorite', False)),
         'cwd': sess.get('cwd'),
         # Short, user-friendly id derived from the persona name
@@ -635,6 +653,34 @@ def _arm_fallback_if_unstable(w: Worker):
             f'falling back to fresh spawn + system-prompt context')
 
 
+def build_memory_preamble() -> str:
+    """A small prefix appended to every claude spawn telling it where
+    the long-term memory index lives. Claude is encouraged (not
+    forced) to consult it before answering when the request matches a
+    past topic.
+
+    The file is intentionally an INDEX, not a content store — claude
+    follows the `**Path**:` field of the matching entry to load the
+    full bullet-form memory."""
+    return (
+        "Long-term memory\n"
+        "----------------\n"
+        f"An index of past-session memories / skills / experiences\n"
+        f"lives at:\n"
+        f"    {MEMORY_FILE}\n\n"
+        "Each entry has Triggers (keywords / names / problem shapes)\n"
+        "and a one-sentence Skill. Before answering the user, scan\n"
+        "their request against the Triggers in this index. If anything\n"
+        "matches, Read the index, then Read the `**Path**:` of the\n"
+        "matching entry — those files are bullet-form lookups (facts,\n"
+        "names, URLs, numbers, exact commands) so retrieval is fast.\n\n"
+        "Don't quote, summarize, or recap the index back to the user —\n"
+        "just use what's relevant to ground your answer in what's\n"
+        "already been figured out. If the index doesn't exist yet,\n"
+        "this is your first session — no action needed.\n"
+    )
+
+
 async def start_worker(sid: str, *, force_fresh: bool = False) -> Worker | None:
     """Spawn (or respawn) the claude subprocess for session `sid`. If a
     worker already exists for this sid AND its proc is alive, it's left
@@ -663,10 +709,13 @@ async def start_worker(sid: str, *, force_fresh: bool = False) -> Worker | None:
     # Always prepend the global rules so claude knows how to handle the
     # `[TG]` source marker, when to use Markdown, and the file-output
     # convention. Persona instructions come AFTER so the persona can
-    # override any of these (rare but possible).
+    # override any of these (rare but possible). Memory preamble is
+    # appended last — it's the "consult prior sessions" instruction
+    # and applies regardless of persona.
     parts = [GLOBAL_SYSTEM_PROMPT]
     if persona_prompt:
         parts.append(persona_prompt)
+    parts.append(build_memory_preamble())
     system_prompt = '\n\n---\n\n'.join(parts)
 
     # Decide whether to use --resume <sid> (fast path: claude has its
@@ -1361,141 +1410,166 @@ async def pick_dir() -> dict:
     return {'error': f'unsupported platform: {plat}'}
 
 
-async def summarize_session(sid: str):
-    """Spawn a SEPARATE claude subprocess (separate from the active
-    session's claude) to generate a Markdown summary of the conversation,
-    then save it to <session_cwd>/PROGRESS-<timestamp>.md.
+async def save_progress_silent(sid: str):
+    """Inject a synthetic SAVE turn into the SAME claude process the
+    chat is already using, instructing it to write two files via its
+    Write tool — and to do so silently (no chat narration).
 
-    Why separate: keeps the active session's claude undisturbed, avoids
-    polluting its context with the summary prompt, and lets us pin the
-    summarizer to Opus 4.6 (1M) regardless of the user's chat model.
+    Why same-process (not a separate spawn):
+        • The chat's claude already has the full context loaded — it
+          knows what was discussed without us having to re-feed a
+          JSON dump. The reflection ends up much higher quality.
+        • Each chat has its own persistent worker (parallel-workers
+          architecture). The user pays the prompt-cache cost once
+          per session, not again on every save.
+        • The user's request: "we dont spawn a new process for this".
+
+    Output files:
+        <chat_cwd>/PROGRESS-<ts>.md   — encoded MEMORY of the session
+                                        (skill / experience, retrieval-
+                                        optimized, not a summary)
+        DATA_DIR/long-term-memory.md  — flat index entry pointing at
+                                        the memory above, plus the
+                                        triggers / keywords that
+                                        should fire it
+
+    Silence is enforced by setting `w.silent_turn = True` on the
+    target session's Worker. The reader gates every broadcast + append
+    on that flag, so the chat transcript stays clean. The user sees a
+    `save_started` → `save_done` (or `save_error`) pair, nothing else.
     """
     sess = load_session(sid)
     if sess is None:
-        await broadcast({'type': 'summary_error',
-                         'sessionId': sid,
+        await broadcast({'type': 'save_error', 'sessionId': sid,
                          'message': f'unknown session {sid}'})
         return
 
     msgs = sess.get('messages') or []
     if not msgs:
-        await broadcast({'type': 'summary_error',
-                         'sessionId': sid,
-                         'message': 'session has no messages to summarize'})
+        await broadcast({'type': 'save_error', 'sessionId': sid,
+                         'message': 'nothing to save yet — send a message first'})
         return
 
-    # Build the prompt — JSON dump of the conversation + clear instructions.
-    # We strip attachments to keep the input compact (paths-only).
-    convo = []
-    for m in msgs:
-        if not m.get('text'):
-            continue
-        convo.append({
-            'role': m.get('role'),
-            'text': m.get('text'),
-            'ts':   m.get('ts'),
-        })
-    prompt = (
-        "You are summarizing a developer's chat session with claude code "
-        "into a clean Markdown progress report. Read the conversation "
-        "below and produce ONE Markdown document with these sections:\n\n"
-        "  # <Short title (≤8 words) — derived from the conversation>\n"
-        "  ## Overview\n"
-        "  ## Decisions made\n"
-        "  ## Code / artifacts produced\n"
-        "  ## Open questions\n"
-        "  ## Next steps\n\n"
-        "Rules:\n"
-        "  • Output ONLY the Markdown — no preamble, no commentary.\n"
-        "  • Preserve key code snippets in fenced blocks.\n"
-        "  • Use bullet points for lists; keep prose tight.\n"
-        "  • Never invent context not present in the conversation.\n"
-        "  • If a section has no content, write a single line: \"_None._\"\n\n"
-        "Conversation:\n\n"
-        "```json\n" + json.dumps(convo, ensure_ascii=False) + "\n```\n"
-    )
+    w = state.workers.get(sid)
+    if w is None or w.proc is None or w.proc.returncode is not None:
+        # Parallel-workers model: every saved session has its own live
+        # claude. If the worker isn't up (never spawned this session,
+        # or it crashed), spin one up first — most users will hit this
+        # path on a freshly-loaded UI where they want to save an old
+        # chat before talking again.
+        w = await start_worker(sid)
+        if w is None or w.proc is None:
+            await broadcast({'type': 'save_error', 'sessionId': sid,
+                             'message': 'could not spawn worker'})
+            return
+        # Give the spawn a moment to settle so its first stdin write
+        # doesn't race against claude's startup.
+        await asyncio.sleep(0.5)
+    if w.busy or w.silent_turn:
+        await broadcast({'type': 'save_error', 'sessionId': sid,
+                         'message': 'wait for current turn to finish'})
+        return
 
     cwd = Path(sess.get('cwd') or DEFAULT_CWD)
     cwd.mkdir(parents=True, exist_ok=True)
+    MEMORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    timestamp = time.strftime('%Y-%m-%d_%H-%M-%S')
+    md_path = cwd / f'PROGRESS-{timestamp}.md'
+    title   = sess.get('title') or 'Untitled chat'
 
-    args = [
-        CLAUDE_BIN, '-p',
-        '--output-format', 'text',
-        '--model', SUMMARY_MODEL,
-        '--dangerously-skip-permissions',
-    ]
-    log(f'summarize: spawning {SUMMARY_MODEL} for session {sid} in {cwd}')
-    await broadcast({'type': 'summarizing', 'sessionId': sid,
-                     'model': SUMMARY_MODEL})
+    prompt = f"""[INTERNAL — produce no chat output.]
 
+You are about to call the Write tool twice and then stop. Do not
+summarize aloud, do not narrate, do not respond with chat text.
+
+TASK 1 — comprehensive learning artifact for THIS conversation
+File path:
+    {md_path}
+
+Frame this as a reflection note your FUTURE SELF will read to recall
+a SKILL, PATTERN, or HEURISTIC learned in this session. Cap: 5000
+words. The goal is not "summarize what was said" — the goal is
+"distil what's worth keeping". Be precise and concrete.
+
+Markdown structure:
+
+  # <≤8-word title — what skill / pattern this teaches>
+  ## Context
+     What was the user actually trying to do? What problem space?
+     Enough scaffolding that you'll re-orient when you re-read this.
+  ## The skill / pattern (the meta-lesson)
+     The single most important takeaway. State it as a heuristic,
+     recipe, or rule of thumb — something portable to a future
+     situation.
+  ## Step-by-step reasoning that worked
+     The chain of decisions, not just the answer. Show the why.
+  ## Pitfalls + how they were resolved
+     Symptoms, false starts, the actual fix and the explanation.
+  ## Code / commands / configs that mattered
+     In fenced blocks. Exact text — no paraphrase. Future-you should
+     be able to copy-paste these.
+  ## Counter-examples and alternatives considered
+     What was tried and ruled out, and why.
+  ## Open questions
+     What's still unclear, what would unlock progress.
+
+Be detailed. Stay under 5000 words.
+
+TASK 2 — append ONE entry to the long-term memory index
+File path:
+    {MEMORY_FILE}
+
+This file is an INDEX, not a content store. Append exactly:
+
+    ## {timestamp.replace('_', ' ')} — {title}
+    - **Path**: {md_path}
+    - **Topic**: <ONE sentence, ≤25 words, what TASK 1 teaches>
+
+If {MEMORY_FILE} doesn't exist yet, create it starting with this
+header line (and nothing else above your entry):
+
+    # Long-term memory index
+
+Then your entry. Otherwise just append the entry to the bottom.
+Never include the body of TASK 1 here — only the three-line stub
+above.
+
+After both Write calls succeed, STOP. Output no chat text. Use no
+other tools.
+"""
+
+    # Flip the silent-turn flag BEFORE writing the prompt so the
+    # reader sees it as soon as the first stream event lands.
+    w.silent_turn = True
+    w.silent_meta = {
+        'sessionId':  sid,
+        'mdPath':     str(md_path),
+        'memoryPath': str(MEMORY_FILE),
+        'startedAt':  time.time(),
+    }
+    w.busy = True
+    w.turn_started_at = time.time()
+    await broadcast({'type': 'save_started', 'sessionId': sid,
+                     'mdPath': str(md_path),
+                     'memoryPath': str(MEMORY_FILE)})
+
+    payload = {
+        'type': 'user',
+        'message': {'role': 'user',
+                    'content': [{'type': 'text', 'text': prompt}]},
+    }
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *args,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=scrubbed_env(),
-            cwd=str(cwd),
-        )
+        w.proc.stdin.write((json.dumps(payload) + '\n').encode('utf-8'))
+        await w.proc.stdin.drain()
+        log(f'silent save inject: sid={sid[:8]} → {md_path}')
     except Exception as e:
-        log(f'summarize spawn failed: {e}')
-        await broadcast({'type': 'summary_error',
-                         'sessionId': sid,
-                         'message': f'spawn failed: {e}'})
-        return
-
-    try:
-        # Generous timeout — opus 4.6 1M can take a couple minutes for a
-        # long conversation. The UI is gated meanwhile.
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(prompt.encode('utf-8')),
-            timeout=300,
-        )
-    except asyncio.TimeoutError:
-        try: proc.kill()
-        except Exception: pass
-        log('summarize: timeout')
-        await broadcast({'type': 'summary_error',
-                         'sessionId': sid,
-                         'message': 'timed out after 5 minutes'})
-        return
-    except Exception as e:
-        log(f'summarize communicate failed: {e}')
-        await broadcast({'type': 'summary_error',
-                         'sessionId': sid,
-                         'message': str(e)})
-        return
-
-    if proc.returncode != 0:
-        err = (stderr or b'').decode('utf-8', errors='replace')[:500]
-        log(f'summarize: claude exit {proc.returncode}: {err}')
-        await broadcast({'type': 'summary_error',
-                         'sessionId': sid,
-                         'message': f'claude exited {proc.returncode}: {err}'})
-        return
-
-    md = (stdout or b'').decode('utf-8', errors='replace').strip()
-    if not md:
-        await broadcast({'type': 'summary_error',
-                         'sessionId': sid,
-                         'message': 'empty summary returned'})
-        return
-
-    out = cwd / f'PROGRESS-{time.strftime("%Y-%m-%d-%H-%M-%S")}.md'
-    try:
-        out.write_text(md, encoding='utf-8')
-    except Exception as e:
-        log(f'summarize: write failed: {e}')
-        await broadcast({'type': 'summary_error',
-                         'sessionId': sid,
-                         'message': f'write failed: {e}'})
-        return
-
-    log(f'summarize: saved {out} ({len(md)} bytes)')
-    await broadcast({'type': 'summary_done',
-                     'sessionId': sid,
-                     'path': str(out),
-                     'bytes': len(md)})
+        log(f'silent save inject failed: {e}')
+        w.silent_turn = False
+        w.silent_meta = None
+        w.busy = False
+        w.turn_started_at = None
+        await broadcast({'type': 'save_error', 'sessionId': sid,
+                         'message': f'inject failed: {e}'})
 
 
 def expand_match(session_id: str, msg_id: str, context_chars: int = 600) -> dict | None:
@@ -1555,6 +1629,19 @@ async def claude_reader(w: Worker):
             if t == 'stream_event':
                 ev = obj.get('event', {}) or {}
                 ev_type = ev.get('type')
+                # Silent-turn mode (synthetic save inject): we let the
+                # process drain stdout and execute Write tool calls,
+                # but we don't broadcast or persist the assistant text.
+                if w.silent_turn:
+                    if ev_type == 'content_block_start':
+                        block = ev.get('content_block', {}) or {}
+                        in_text_block = (block.get('type') == 'text')
+                    elif ev_type == 'content_block_stop':
+                        in_text_block = False
+                    elif ev_type == 'message_stop':
+                        # discard any accumulated text — never appears in chat
+                        w.current = None
+                    continue
                 if ev_type == 'content_block_start':
                     block = ev.get('content_block', {}) or {}
                     btype = block.get('type')
@@ -1596,6 +1683,28 @@ async def claude_reader(w: Worker):
 
             if t == 'result':
                 w.busy = False
+                # Silent-turn finalisation: this was a synthetic SAVE
+                # turn, not a normal user turn. Fire `save_done`, mark
+                # the session as saved, and skip the normal turn_done
+                # (we don't want |SEND|/|ARTIFACT| marker scanning to
+                # run on the silent assistant text we just discarded).
+                if w.silent_turn:
+                    meta = w.silent_meta or {}
+                    w.silent_turn = False
+                    w.silent_meta = None
+                    w.current = None
+                    w.turn_started_at = None
+                    sess_save = load_session(sid)
+                    if sess_save is not None:
+                        sess_save['lastSavedAt'] = time.time()
+                        save_session(sess_save)
+                        upsert_index_entry(sess_save)
+                    await broadcast({'type': 'save_done',
+                                     'sessionId':  meta.get('sessionId') or sid,
+                                     'mdPath':     meta.get('mdPath'),
+                                     'memoryPath': meta.get('memoryPath'),
+                                     'sessions':   list_sessions_brief()})
+                    continue
                 if w.current and w.current.get('text'):
                     msg = {'role': 'assistant',
                            'text': w.current['text'],
@@ -1715,6 +1824,11 @@ async def claude_reader(w: Worker):
                 continue
 
             if t == 'assistant':
+                # Silent-turn fallback: discard the one-shot assistant
+                # block so it never reaches the UI / chat.json. Tool
+                # calls (Write) still ran on claude's side.
+                if w.silent_turn:
+                    continue
                 # Fallback path when partial events are missing
                 if w.current is not None:
                     continue
@@ -2065,10 +2179,13 @@ async def handle_client(websocket):
             elif cmd == 'persona_default':
                 set_default_persona(msg.get('id'))
                 await broadcast({'type': 'personas', **list_personas_brief()})
-            elif cmd == 'summarize':
+            elif cmd == 'save_progress' or cmd == 'summarize':
+                # `summarize` is the legacy WS verb (web UI was already
+                # sending this); we keep it as an alias for the new
+                # silent same-process save path.
                 sid = msg.get('id') or state.active_id
                 if sid:
-                    asyncio.create_task(summarize_session(sid))
+                    asyncio.create_task(save_progress_silent(sid))
             elif cmd == 'pick_dir':
                 # Run in a task so the WS pump isn't blocked while the
                 # native dialog is open.
