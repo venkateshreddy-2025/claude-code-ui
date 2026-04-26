@@ -72,6 +72,7 @@ import os
 import re
 import signal
 import shutil
+import subprocess
 import sys
 import time
 import urllib.error
@@ -1144,6 +1145,11 @@ async def new_session(cwd_override: str | None = None,
     sys_prompt = None
     persona_meta = None
     persona_model = None
+    # Auto-create-on-empty path doesn't pass a persona; fall back to the
+    # saved default so the user lands inside Aurora (the orchestrator)
+    # instead of a personality-less generic chat.
+    if not persona_id:
+        persona_id = (load_personas() or {}).get('default') or None
     if persona_id:
         p = persona_full(persona_id)
         if p:
@@ -1184,7 +1190,152 @@ async def new_session(cwd_override: str | None = None,
                      'sessionId': sid, 'title': 'New chat'})
     # New session — first spawn never uses --resume (no memory yet).
     await start_worker(sid, force_fresh=True)
+    # If this chat is Aurora, auto-spawn her 5-minute heartbeat in the
+    # background. Idempotent + non-blocking; swallows its own errors.
+    try:
+        maybe_spawn_orchestrator_heartbeat(sess)
+    except Exception as e:
+        log(f'orchestrator heartbeat dispatch failed: {e}')
+    # Persona-list state may have changed (Aurora locks once she's spawned),
+    # so refresh the picker for any open client.
+    await broadcast({'type': 'personas', **list_personas_brief()})
     await broadcast(state_snapshot())
+
+
+# ──────────────────  Orchestrator (Aurora) heartbeat  ──────────────────
+# Aurora is a special persona: a coordinator chat that gets a 5-minute
+# wake-up so she can sweep the system (active sessions, routine PIDs,
+# new skills, tracked chats). The bridge auto-spawns her heartbeat when
+# her chat is created, registers it as a regular routine (visible +
+# cancellable in the routines panel), and locks her persona in the
+# picker so the user can only have one Aurora chat at a time.
+ORCHESTRATOR_PERSONA_ID = 'aurora'
+ORCHESTRATOR_HEARTBEAT_INTERVAL = 5 * 60  # seconds
+ORCHESTRATOR_HEARTBEAT_PROMPT = (
+    "[heartbeat] Time to sweep. Run your standard cycle: scan new "
+    "sessions, routines (PID liveness), skills, tracked chats. Update "
+    "LOG + MEMORIES only if changed. Stay silent unless escalation "
+    "needed."
+)
+
+
+def maybe_spawn_orchestrator_heartbeat(sess: dict) -> None:
+    """If this session uses the orchestrator persona, write + launch a
+    background heartbeat that pings her every 5 minutes via the bridge's
+    WS port. Register it in the routines manager so it appears in the
+    routines panel and can be cancelled like any other routine.
+    Idempotent — won't double-register on resume / reconnect."""
+    persona = sess.get('persona') or {}
+    if persona.get('id') != ORCHESTRATOR_PERSONA_ID:
+        return
+    if state.routines is None:
+        return
+    sid = sess.get('id') or ''
+    cwd_str = sess.get('cwd') or str(CWD_ROOT)
+    cwd = Path(cwd_str)
+    cwd.mkdir(parents=True, exist_ok=True)
+
+    # Idempotent — bail if a heartbeat is already enabled for this sid.
+    for r in state.routines.list_for_session(sid, only_enabled=True):
+        if 'orchestrator heartbeat' in (r.mechanism or '').lower():
+            log(f'orchestrator heartbeat: already running for sid={sid[:8]}')
+            return
+
+    script = cwd / 'orchestrator_heartbeat.py'
+    ws_url = f'ws://{HOST}:{PORT}{PATH_PREFIX}/ws'
+
+    script_src = (
+        '#!/usr/bin/env python3\n'
+        '"""Aurora heartbeat — wake the orchestrator chat every N seconds.\n'
+        'Lightweight: opens a WS, sends one message, closes. Stateless."""\n'
+        'import asyncio, json, time\n'
+        'from datetime import datetime\n'
+        'import websockets\n\n'
+        f'WS_URL = {ws_url!r}\n'
+        f'SESSION_ID = {sid!r}\n'
+        f'INTERVAL_SECONDS = {ORCHESTRATOR_HEARTBEAT_INTERVAL}\n'
+        f'PROMPT = {ORCHESTRATOR_HEARTBEAT_PROMPT!r}\n\n'
+        'async def fire_once():\n'
+        '    try:\n'
+        '        async with websockets.connect(WS_URL) as ws:\n'
+        '            await ws.send(json.dumps({\n'
+        '                "type": "send",\n'
+        '                "id": SESSION_ID,\n'
+        '                "text": PROMPT,\n'
+        '                "source": "routine",\n'
+        '            }))\n'
+        '        print(f"[{datetime.now().isoformat()}] heartbeat", flush=True)\n'
+        '    except Exception as e:\n'
+        '        print(f"[{datetime.now().isoformat()}] error: {e}", flush=True)\n\n'
+        'def main():\n'
+        '    while True:\n'
+        '        try:\n'
+        '            asyncio.run(fire_once())\n'
+        '        except Exception as e:\n'
+        '            print(f"[{datetime.now().isoformat()}] outer error: {e}", flush=True)\n'
+        '        time.sleep(INTERVAL_SECONDS)\n\n'
+        "if __name__ == '__main__':\n"
+        '    main()\n'
+    )
+    try:
+        script.write_text(script_src, encoding='utf-8')
+    except Exception as e:
+        log(f'orchestrator heartbeat: write failed: {e}')
+        return
+
+    # Compile-check before launching.
+    import py_compile
+    try:
+        py_compile.compile(str(script), doraise=True)
+    except py_compile.PyCompileError as e:
+        log(f'orchestrator heartbeat: compile failed: {e}')
+        return
+
+    log_path = cwd / 'orchestrator_heartbeat.log'
+    try:
+        proc = subprocess.Popen(
+            [sys.executable or 'python3', str(script)],
+            stdout=open(log_path, 'a'),
+            stderr=subprocess.STDOUT,
+            cwd=str(cwd),
+            start_new_session=True,
+            env=scrubbed_env(),
+        )
+    except Exception as e:
+        log(f'orchestrator heartbeat: spawn failed: {e}')
+        return
+
+    # Verify alive (give it a moment to crash on import errors).
+    time.sleep(0.4)
+    if proc.poll() is not None:
+        log(f'orchestrator heartbeat: died immediately, see {log_path}')
+        return
+
+    try:
+        state.routines.register(sid=sid, spec={
+            'title':       'Aurora heartbeat (5-min sweep)',
+            'prompt':      ORCHESTRATOR_HEARTBEAT_PROMPT,
+            'schedule':    f'every {ORCHESTRATOR_HEARTBEAT_INTERVAL // 60} minutes',
+            'user_request':'(auto: orchestrator persona default)',
+            'script_path': str(script),
+            'pid':         proc.pid,
+            'mechanism':   'background python (orchestrator heartbeat)',
+        })
+    except Exception as e:
+        log(f'orchestrator heartbeat: register failed: {e}')
+    log(f'orchestrator heartbeat: pid={proc.pid} sid={sid[:8]} cwd={cwd}')
+
+
+def is_orchestrator_in_use() -> bool:
+    """True if any persisted session uses the orchestrator persona.
+    Used to grey her out in the persona picker so the user can't spawn
+    a second one. Cheap — reads only the index, not the session bodies."""
+    idx = load_index()
+    for s in idx.get('sessions', []):
+        pers = s.get('persona') or {}
+        if pers.get('id') == ORCHESTRATOR_PERSONA_ID:
+            return True
+    return False
 
 
 def build_resume_system_prompt(sess: dict, last_n: int = 200) -> str | None:
@@ -1244,6 +1395,9 @@ async def delete_session(sid: str):
     try: shutil.rmtree(UPLOAD_DIR / sid)
     except FileNotFoundError: pass
     remove_index_entry(sid)
+    # Persona-list state changes when an orchestrator session is
+    # deleted (lock releases). Cheap to refresh the list.
+    await broadcast({'type': 'personas', **list_personas_brief()})
     items = list_sessions_brief()
     if items:
         # Just switch focus — do NOT spawn the new session's worker
@@ -1488,6 +1642,18 @@ def list_personas_brief() -> dict:
     s = load_personas()
     items = [persona_brief(p) for p in (s.get('personas') or [])]
     items.sort(key=lambda x: -(x.get('updatedAt') or 0))
+    # Lock the orchestrator persona if any session is already using it —
+    # we want exactly one Aurora chat at a time. Frontend greys it out
+    # with the disabledReason as a tooltip.
+    if is_orchestrator_in_use():
+        for it in items:
+            if it.get('id') == ORCHESTRATOR_PERSONA_ID:
+                it['disabled'] = True
+                it['disabledReason'] = (
+                    'Aurora is already running — delete the existing '
+                    'Aurora chat to start a fresh one.'
+                )
+                break
     return {'default': s.get('default'), 'personas': items}
 
 

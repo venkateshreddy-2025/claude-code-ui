@@ -3963,13 +3963,30 @@
       for (const p of personasState.personas){
         const o = document.createElement('option');
         o.value = p.id;
-        o.textContent = p.name + (personasState.default === p.id ? '  (default)' : '');
+        let label = p.name + (personasState.default === p.id ? '  (default)' : '');
+        if (p.disabled){
+          // Persona is locked by the server (e.g. orchestrator already
+          // running). Disable the option + show the reason on hover.
+          o.disabled = true;
+          label += '  · in use';
+          if (p.disabledReason) o.title = p.disabledReason;
+        }
+        o.textContent = label;
         sel.appendChild(o);
       }
-      if (cur && personasState.personas.some(p => p.id === cur)){
+      // Pick: keep current if still available + enabled, else fall back
+      // to default if it's enabled, else first enabled option.
+      const stillOk = (id) => {
+        const m = personasState.personas.find(p => p.id === id);
+        return m && !m.disabled;
+      };
+      if (cur && stillOk(cur)){
         sel.value = cur;
-      } else if (personasState.default){
+      } else if (personasState.default && stillOk(personasState.default)){
         sel.value = personasState.default;
+      } else {
+        const firstOk = personasState.personas.find(p => !p.disabled);
+        sel.value = firstOk ? firstOk.id : '';
       }
     }
   }
