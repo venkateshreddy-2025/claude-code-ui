@@ -1852,6 +1852,10 @@ class TelegramTurn:
         self.last_edit_ms: float = 0.0     # rate-limit clock
         self.flush_task: asyncio.Task | None = None
         self.targets: list[TelegramTarget] = []
+        # Where the next user message originated. For Telegram-sent
+        # messages we set this to the sender's chat_id so the relay
+        # doesn't echo their own message back to them. None = web-side.
+        self.origin_chat_id: int | None = None
 
     def add_target(self, chat_id: int, uid: int,
                    placeholder_id: int | None = None) -> TelegramTarget:
@@ -2199,6 +2203,10 @@ async def tg_handle_message(msg: dict):
     for chat2, uid2 in tg_targets_for_session(sid):
         turn.add_target(chat2, uid2)
 
+    # Tag who sent this turn so telegram_relay_event doesn't echo the
+    # 'user' broadcast back to the originator's own Telegram chat.
+    turn.origin_chat_id = chat_id
+
     await send_to_session(sid, text, [])
 
 
@@ -2224,27 +2232,25 @@ async def telegram_relay_event(event: dict):
     # reply that's about to happen, even if we're not the sender.
     if et in ('user', 'assistant_start'):
         await tg_ensure_passive_turn(sid)
-        # If a web-side message just landed and there's a TG user
-        # bound to this sid, mirror the user message to them so the
-        # back-and-forth context stays coherent.
+        # Mirror the user message to bound TG chats — but NEVER to the
+        # chat that originated it (otherwise the user sees their own
+        # message echoed back). Mirror prefix depends on origin:
+        #   - web-originated → "🌐 Web: ..."
+        #   - telegram-originated → "📱 from Telegram: ..." (only seen
+        #     by *other* bound users, not the sender themselves)
         if et == 'user':
             msg = event.get('msg') or {}
             text = msg.get('text') or ''
-            mid  = msg.get('id') or ''
+            t = state.tg_turns.get(sid)
+            origin_chat = t.origin_chat_id if t else None
+            origin_prefix = '📱 from Telegram' if origin_chat is not None else '🌐 Web'
             if text:
                 for chat_id, uid in tg_targets_for_session(sid):
-                    # Don't echo back to the sender if they sent via
-                    # Telegram (their own chat already shows it).
-                    turn = state.tg_turns.get(sid)
-                    if turn and turn.has_target(chat_id):
-                        # Heuristic: if this 'user' event has the same
-                        # text as one we already mirrored to chat_id,
-                        # skip. We don't track that explicitly — Telegram
-                        # de-dupes by message_id; we prefix with 🌐 so
-                        # the user knows it came from the web.
-                        pass
+                    if chat_id == origin_chat:
+                        continue          # don't echo back to sender
                     try:
-                        await tg_send(chat_id, f'🌐 You (web): {tg_truncate(text, 1500)}')
+                        await tg_send(chat_id,
+                            f'{origin_prefix}: {tg_truncate(text, 1500)}')
                     except Exception: pass
 
     turn = state.tg_turns.get(sid)
@@ -2266,7 +2272,9 @@ async def telegram_relay_event(event: dict):
     elif et == 'turn_done':
         await tg_flush_now(turn, final=True)
         # Remove only if we're the active turn for this sid (a quick
-        # follow-up may have replaced us already).
+        # follow-up may have replaced us already). Reset origin so a
+        # new turn from the web doesn't carry over the last TG sender.
+        turn.origin_chat_id = None
         if state.tg_turns.get(sid) is turn:
             state.tg_turns.pop(sid, None)
 
