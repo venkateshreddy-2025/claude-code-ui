@@ -28,3 +28,11 @@ claude-ui/
 # OS / tools
 *.log
 node_modules/
+
+# Local-only docs / notes — never tracked. Contains operator details
+# (paths, ports, tokens) for a specific machine; not shareable.
+LOCAL_NOTES.md
+*.local.md
+*.local
+secrets/
+.secrets/
