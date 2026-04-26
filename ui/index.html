@@ -1411,6 +1411,18 @@
   // ───── helpers ─────
   function escapeHTML(s){return s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 
+  // Strip the bridge's `|SEND| <path> |` markers from any text we're
+  // about to display. The server does this server-side before
+  // persisting to chat.json, so reloads are clean — but during
+  // streaming the marker arrives in deltas and would briefly flash
+  // on screen until turn_done fixes the bubble. Strip on render so
+  // it never appears.
+  const SEND_MARKER_RE = /\|\s*SEND\s*\|\s*[^|\n]+?\s*\|/g;
+  function stripSendMarkers(text){
+    if (!text || text.indexOf('|') < 0) return text;
+    return text.replace(SEND_MARKER_RE, '').replace(/[ \t]+\n/g,'\n').replace(/\n{3,}/g,'\n\n').replace(/\s+$/, '');
+  }
+
   // Configure marked once it's loaded. GFM = headers, tables, fenced code,
   // strikethrough, task lists. `breaks: true` makes single newlines render
   // as <br> which matches user expectations from chat tools.
@@ -1980,7 +1992,10 @@
 
     let html = '';
     if (msg.role === 'user' && msg.attachments) html += renderAttachments(msg.attachments);
-    html += md(msg.text || '');
+    const displayText = msg.role === 'assistant'
+      ? stripSendMarkers(msg.text || '')
+      : (msg.text || '');
+    html += md(displayText);
     // Bot-side attachments (files claude wrote during the turn) go
     // BELOW the reply text, the way Telegram shows them.
     if (msg.role === 'assistant' && msg.attachments && msg.attachments.length){
@@ -2172,19 +2187,23 @@
     if (streamingBubble){
       streamingBubble.classList.remove('streaming');
       const raw = streamingBubble.dataset.raw || streamingBubble.innerText;
+      // Strip `|SEND| <path> |` markers before rendering — keep
+      // the raw text on dataset for copy/fork actions but display
+      // the cleaned version.
+      const display = stripSendMarkers(raw);
       // If the turn isn't actually finished (claude is still thinking /
       // running tools between text blocks), keep a blinking cursor at
       // the end so the typewriter effect persists. The cursor goes away
       // for real on `turn_done` via finishStreamingCursors().
       const stillThinking = isBusy();
-      streamingBubble.innerHTML = md(raw)
+      streamingBubble.innerHTML = md(display)
         + (stillThinking ? '<span class="stream-cursor pending"></span>' : '');
       const wrap = streamingBubble.closest('.msg');
       if (wrap){
-        wrap.dataset.text = raw;
+        wrap.dataset.text = display;
         const stack = streamingBubble.closest('.bubble-stack');
         if (stack && !stack.querySelector('.msg-actions')){
-          stack.appendChild(buildMsgActions({role:'assistant', text: raw, id}, streamingBubble));
+          stack.appendChild(buildMsgActions({role:'assistant', text: display, id}, streamingBubble));
         }
       }
       refreshLastBotForkButton();

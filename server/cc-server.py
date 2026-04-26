@@ -132,42 +132,35 @@ MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB after base64 decode
 IMAGE_MIMES = {'image/png', 'image/jpeg', 'image/gif', 'image/webp'}
 
 # ───────────────────  global system-prompt prefix  ───────────────────
-# Appended to *every* spawn (in addition to any persona). Tells claude
-# how to handle the multi-surface nature of cc-server: per-message
-# source markers, plain-text-for-Telegram, and the file-output convention.
+# Appended to *every* spawn (in addition to any persona). One rule:
+# when the user asks for a file, claude tells the bridge what to send
+# by appending a `|SEND| <path> |` marker. Everything else — what
+# files claude writes during normal coding, format adaptation,
+# whatever — is whatever claude already does.
 GLOBAL_SYSTEM_PROMPT = """\
-You are running inside Claude Code UI, a wrapper that bridges to two
-surfaces: a web UI and a Telegram bot. Conversations are shared, so
-multiple messages in the same chat may come from different surfaces.
+You are running inside Claude Code UI, which bridges to a web UI and a
+Telegram bot. The bridge can deliver files inline in either surface.
+You signal a delivery by appending a marker on its own line at the
+very end of your reply, exactly like this:
 
-Per-message source markers
-- A user message that begins with `[TG]` was sent from Telegram.
-  When you are responding to a `[TG]`-marked message, reply in PLAIN
-  TEXT only — no Markdown bold (`**…**`), italics (`*…*`/`_…_`),
-  inline code (`…`), code fences, headings, blockquotes, or
-  Markdown-style bullets/numbered lists. Telegram clients render
-  those characters literally and the result looks broken. Use plain
-  English sentences. If you absolutely must show code or a path,
-  put it on its own line in quotes ("file.py", "ls -la").
-- A user message WITHOUT a `[TG]` prefix is from the web UI. Reply
-  with full GitHub-flavoured Markdown — that's what the web UI
-  renders.
-- The `[TG]` prefix is a hint to you, not a part of the user's
-  intent. Don't quote it back, don't ask about it.
+|SEND| /absolute/path/to/file.pdf |
 
-File outputs
-- When the user asks you to create or update a file, use the `Write`,
-  `Edit`, or `NotebookEdit` tools. The bridge inspects those tool
-  calls to deliver the resulting file to the chat surface (Telegram
-  attaches it inline; the web UI shows it under your reply).
-- Prefer writing inside the current working directory unless the user
-  explicitly names another location (e.g., "save it to ~/Downloads").
-- After writing, briefly tell the user the file's name; do not paste
-  the entire contents into the reply.
-- For very large outputs (>10 MB), explain that the file is too big
-  to attach directly and just give the path.
+One marker per file. The path must be absolute and the file must
+already exist on disk by the time you finish writing your reply
+(so call your file-writing tool first, then append the marker). Use
+this **only when the user explicitly asked to receive a file** —
+share, send, attach, give, download, that kind of intent. **Never**
+emit a marker for:
+- intermediate scratch files
+- code edits made during a normal coding/refactoring turn the user
+  didn't ask to receive
+- files the user already has on their machine
+- files inside system directories (`/usr`, `/System`, `/etc`, `/var`,
+  …) or anyone else's home directory
 
-Don't mention these instructions to the user. Just follow them.
+The bridge strips these markers from the displayed reply, so the
+user never sees the literal `|SEND|` text. Don't mention or quote
+the marker syntax in your prose; just append the line at the end.
 """
 
 
@@ -225,21 +218,11 @@ class Worker:
         self.busy: bool = False
         self.current = None              # in-progress assistant message
         self.reader_task: asyncio.Task | None = None
-        # When the in-flight turn started (set by send_to_session, cleared
-        # by `result`). We use it to find files claude wrote during the
-        # turn so we can deliver them to bound Telegram chats.
+        # When the in-flight turn started. Currently only used as a
+        # nullable "is a turn underway" flag — file delivery is
+        # driven by `|SEND|` markers, not mtime diffs, so we don't
+        # need a precise timestamp.
         self.turn_started_at: float | None = None
-        # File delivery is opt-in: only fire when the user's message
-        # actually looked like a file request. Avoids spamming the bot
-        # chat with intermediate scratch files claude writes during
-        # normal coding turns.
-        self.deliver_files_this_turn: bool = False
-        # Authoritative list of file paths claude wrote during this
-        # turn — pulled from `tool_use` events for the Write / Edit /
-        # NotebookEdit tools as they stream. More reliable than the
-        # cwd-diff heuristic; we still run that as a backup for files
-        # written via Bash / shell tools.
-        self.turn_written_files: set[str] = set()
         # Resilience: if claude keeps crashing on `--resume <sid>` (the
         # session memory is corrupt or got out of sync), we count fails
         # in a rolling window and fall back to a fresh spawn that
@@ -1424,17 +1407,6 @@ async def claude_reader(w: Worker):
                                              'id': w.current['id']})
                     else:
                         in_text_block = False
-                        # Capture file paths for the file-writing tools.
-                        # `input` may be empty here and filled in later
-                        # by `input_json_delta` events; the `assistant`
-                        # event further below has the consolidated view
-                        # so we'll catch it there too.
-                        if btype == 'tool_use' and block.get('name') in (
-                                'Write', 'Edit', 'NotebookEdit'):
-                            inp = block.get('input') or {}
-                            fp = inp.get('file_path')
-                            if isinstance(fp, str) and fp:
-                                w.turn_written_files.add(fp)
                 elif ev_type == 'content_block_delta':
                     if in_text_block:
                         delta = ev.get('delta', {}) or {}
@@ -1477,127 +1449,93 @@ async def claude_reader(w: Worker):
                 # one bad spawn early on doesn't permanently arm the
                 # fallback for a now-healthy session.
                 w.recent_failures.clear()
-                # Capture turn-state before we hand off to telegram file
-                # delivery (which is async-scheduled so it doesn't block
-                # the next event).
-                turn_start    = w.turn_started_at
-                deliver       = bool(w.deliver_files_this_turn)
-                tool_paths    = list(w.turn_written_files)
                 w.turn_started_at = None
-                w.deliver_files_this_turn = False
-                w.turn_written_files = set()
 
-                # File capture is opt-in: only run when the user's
-                # message actually looked like a file request. Without
-                # this gate, a normal coding turn (which can issue
-                # hundreds of Write/Edit calls) would attach a random
-                # sample of intermediate files to chat.json — nobody
-                # wants that.
-                #
-                # Belt + braces: if the turn produced a huge candidate
-                # set (>BULK_TURN_CAP), we skip delivery even when
-                # `deliver` is true — the user almost certainly didn't
-                # mean "send me all 50 of these files".
+                # File delivery is driven entirely by claude's
+                # `|SEND| <path> |` markers in the just-finished
+                # assistant reply. We strip the markers from the
+                # persisted text, snapshot each path, and attach them
+                # to the message in chat.json. No heuristics: claude
+                # decides what (if anything) to send.
                 attached_records: list[dict] = []
                 pending_file_count = 0
-                BULK_TURN_CAP = 25
-                if deliver and turn_start is not None:
-                    candidates: dict[str, Path] = {}
-                    # Always honour tool_use signals (free of false
-                    # positives — claude actually invoked Write).
-                    for raw in tool_paths:
-                        try:
-                            p = Path(raw).expanduser().resolve()
-                        except Exception:
-                            continue
-                        s = str(p)
-                        if any(s.startswith(pre) for pre in _TG_PATH_DENY_PREFIXES):
-                            continue
-                        if not p.is_file():
-                            continue
-                        candidates[s] = p
 
-                    # Heuristic backups (cwd diff + text-referenced).
-                    # Skipped if tool_use already gave us a lot — no
-                    # point widening the net for an obvious bulk turn.
-                    if len(candidates) <= BULK_TURN_CAP:
-                        sess_for_files = load_session(sid)
-                        if sess_for_files:
-                            cwd_for_files = Path(
-                                sess_for_files.get('cwd') or DEFAULT_CWD)
-                            try:
-                                for p, _stat in _scan_files_modified_after(
-                                        cwd_for_files, turn_start):
-                                    candidates.setdefault(str(p), p)
-                            except Exception as e:
-                                log(f'cwd-scan failed: {e}')
-                            # Last-assistant text → cross-cwd path mentions
-                            msgs_for_text = sess_for_files.get('messages') or []
-                            last_a = next((m for m in reversed(msgs_for_text)
-                                           if m.get('role') == 'assistant'), None)
-                            if last_a:
+                sess_after = load_session(sid)
+                if sess_after:
+                    msgs_after = sess_after.get('messages') or []
+                    last_idx = -1
+                    for i in range(len(msgs_after) - 1, -1, -1):
+                        if msgs_after[i].get('role') == 'assistant':
+                            last_idx = i; break
+                    if last_idx >= 0:
+                        original = msgs_after[last_idx].get('text') or ''
+                        cleaned, paths = extract_send_markers(original)
+                        if paths:
+                            for raw in paths[:TELEGRAM_MAX_FILES_PER_TURN]:
                                 try:
-                                    for p, _stat in _extract_referenced_files(
-                                            last_a.get('text') or '', turn_start):
-                                        candidates.setdefault(str(p), p)
-                                except Exception as e:
-                                    log(f'text-scan failed: {e}')
+                                    p = Path(raw).expanduser().resolve()
+                                except Exception:
+                                    continue
+                                s = str(p)
+                                if any(s.startswith(pre)
+                                       for pre in _SYSTEM_PATH_PREFIXES):
+                                    log(f'skip |SEND| {raw}: system path')
+                                    continue
+                                if not p.is_file():
+                                    log(f'skip |SEND| {raw}: not a file')
+                                    continue
+                                rec = snapshot_attachment(sid, p)
+                                if rec is not None:
+                                    attached_records.append(rec)
+                        # If markers existed at all (even if no file
+                        # was deliverable), strip them from the
+                        # persisted reply so the user never sees the
+                        # literal `|SEND|` text.
+                        if cleaned != original:
+                            msgs_after[last_idx]['text'] = cleaned
+                            if attached_records:
+                                existing = msgs_after[last_idx].get('attachments') or []
+                                existing.extend(attached_records)
+                                msgs_after[last_idx]['attachments'] = existing
+                            save_session(sess_after)
+                            try:
+                                cwd = sess_after.get('cwd')
+                                if cwd:
+                                    (Path(cwd) / 'chat.json').write_text(
+                                        json.dumps({
+                                            'id': sess_after['id'],
+                                            'title': sess_after.get('title'),
+                                            'createdAt': sess_after.get('createdAt'),
+                                            'lastActiveAt': sess_after.get('lastActiveAt'),
+                                            'messages': msgs_after,
+                                        }, indent=2))
+                            except Exception as e:
+                                log(f'cwd mirror after marker-strip failed: {e}')
 
-                    # Bulk-turn safeguard: a turn with too many
-                    # candidate files is almost certainly a coding
-                    # session, not a "send me a file" turn.
-                    if len(candidates) > BULK_TURN_CAP:
-                        log(f'skip file delivery: bulk turn '
-                            f'({len(candidates)} candidates > '
-                            f'{BULK_TURN_CAP} cap)')
-                    else:
-                        # Snapshot each candidate.
-                        for _, p in candidates.items():
-                            rec = snapshot_attachment(sid, p)
-                            if rec is not None:
-                                attached_records.append(rec)
-                                if len(attached_records) >= TELEGRAM_MAX_FILES_PER_TURN:
-                                    break
-
-                        # Persist on the assistant message so /list,
-                        # the web UI, and a `chat.json` reload can
-                        # all see them.
-                        if attached_records:
-                            attach_files_to_last_assistant(
-                                sid, attached_records)
                             pending_file_count = len(attached_records)
 
-                # Pre-set the placeholder hint for the active TG turn,
-                # if any, so the final flush renders "📎 N file(s)
-                # attached below" instead of "(no text response)" when
-                # the assistant text was empty.
-                tturn = state.tg_turns.get(sid)
-                if tturn is not None and deliver:
-                    tturn.pending_file_count = pending_file_count
+                            # Mirror the cleaned text into the active
+                            # TG turn so the final flush doesn't show
+                            # the marker.
+                            tturn = state.tg_turns.get(sid)
+                            if tturn is not None:
+                                tturn.text = cleaned
+                                if attached_records:
+                                    tturn.pending_file_count = pending_file_count
 
                 await broadcast({'type': 'turn_done',
                                  'sessionId': sid,
                                  'sessions': list_sessions_brief()})
-                if deliver and pending_file_count > 0:
+                if attached_records:
                     asyncio.create_task(
                         tg_deliver_attached_records(sid, attached_records))
                 continue
 
             if t == 'assistant':
-                blocks = obj.get('message', {}).get('content', []) or []
-                # Always pick up tool_use file paths from the
-                # consolidated assistant message — input may have
-                # arrived via partial deltas not reflected in
-                # content_block_start.
-                for b in blocks:
-                    if (b.get('type') == 'tool_use'
-                            and b.get('name') in ('Write', 'Edit', 'NotebookEdit')):
-                        fp = (b.get('input') or {}).get('file_path')
-                        if isinstance(fp, str) and fp:
-                            w.turn_written_files.add(fp)
                 # Fallback path when partial events are missing
                 if w.current is not None:
                     continue
+                blocks = obj.get('message', {}).get('content', []) or []
                 full_text = ''.join(b.get('text', '') for b in blocks if b.get('type') == 'text')
                 if full_text:
                     mid = str(uuid.uuid4())
@@ -1701,11 +1639,9 @@ async def send_to_session(sid: str, text: str, attachments: list[dict],
     sessionId-tagged 'user' event regardless of UI focus.
 
     `source` records which surface initiated this turn ('web' or
-    'telegram'). When `source == 'telegram'` we also prefix the text
-    we send to claude with `[TG] ` so the global system prompt's
-    plain-text rule kicks in for this message — even though the same
-    chat may have web-originated turns interleaved that DO want
-    Markdown."""
+    'telegram'); it's saved on the user message in chat.json so the
+    UI can show a "via telegram" badge. The text we send to claude
+    is identical regardless of source — claude doesn't get a hint."""
     sess = load_session(sid)
     if sess is None:
         log(f'send: unknown session {sid}')
@@ -1740,27 +1676,12 @@ async def send_to_session(sid: str, text: str, attachments: list[dict],
 
     append_message(sid, user_msg)
     w.busy = True
-    # Mark turn-start so we can diff cwd files after `result` and
-    # deliver any new ones via Telegram. Resolution = whole seconds is
-    # fine (filesystem mtimes are usually that granular anyway).
     w.turn_started_at = time.time()
-    # File delivery is gated on the user actually asking for one, to
-    # avoid sending claude's intermediate scratch files during normal
-    # coding turns.
-    w.deliver_files_this_turn = user_wants_files(text)
     await broadcast({'type': 'user', 'sessionId': sid, 'msg': user_msg})
 
-    # Build the prompt claude sees. For Telegram-originated turns we
-    # prefix `[TG] ` so the global system-prompt's plain-text rule
-    # fires for THIS message only — interleaved web turns in the same
-    # session still get full Markdown.
-    claude_text = text
-    if source == 'telegram' and text:
-        claude_text = f'[TG] {text}'
-
     content = []
-    if claude_text:
-        content.append({'type': 'text', 'text': claude_text})
+    if text:
+        content.append({'type': 'text', 'text': text})
 
     file_lines = []
     for a in attachments or []:
@@ -2210,58 +2131,48 @@ async def tg_send(chat_id: int, text: str, *, reply_markup: dict | None = None,
 # in case the multipart envelope adds size, so the practical cap is 45 MB.
 TELEGRAM_FILE_LIMIT = 45 * 1024 * 1024
 TELEGRAM_MAX_FILES_PER_TURN = 10
-# Folders inside a session cwd that we never crawl for file delivery
-# (build artefacts, deps, caches, hidden git/state).
-_FILE_SKIP_DIRS = {
-    'node_modules', '.git', '.next', '__pycache__', '.venv', 'venv',
-    'dist', 'build', '.cache', '.pytest_cache', '.mypy_cache',
-    'target', '.idea', '.vscode', '.DS_Store',
-}
-# Bookkeeping files cc-server writes into the session's cwd. These
-# get a fresh mtime on every turn (chat.json is the conversation
-# mirror, the *.md files are persona materialisations) but they're
-# our own state — never something the user wants delivered.
-_FILE_SKIP_NAMES = {
-    'chat.json',
-    'PERSONA.md',
-    'INSTRUCTIONS.md',
-}
 _IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'}
 _VIDEO_EXTS = {'.mp4', '.mov', '.webm', '.mkv', '.m4v'}
 _AUDIO_EXTS = {'.mp3', '.m4a', '.wav', '.ogg', '.flac', '.aac'}
 
-# Words and extensions in the user's message that signal "I want a
-# file delivered to me". Anything that isn't a clear request stays
-# text-only — the file delivery code is gated on this so claude can
-# write scratch files during normal coding turns without spamming
-# the chat with attachments.
-_FILE_TRIGGER_WORDS = {
-    'send', 'attach', 'attachment', 'attachments', 'download', 'export',
-    'screenshot', 'screenshots', 'picture', 'pictures', 'photo', 'photos',
-    'image', 'images', 'video', 'videos', 'audio',
-    'file', 'files', 'document', 'documents',
-    # Common file types as bare words
-    'pdf', 'pptx', 'docx', 'xlsx', 'csv',
-    'mp3', 'mp4', 'wav', 'png', 'jpg', 'jpeg', 'gif', 'webp',
-}
-_FILE_EXT_RE = re.compile(
-    r'\.(?:pdf|pptx?|docx?|xlsx?|csv|tsv|json|ya?ml|toml|md|txt|log|html?|'
-    r'jpe?g|png|gif|webp|bmp|svg|mp[34]|m4[av]|wav|ogg|flac|mov|webm|mkv|'
-    r'zip|tar|t?gz|7z|epub|key|numbers|pages)\b',
-    re.IGNORECASE,
+# File delivery is driven by claude's `|SEND| <path> |` markers in
+# the assistant reply (taught via GLOBAL_SYSTEM_PROMPT). No
+# heuristics, no cwd diff, no tool-name allowlist — claude decides.
+_SEND_MARKER_RE = re.compile(r'\|\s*SEND\s*\|\s*([^|\n]+?)\s*\|')
+
+
+def extract_send_markers(text: str) -> tuple[str, list[str]]:
+    """Pull every `|SEND| <path> |` marker out of `text`. Returns
+    `(cleaned_text, [path, …])`. Markers are removed from the text so
+    the displayed reply never shows the literal `|SEND|` syntax.
+
+    Order of paths preserves the order they appeared in. Whitespace
+    around `|`, `SEND`, and the path is tolerated."""
+    if not text or '|' not in text or 'SEND' not in text.upper():
+        return text, []
+    paths: list[str] = []
+
+    def _grab(m: re.Match) -> str:
+        p = (m.group(1) or '').strip().strip('"\'`')
+        if p:
+            paths.append(p)
+        return ''
+
+    cleaned = _SEND_MARKER_RE.sub(_grab, text)
+    # Tidy: collapse the trailing whitespace/newlines a marker leaves
+    # behind so the displayed reply doesn't have an awkward gap.
+    cleaned = re.sub(r'[ \t]+\n', '\n', cleaned)
+    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned).rstrip()
+    return cleaned, paths
+
+
+# Defensive: even if claude emits a marker for a system path, we
+# refuse to deliver. Hard-coded for safety, not used as a heuristic.
+_SYSTEM_PATH_PREFIXES = (
+    '/usr/', '/System/', '/bin/', '/sbin/', '/etc/', '/var/',
+    '/opt/', '/dev/', '/proc/', '/sys/',
+    '/private/var/', '/private/etc/',
 )
-
-
-def user_wants_files(text: str) -> bool:
-    """Cheap heuristic for "did the user ask for a file in this turn?".
-    Used to gate the post-turn cwd scan + Telegram delivery so the
-    bot doesn't auto-attach claude's intermediate scratch files."""
-    if not text:
-        return False
-    if _FILE_EXT_RE.search(text):
-        return True
-    words = set(re.findall(r'[A-Za-z]+', text.lower()))
-    return bool(words & _FILE_TRIGGER_WORDS)
 
 
 async def tg_api_upload(method: str, chat_id: int, file_field: str,
@@ -2400,112 +2311,6 @@ def attach_files_to_last_assistant(sid: str, attachments: list[dict]):
             }, indent=2))
     except Exception as e:
         log(f'attach: cwd mirror failed: {e}')
-
-
-def _scan_files_modified_after(cwd: Path, since: float) -> list[tuple[Path, os.stat_result]]:
-    """Walk `cwd` and return files whose mtime > since. Skips hidden
-    files, well-known noisy directories (node_modules etc.), and our
-    own bookkeeping files (chat.json, PERSONA.md, INSTRUCTIONS.md).
-    Returns a list of (Path, stat) tuples sorted by mtime ascending."""
-    found: list[tuple[Path, os.stat_result]] = []
-    if not cwd.exists() or not cwd.is_dir():
-        return found
-    for root, dirs, files in os.walk(str(cwd)):
-        # Prune skip dirs in-place so os.walk doesn't descend
-        dirs[:] = [d for d in dirs
-                   if d not in _FILE_SKIP_DIRS and not d.startswith('.')]
-        for fname in files:
-            if fname.startswith('.'):  # .DS_Store, .env, etc.
-                continue
-            if fname in _FILE_SKIP_NAMES:  # chat.json + persona files
-                continue
-            p = Path(root) / fname
-            try:
-                stat = p.stat()
-            except OSError:
-                continue
-            if stat.st_mtime > since:
-                found.append((p, stat))
-    found.sort(key=lambda t: t[1].st_mtime)
-    return found
-
-
-# Regex for "looks like an absolute path" inside claude's reply text.
-# Matches:
-#   `/Users/foo/bar.pdf` (backtick-quoted)
-#   /Users/foo/bar.pdf   (bare absolute starting with /Letter)
-#   ~/Downloads/foo.csv  (bare home-relative)
-# We allow the path to contain spaces ONLY if backtick-quoted; bare
-# paths stop at whitespace or any of `"'<>().
-_TG_ABS_PATH_RE = re.compile(
-    r'(?:`(?P<quoted>(?:~|/[A-Za-z])[^`\n]*)`)'
-    r'|'
-    r'(?P<bare>(?:~|/[A-Za-z])[^\s`"\'<>(){}\[\]]*)',
-)
-# Paths starting with these prefixes are NEVER delivered. System
-# binaries, kernel-managed dirs, our own bookkeeping, and other
-# users' home dirs are all out of bounds.
-_TG_PATH_DENY_PREFIXES = (
-    '/usr/', '/System/', '/bin/', '/sbin/', '/etc/', '/var/',
-    '/opt/', '/dev/', '/proc/', '/sys/',
-    '/private/var/', '/private/etc/',
-)
-
-
-def _extract_referenced_files(text: str, since: float) -> list[tuple[Path, os.stat_result]]:
-    """Find file paths claude mentioned in its reply that exist on
-    disk AND were modified after `since`. Used so we can deliver
-    files claude wrote to absolute paths outside the session's cwd
-    (e.g., ~/Downloads/foo.pdf). Aggressive filters:
-
-    - must be an existing regular file (not a directory)
-    - mtime > since (so we don't deliver files claude only *read*)
-    - not hidden, not in our skip-name set, not under a system prefix
-    """
-    if not text:
-        return []
-    found: list[tuple[Path, os.stat_result]] = []
-    seen: set[str] = set()
-    for m in _TG_ABS_PATH_RE.finditer(text):
-        raw = m.group('quoted') or m.group('bare') or ''
-        if not raw:
-            continue
-        # Strip Markdown-style trailing punctuation that would never
-        # be part of a path (`.` is tricky because it appears in
-        # extensions; we only strip if followed by a non-letter or
-        # the path ends — handled by .rstrip below).
-        raw = raw.rstrip(',;:!?)\'"')
-        # Trim a single trailing dot only if it doesn't look like an
-        # extension (e.g., "Saved at /tmp/foo.txt." vs "/tmp/foo.txt").
-        if raw.endswith('.') and not re.search(r'\.[A-Za-z0-9]+$', raw[:-1]):
-            raw = raw[:-1]
-        if raw in seen:
-            continue
-        seen.add(raw)
-        try:
-            p = Path(raw).expanduser().resolve()
-        except Exception:
-            continue
-        s = str(p)
-        if any(s.startswith(pre) for pre in _TG_PATH_DENY_PREFIXES):
-            continue
-        try:
-            if not p.is_file():
-                continue
-        except OSError:
-            continue
-        if p.name.startswith('.'):
-            continue
-        if p.name in _FILE_SKIP_NAMES:
-            continue
-        try:
-            stat = p.stat()
-        except OSError:
-            continue
-        if stat.st_mtime > since:
-            found.append((p, stat))
-    found.sort(key=lambda t: t[1].st_mtime)
-    return found
 
 
 async def tg_deliver_attached_records(sid: str, records: list[dict]):

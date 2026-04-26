@@ -291,76 +291,65 @@ sent from the web UI are mirrored to bound Telegram chats with a
 to *other* bound users with a "📱 from Telegram: …" prefix (the
 original sender's chat is never echoed back to itself).
 
-### Per-message source + format adaptation
+### Per-message source
 
 The same chat session can receive interleaved messages from the web
-UI and Telegram. Each user message is tagged with its source on
-disk (`source: "telegram"` for bridge messages, omitted for web).
+UI and Telegram. Each user message is tagged with `source` on disk
+(`source: "telegram"` for bridge messages, omitted for web). The
+web UI shows a small `✈︎ via telegram` badge under user messages
+that came from the bridge.
 
-When the bridge sends a message to claude, it prefixes the user's
-text with `[TG] `. A global system-prompt prefix tells claude:
-
-- **`[TG]`-marked messages** → reply in **plain text only**. No
-  Markdown bold (`**…**`), italics, inline code, code fences,
-  headers, blockquotes, or Markdown-style bullets. Telegram clients
-  render those characters literally.
-- **No `[TG]` prefix** → full GitHub-flavoured Markdown (the web UI
-  renders that natively).
-
-So when you switch from Telegram to the web UI mid-conversation,
-claude immediately resumes using Markdown — no manual switch needed.
-The web UI also shows a small `✈︎ via telegram` badge under user
-messages that came from the bridge.
+The text claude sees is identical regardless of source. Markdown is
+rendered properly in the web UI; on Telegram, asterisks and
+backticks display literally. (Format adaptation is intentionally
+out of scope — file delivery is the high-value protocol; cosmetic
+Markdown rendering can wait.)
 
 ### File delivery
 
-The bridge can deliver files claude writes during a turn (via its
-`Write`, `Edit`, or shell tools) directly into your Telegram chat.
+The bridge can deliver files claude creates during a turn directly
+into your Telegram chat. The mechanism is a single, simple protocol:
+**claude appends `|SEND| <absolute-path> |` markers to its reply when
+(and only when) the user explicitly asked to receive a file**.
 
-**Opt-in by default.** File delivery only fires when your message
-looks like it's asking for one — phrases like *"send me…"*, *"make a
-PDF"*, *"give me a screenshot"*, or any explicit file extension
-(*"create hello.txt"*, *"export to .csv"*) trigger the post-turn
-scan. Plain coding messages (*"refactor this"*, *"fix the bug"*)
-leave the bot text-only so claude can use scratch files freely
-without spamming your Telegram.
+The marker is taught to claude via a global system-prompt prefix
+applied on every spawn. No heuristics, no trigger-word lists, no
+cwd-diff — claude decides what's worth sending based on the
+conversation, and the bridge just acts on the markers.
 
-**Bulk-turn safeguard.** A normal coding session may write or edit
-hundreds of files in a single turn. Even if the trigger heuristic
-matched (e.g., the user said "send me…"), if the turn produces more
-than 25 candidate files we skip delivery entirely and just log it.
-The user almost certainly didn't mean "snapshot all 200 files I
-just refactored." Ask claude for a specific file by name to get it.
+```
+User: send me a one-line joke as joke.txt
 
-**Three signal sources** (most authoritative first):
+Claude: Done — here it is.
 
-1. **`tool_use` events from claude's stream** — `Write`, `Edit`, and
-   `NotebookEdit` tools emit the exact `file_path` claude is writing
-   to. We capture this directly from the JSON stream, so it's
-   100% reliable for files claude creates or modifies via these
-   tools.
-2. **cwd diff** — files claude writes via shell tools (Bash, etc.)
-   inside the session's working directory.
-3. **Path mentions in the reply text** — backstop for cross-cwd
-   writes claude announces (*"Saved at ~/Downloads/joke.md"*).
-   Strict filters: regular files only, mtime > turn start, nothing
-   under system prefixes (`/usr/`, `/System/`, `/etc/`, etc.), no
-   hidden files.
+|SEND| /Users/me/Downloads/joke.txt |
+```
 
-**Persistence in `chat.json`.** Each delivered file is *snapshotted*
-into the session's uploads dir (`<CC_DATA_DIR>/cc-uploads/<sid>/`)
-and the resulting record `{name, mimeType, size, path, url}` is
-appended to the assistant message in `chat.json`. This means:
+The bridge:
 
-- Reloading the chat in the web UI shows the attachments under the
-  reply (just like user-uploaded files).
-- The `chat.json` file in the session's working directory is a
-  complete portable snapshot of the conversation including files.
-- Files larger than `CC_ATTACH_SNAPSHOT_LIMIT` (default 10 MB) are
-  *delivered to Telegram* but not snapshotted locally — the chat
-  history shows them as `{name, size, note: "too large to keep a
-  copy"}` rather than maintaining a copy. This avoids cloning entire
-  repos or large binaries.
+1. Snapshots each marker's path into the session's uploads dir
+   (`<CC_DATA_DIR>/cc-uploads/<sid>/bot-<id>-<filename>`).
+2. Records the file as `{name, mimeType, size, path, url}` on the
+   assistant message in `chat.json`.
+3. Strips the markers from the persisted text, so the displayed
+   reply reads "Done — here it is." with the file attached
+   below.
+4. Delivers the file via the right Bot API method to every
+   Telegram chat bound to that session.
+
+**Persistence.** Snapshots live in the same per-session uploads dir
+as user-uploaded files. Reload the web UI later and the file
+re-appears under the assistant's reply. Delete the session and the
+snapshots go with it. Files larger than `CC_ATTACH_SNAPSHOT_LIMIT`
+(default 10 MB) get a record without a snapshot — the bridge
+delivers them to Telegram but doesn't keep a local copy. This avoids
+cloning whole repos.
+
+**Defensive constants.** Even if claude emits a marker for a system
+path (`/usr/`, `/System/`, `/etc/`, `/var/`, `/opt/`, `/dev/`,
+`/proc/`, `/sys/`, `/private/var/`, `/private/etc/`), the bridge
+refuses to deliver. Other than that, paths claude writes into chat
+are honoured.
 
 When delivery does fire, each file is sent through the API method
 that gives the best native preview on Telegram clients:
