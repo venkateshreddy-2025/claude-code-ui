@@ -1113,10 +1113,14 @@
   #snapshotsModal[hidden]{display:none}
   #snapshotsModal h3{flex:0 0 auto}
   #snapshotsModal > .setting-help{flex:0 0 auto}
+  /* Last flex-child of a flex-column modal — flex flow naturally puts
+     it at the bottom (combined with `margin-top:auto`). Do NOT add
+     `position:sticky;bottom:0`: when the modal has its own transform
+     (we use translate() for centering), sticky resolves against the
+     wrong containing block and the action row floats mid-dialog. */
   #snapshotsModal .modal-actions{flex:0 0 auto;
     margin-top:auto;padding:14px 0 16px;border-top:1px solid var(--border-soft);
     background:linear-gradient(to top, var(--bg-2), var(--bg-2) 70%, transparent);
-    position:sticky;bottom:0;
     display:flex;justify-content:space-between;align-items:center;gap:8px}
   #snapshotsModal .modal-actions #snapshotsRefresh{margin-right:auto}
   .snap-create{display:flex;gap:8px;margin:14px 0 0;flex:0 0 auto}
@@ -1157,10 +1161,15 @@
   #routinesModal[hidden]{display:none}
   #routinesModal h3{flex:0 0 auto}
   #routinesModal > .setting-help{flex:0 0 auto}
+  /* Last flex-child of a flex-column modal — flex flow puts it at the
+     bottom naturally (with `margin-top:auto`). Do NOT add
+     `position:sticky;bottom:0`: the modal uses `transform:translate()`
+     for centering, which makes it the sticky-positioning containing
+     block and resolves bottom:0 to the WRONG edge — the action row
+     ends up floating in the middle of the dialog. */
   #routinesModal .modal-actions{flex:0 0 auto;
     margin-top:auto;padding:14px 0 16px;border-top:1px solid var(--border-soft);
     background:linear-gradient(to top, var(--bg-2), var(--bg-2) 70%, transparent);
-    position:sticky;bottom:0;
     /* Refresh on the left, Done on the right. Was inheriting
        justify-content:flex-end from the base rule, which crammed
        both into the right corner. */
