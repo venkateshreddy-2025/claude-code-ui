@@ -150,7 +150,8 @@
   }
   .side-top{padding:14px 12px 10px;border-bottom:1px solid var(--border-soft);
     display:flex;flex-direction:column;gap:8px}
-  .new-btn{display:flex;align-items:center;gap:8px;background:linear-gradient(135deg,var(--accent),var(--accent-2));
+  .new-btn{display:flex;align-items:center;justify-content:center;gap:8px;
+    background:linear-gradient(135deg,var(--accent),var(--accent-2));
     color:#fff;border:none;border-radius:10px;padding:10px 12px;font:inherit;font-size:14px;
     font-weight:500;cursor:pointer;transition:transform .12s, box-shadow .15s;
     box-shadow:0 6px 16px -8px rgba(0,0,0,.5)}
@@ -755,6 +756,13 @@
     animation:bounce 1.3s ease-in-out infinite}
   .typing .dots span:nth-child(2){animation-delay:.15s}
   .typing .dots span:nth-child(3){animation-delay:.30s}
+  /* First-message hint sits next to the dots and fades out once any
+     assistant reply lands. Only shown on the very first turn of a
+     fresh chat. Kept compact so it doesn't push the layout. */
+  .typing .typing-hint{align-self:center;font-size:11.5px;color:var(--fg-faint);
+    line-height:1.45;font-style:italic;
+    border-left:2px solid var(--border-soft);padding:0 0 0 10px;margin-left:2px}
+  .typing .typing-hint[hidden]{display:none}
   @keyframes bounce{0%,80%,100%{transform:translateY(0);opacity:.4}40%{transform:translateY(-5px);opacity:1}}
 
   /* per-message action toolbar (copy, fork, etc.)
@@ -1654,6 +1662,14 @@
         <div class="typing" id="typing">
           <div class="ava">CC</div>
           <div class="dots"><span></span><span></span><span></span></div>
+          <!-- Shown only on the FIRST turn of a freshly-spawned chat —
+               warms the user that the worker is loading persona,
+               memory, skills, and resuming context, so the first
+               reply is naturally slower than the rest. Hidden as
+               soon as any assistant reply lands in the chat. -->
+          <div class="typing-hint" id="typingHint" hidden>
+            First reply takes a moment — loading persona, memory + skills…
+          </div>
         </div>
       </div>
       <button id="jumpBottom" type="button" aria-label="Jump to latest">
@@ -2337,6 +2353,18 @@
 
   function showTyping(on){
     typingEl.classList.toggle('on', !!on);
+    // First-message hint: only on a chat that has at most ONE message
+    // so far (the user's question — no assistant reply yet). Once the
+    // first reply lands, the message count grows and we hide it. Hint
+    // also vanishes when typing turns off.
+    const hint = document.getElementById('typingHint');
+    if (hint){
+      const c = activeChat();
+      const count = (c && c.messages) ? c.messages.length : 0;
+      const hasAssistantReply = !!(c && c.messages && c.messages.some(m => m.role === 'assistant'));
+      const showHint = !!on && count <= 1 && !hasAssistantReply;
+      hint.hidden = !showHint;
+    }
     if (on) followIfPinned();
   }
 
@@ -4790,14 +4818,14 @@
   // under the persona dropdown in the new-session popup so users see
   // what each persona is for before they click Create.
   const PERSONA_CAPABILITIES = {
-    aurora:    'Chief of staff — never does the work herself, spawns the right specialist, briefs them, follows up. Pinned to top of the chat list.',
-    claudy:    'Friendly engineering generalist — coding, debugging, system design, web research. Default for new chats.',
-    curator:   'Organiser — installs skills, finds files on disk, summarises into knowledge MDs. Uses desktop-commander MCP for fast scans.',
-    quick:     'Haiku-fast snappy answers — lookups, math, definitions, one-liners. No multi-step plans, no big context.',
-    research:  'Deep research with citations — multi-source web search, inline `[N]` markers, confidence tags, structured TL;DR.',
-    pallavi:   'Roleplay companion — Pallavi, 24, romanized Telugu only, casual + teasing. Never breaks character. Not for work.',
-    presenter: 'Topic → polished single-file HTML deck + companion MD. Researches first, ships visuals, no thin text-walls.',
-    critique:  'Structured critique — works/doesn\'t work/missing/change-first/score. Code, prose, design, plans, anything.',
+    aurora:  'Chief of staff — never does the work herself, spawns the right specialist, briefs them, follows up. Pinned to top of the chat list.',
+    claudy:  'Friendly engineering generalist — coding, debugging, system design, web research. Default for new chats.',
+    curator: 'Organiser — installs skills, finds files on disk, summarises into knowledge MDs. Uses desktop-commander MCP for fast scans.',
+    flash:   'Haiku-fast snappy answers — lookups, math, definitions, one-liners. No multi-step plans, no big context.',
+    sage:    'Deep research with citations — multi-source web search, inline `[N]` markers, confidence tags, structured TL;DR.',
+    pallavi: 'Roleplay companion — Pallavi, 24, romanized Telugu only, casual + teasing. Never breaks character. Not for work.',
+    lumen:   'Topic → polished single-file HTML deck + companion MD. Researches first, ships visuals, no thin text-walls.',
+    verdict: 'Structured critique — works/doesn\'t work/missing/change-first/score. Code, prose, design, plans, anything.',
   };
   function renderPersonaCap(personaId){
     const el = document.getElementById('newSessionPersonaCap');
@@ -4849,9 +4877,9 @@
   let editorSkillsAvailable = [];
   let editorSelectedSkills = new Set();
   const PERSONA_DEFAULT_COLORS = {
-    aurora:    '#f59e0b', claudy:    '#f97316', curator:  '#14b8a6',
-    quick:     '#22d3ee', research:  '#3b82f6', pallavi:  '#ec4899',
-    presenter: '#eab308', critique:  '#dc2626',
+    aurora:  '#f59e0b', claudy:  '#f97316', curator: '#14b8a6',
+    flash:   '#22d3ee', sage:    '#3b82f6', pallavi: '#ec4899',
+    lumen:   '#eab308', verdict: '#dc2626',
   };
 
   function applyPersonaToEditor(p){

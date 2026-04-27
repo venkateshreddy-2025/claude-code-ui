@@ -1670,8 +1670,8 @@ async def start_worker(sid: str, *, force_fresh: bool = False) -> Worker | None:
     else:
         args += ['--session-id', sid]
 
-    log(f'spawning claude sid={sid[:8]} resume={use_resume} cwd={cwd} '
-        f'(fallback_armed={w.fallback_armed})')
+    log(f'spawning claude sid={sid[:8]} resume={use_resume} model={sess_model} '
+        f'cwd={cwd} (fallback_armed={w.fallback_armed})')
     try:
         w.proc = await asyncio.create_subprocess_exec(
             *args,
@@ -2615,14 +2615,14 @@ def save_personas(store: dict):
 # persona via the editor; freshly-created personas without a color
 # get an automatic fallback (UI computes one from the name hash).
 DEFAULT_PERSONA_COLORS = {
-    'aurora':    '#f59e0b',  # sun-bright amber  (orchestrator)
-    'claudy':    '#f97316',  # warm orange       (general default)
-    'curator':   '#14b8a6',  # teal              (organise / install / summarise)
-    'quick':     '#22d3ee',  # cyan              (Haiku — fast snappy)
-    'research':  '#3b82f6',  # deep blue         (multi-source research)
-    'pallavi':   '#ec4899',  # pink              (roleplay / social)
-    'presenter': '#eab308',  # gold              (decks + companion docs)
-    'critique':  '#dc2626',  # crimson           (review / verdict)
+    'aurora':  '#f59e0b',   # sun-bright amber  (orchestrator)
+    'claudy':  '#f97316',   # warm orange       (general default)
+    'curator': '#14b8a6',   # teal              (organise / install / summarise)
+    'flash':   '#22d3ee',   # cyan              (Haiku — fast snappy)
+    'sage':    '#3b82f6',   # deep blue         (multi-source research)
+    'pallavi': '#ec4899',   # pink              (roleplay / social)
+    'lumen':   '#eab308',   # gold              (decks + companion docs)
+    'verdict': '#dc2626',   # crimson           (review / verdict)
 }
 
 # Persona may pin up to this many skills. Skills are appended to the
