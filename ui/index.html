@@ -181,18 +181,20 @@
   .session-item.pinned-top{border:1px solid rgba(245,158,11,.25);
     background:rgba(245,158,11,.04)}
   .session-item.pinned-top:hover{background:rgba(245,158,11,.08)}
-  /* Persona filter chip row above the chat list. */
-  .persona-filter-row{display:flex;flex-wrap:wrap;gap:5px;
-    padding:6px 12px 4px;align-items:center}
-  .persona-filter-row .pf-chip{display:inline-flex;align-items:center;gap:5px;
-    padding:3px 9px;border-radius:11px;border:1px solid var(--border);
-    background:transparent;color:var(--fg-dim);font-size:11.5px;cursor:pointer;
-    transition:background .12s, border-color .12s, color .12s}
-  .persona-filter-row .pf-chip:hover{background:rgba(255,255,255,.04);color:var(--fg)}
-  .persona-filter-row .pf-chip.on{background:rgba(255,255,255,.08);
-    color:var(--fg);border-color:var(--persona-color, var(--accent))}
-  .persona-filter-row .pf-chip .pf-dot{width:7px;height:7px;border-radius:50%;
-    background:var(--persona-color, var(--fg-faint))}
+  /* Persona filter dropdown above the chat list. Compact + scales
+     to many personas without overflowing. */
+  .persona-filter-row{display:flex;align-items:center;gap:8px;
+    padding:6px 12px 4px}
+  .persona-filter-row .pf-label{font-size:10.5px;text-transform:uppercase;
+    letter-spacing:.08em;color:var(--fg-faint);font-weight:600;flex:0 0 auto}
+  .persona-filter-row .pf-select{flex:1;min-width:0;font-size:12px;
+    padding:4px 8px;border:1px solid var(--border);border-radius:6px;
+    background:rgba(255,255,255,.02);color:var(--fg);
+    font-family:inherit;cursor:pointer;
+    transition:border-color .12s, background .12s}
+  .persona-filter-row .pf-select:hover{border-color:var(--accent)}
+  .persona-filter-row .pf-select:focus{outline:none;
+    border-color:var(--accent);background:rgba(255,255,255,.04)}
   .session-item .title-block{flex:1;display:flex;flex-direction:column;gap:1px;min-width:0}
   .session-item .title{font-size:13.5px;overflow:hidden;text-overflow:ellipsis;
     white-space:nowrap;line-height:1.35;background:transparent;border:none;color:inherit;
@@ -1292,9 +1294,15 @@
     cursor:pointer;color:var(--fg);transition:background .12s}
   .pl-row:hover{background:var(--hover)}
   .pl-row.active{background:rgba(199,143,91,.12)}
-  .pl-row .pl-name{flex:1;font-size:13px;font-weight:500;
+  .pl-row .pl-color-dot{flex:0 0 auto;width:9px;height:9px;border-radius:50%;
+    box-shadow:0 0 0 1px rgba(0,0,0,.25) inset}
+  .pl-row .pl-name{flex:0 0 auto;font-size:13px;font-weight:500;color:var(--fg);
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
   .pl-row .pl-default{color:var(--accent);font-size:13px;flex:0 0 auto}
+  /* Capability blurb describing what the persona does — replaces the
+     useless char-count we used to show. Truncated to one line. */
+  .pl-row .pl-blurb{flex:1;color:var(--fg-dim);font-size:11.5px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
   .pl-row .pl-meta{color:var(--fg-faint);font-size:10.5px;flex:0 0 auto;
     font-variant-numeric:tabular-nums}
   .pl-row .pl-edit{flex:0 0 28px;width:28px;height:28px;border-radius:6px;
@@ -1327,33 +1335,57 @@
     border-radius:6px;padding:2px;background:transparent;cursor:pointer}
   .persona-color-hex{font-family:"SF Mono",Menlo,Monaco,monospace;font-size:11.5px;
     color:var(--fg-dim);min-width:60px}
-  /* Skills multi-select — checkboxes grouped by source (claude / user). */
+  /* Skills picker — TWO separate multi-select dropdowns side-by-side
+     (or stacked on narrow), one per source (user clawhub / Claude
+     built-ins). Each has a trigger button showing the selection count;
+     clicking opens a popup panel of checkboxes that floats over the
+     editor. Click outside closes. Native dropdown semantics, not
+     always-visible cards. */
   .setting-help-inline{font-size:11px;color:var(--fg-faint);margin-left:8px;
     font-weight:400}
-  .persona-skills-list{margin-top:6px;border:1px solid var(--border);border-radius:8px;
-    background:rgba(255,255,255,.02);max-height:280px;overflow-y:auto;
-    padding:6px;display:flex;flex-direction:column;gap:2px;
-    scrollbar-width:thin;scrollbar-color:#2c2c33 transparent}
+  .persona-skills-list{margin-top:6px;display:flex;flex-wrap:wrap;gap:10px}
   .persona-skills-list .ps-loading,
-  .persona-skills-list .ps-empty{padding:18px;text-align:center;color:var(--fg-faint);font-size:12.5px}
-  .persona-skills-list .ps-group-label{font-size:10px;text-transform:uppercase;
-    letter-spacing:.08em;color:var(--fg-faint);font-weight:600;
-    padding:8px 8px 4px;border-top:1px solid var(--border-soft);margin-top:4px}
-  .persona-skills-list .ps-group-label:first-child{border-top:none;margin-top:0;padding-top:4px}
-  .persona-skills-list label.ps-row{display:flex;align-items:flex-start;gap:8px;
+  .persona-skills-list .ps-empty{padding:18px;text-align:center;color:var(--fg-faint);
+    font-size:12.5px;border:1px dashed var(--border);border-radius:8px;flex:1}
+  .ps-dropdown{position:relative;flex:1 1 240px;min-width:0}
+  .ps-trigger{width:100%;display:flex;align-items:center;gap:8px;
+    padding:8px 10px;border:1px solid var(--border);border-radius:8px;
+    background:rgba(255,255,255,.02);color:var(--fg);font-size:12.5px;
+    cursor:pointer;font-family:inherit;text-align:left;
+    transition:border-color .12s, background .12s}
+  .ps-trigger:hover{background:rgba(255,255,255,.04);border-color:var(--accent)}
+  .ps-trigger.open{border-color:var(--accent);background:rgba(255,255,255,.04)}
+  .ps-trigger .ps-trigger-label{flex:1;min-width:0;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap;font-weight:500}
+  .ps-trigger .ps-trigger-count{font-size:11px;color:var(--fg-dim);
+    font-variant-numeric:tabular-nums;flex:0 0 auto}
+  .ps-trigger .ps-trigger-caret{flex:0 0 14px;color:var(--fg-faint);
+    transition:transform .15s}
+  .ps-trigger.open .ps-trigger-caret{transform:rotate(180deg);color:var(--accent)}
+  /* Floating panel that opens below the trigger. */
+  .ps-panel{position:absolute;left:0;right:0;top:calc(100% + 4px);
+    z-index:50;border:1px solid var(--border);border-radius:8px;
+    background:var(--bg-2, #14151a);box-shadow:0 12px 36px -8px rgba(0,0,0,.55);
+    max-height:280px;overflow-y:auto;padding:6px;
+    display:flex;flex-direction:column;gap:2px;
+    scrollbar-width:thin;scrollbar-color:#2c2c33 transparent}
+  .ps-panel[hidden]{display:none}
+  .ps-panel label.ps-row{display:flex;align-items:flex-start;gap:8px;
     padding:7px 8px;border-radius:6px;cursor:pointer;
     transition:background .12s}
-  .persona-skills-list label.ps-row:hover{background:rgba(255,255,255,.04)}
-  .persona-skills-list label.ps-row input{margin-top:2px;flex:0 0 auto}
-  .persona-skills-list label.ps-row.disabled{opacity:.45;cursor:not-allowed}
-  .persona-skills-list label.ps-row.disabled:hover{background:transparent}
-  .persona-skills-list label.ps-row .ps-name{font-size:13px;font-weight:500;color:var(--fg);
+  .ps-panel label.ps-row:hover{background:rgba(255,255,255,.05)}
+  .ps-panel label.ps-row input{margin-top:2px;flex:0 0 auto}
+  .ps-panel label.ps-row.disabled{opacity:.45;cursor:not-allowed}
+  .ps-panel label.ps-row.disabled:hover{background:transparent}
+  .ps-panel label.ps-row .ps-name{font-size:13px;font-weight:500;color:var(--fg);
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .persona-skills-list label.ps-row .ps-summary{font-size:11.5px;color:var(--fg-dim);
+  .ps-panel label.ps-row .ps-summary{font-size:11.5px;color:var(--fg-dim);
     line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
     overflow:hidden}
-  .persona-skills-list label.ps-row .ps-meta{display:flex;flex-direction:column;gap:2px;
+  .ps-panel label.ps-row .ps-meta{display:flex;flex-direction:column;gap:2px;
     flex:1;min-width:0}
+  .ps-panel .ps-empty-msg{padding:14px;text-align:center;color:var(--fg-faint);
+    font-size:12px}
   .persona-edit-view input.setting-input{flex:0 0 auto}
   .persona-edit-actions{justify-content:flex-start;gap:8px;margin-top:12px}
   .persona-edit-actions .spacer{flex:1}
@@ -1387,10 +1419,14 @@
         <span>New session</span>
       </button>
     </div>
-    <!-- Persona filter chips. Populated dynamically based on which
-         personas have at least one chat. "All" + one chip per persona,
-         each tinted with that persona's color. -->
-    <div class="persona-filter-row" id="personaFilterRow"></div>
+    <!-- Persona filter dropdown. Populated dynamically by JS — one
+         option per persona that has at least one chat, plus "All".
+         Dropdown (not chips) so it scales to 20+ personas without
+         flooding the sidebar. -->
+    <div class="persona-filter-row" id="personaFilterRow">
+      <label class="pf-label" for="personaFilterSelect">Filter</label>
+      <select id="personaFilterSelect" class="pf-select"></select>
+    </div>
     <!-- starred sessions render as a pinned section above the main list -->
     <div id="starredHeader" hidden style="padding:10px 14px 4px;font-size:10.5px;text-transform:uppercase;
       letter-spacing:.08em;color:var(--fg-faint);font-weight:600">Starred · Pinned</div>
@@ -2473,7 +2509,8 @@
 
   function renderPersonaFilterChips(){
     const row = document.getElementById('personaFilterRow');
-    if (!row) return;
+    const sel = document.getElementById('personaFilterSelect');
+    if (!row || !sel) return;
     // Find which personas appear in the current session list.
     const present = new Map();   // pid → name
     for (const s of sessions){
@@ -2483,35 +2520,35 @@
     // Hide the row entirely if there's only one persona (or none)
     // — no filter affordance needed.
     if (present.size <= 1){
-      row.innerHTML = '';
       row.style.display = 'none';
       return;
     }
     row.style.display = '';
-    row.innerHTML = '';
-    // Always-on "All" chip.
-    const all = document.createElement('button');
-    all.type = 'button';
-    all.className = 'pf-chip' + (chatPersonaFilter === 'all' ? ' on' : '');
-    all.textContent = `All (${sessions.length})`;
-    all.addEventListener('click', () => setChatPersonaFilter('all'));
-    row.appendChild(all);
-    // One chip per persona (sorted alphabetical, except Aurora first).
+    // Sort: Aurora first, then alphabetical by display name.
     const ordered = Array.from(present.entries()).sort((a, b) => {
       if (a[0] === 'aurora') return -1;
       if (b[0] === 'aurora') return 1;
       return a[1].localeCompare(b[1]);
     });
+    // Rebuild options. Keep the user's selection intact across rebuilds.
+    sel.innerHTML = '';
+    const allOpt = document.createElement('option');
+    allOpt.value = 'all';
+    allOpt.textContent = `All chats (${sessions.length})`;
+    sel.appendChild(allOpt);
     for (const [pid, pname] of ordered){
       const count = sessions.filter(s => personaIdOf(s) === pid).length;
-      const chip = document.createElement('button');
-      chip.type = 'button';
-      chip.className = 'pf-chip' + (chatPersonaFilter === pid ? ' on' : '');
-      chip.style.setProperty('--persona-color', personaColor(pid));
-      chip.innerHTML =
-        `<span class="pf-dot"></span><span>${escHtml(pname)} (${count})</span>`;
-      chip.addEventListener('click', () => setChatPersonaFilter(pid));
-      row.appendChild(chip);
+      const o = document.createElement('option');
+      o.value = pid;
+      o.textContent = `${pname} (${count})`;
+      sel.appendChild(o);
+    }
+    // Restore current selection (or fall back to 'all' if it's gone).
+    if (Array.from(sel.options).some(o => o.value === chatPersonaFilter)){
+      sel.value = chatPersonaFilter;
+    } else {
+      sel.value = 'all';
+      if (chatPersonaFilter !== 'all') setChatPersonaFilter('all');
     }
   }
   function setChatPersonaFilter(pid){
@@ -2519,6 +2556,11 @@
     try { localStorage.setItem('cc.chatPersonaFilter', pid); } catch (e) {}
     renderSessions();
   }
+  // Wire the dropdown change → filter immediately. Idempotent — safe
+  // to attach once at script-eval; the element exists by this point.
+  document.getElementById('personaFilterSelect')?.addEventListener('change', e => {
+    setChatPersonaFilter(e.target.value);
+  });
 
   function renderSessions(){
     starredList.innerHTML = '';
@@ -4471,10 +4513,17 @@
           row.className = 'pl-row';
           row.dataset.id = p.id;
           const isDefault = personasState.default === p.id;
+          // One-line capability blurb (what the persona is for) —
+          // pulled from the same map the new-session picker uses.
+          // Falls back to model name if no blurb is defined for this id.
+          const blurb = PERSONA_CAPABILITIES[p.id] || (p.model || '');
+          const col = personaColor(p.id);
+          row.style.setProperty('--persona-color', col);
           row.innerHTML = `
+            <span class="pl-color-dot" style="background:${col}"></span>
             <span class="pl-name" title="${escHtml(p.name)}">${escHtml(p.name)}</span>
             ${isDefault ? '<span class="pl-default" title="Default for new sessions">★</span>' : ''}
-            <span class="pl-meta">${p.personaLen + p.instrLen} chars</span>
+            <span class="pl-blurb" title="${escHtml(blurb)}">${escHtml(blurb)}</span>
             <button type="button" class="pl-edit" title="Edit" aria-label="Edit ${escHtml(p.name)}">${ICON_PENCIL}</button>
           `;
           // Whole row OR pencil → open editor for this persona.
@@ -4619,6 +4668,18 @@
     renderSkillsPicker();
   }
 
+  // Which dropdown panel is currently open (only one at a time).
+  // Either 'claude', 'user', or null.
+  let openSkillDropdown = null;
+
+  // Close any open skills dropdown when the user clicks outside it.
+  document.addEventListener('click', (e) => {
+    if (!openSkillDropdown) return;
+    if (e.target.closest('.ps-dropdown')) return;
+    openSkillDropdown = null;
+    renderSkillsPicker();
+  });
+
   function renderSkillsPicker(){
     const root = document.getElementById('personaSkillsList');
     if (!root) return;
@@ -4639,43 +4700,81 @@
     for (const s of editorSkillsAvailable){
       (groups[s.source] || (groups[s.source] = [])).push(s);
     }
-    const labels = {claude: 'Claude built-ins', user: 'User packs (clawhub)'};
-    const order  = ['claude', 'user'];
-    for (const src of order){
+    // One dropdown per source. Order: user (their own packs) first,
+    // then Claude built-ins.
+    const specs = [
+      {src:'user',   label:'Your packs'},
+      {src:'claude', label:'Claude built-ins'},
+    ];
+    for (const {src, label} of specs){
       const arr = groups[src] || [];
       if (!arr.length) continue;
-      const label = document.createElement('div');
-      label.className = 'ps-group-label';
-      label.textContent = `${labels[src] || src} (${arr.length})`;
-      root.appendChild(label);
-      for (const s of arr){
-        const id = s.id;
-        const checked = editorSelectedSkills.has(id);
-        const atCap = !checked && editorSelectedSkills.size >= 5;
-        const lbl = document.createElement('label');
-        lbl.className = 'ps-row' + (atCap ? ' disabled' : '');
-        lbl.title = atCap ? 'Max 5 skills per persona' : (s.path || '');
-        lbl.innerHTML = `
-          <input type="checkbox" ${checked ? 'checked' : ''} ${atCap ? 'disabled' : ''}>
-          <div class="ps-meta">
-            <div class="ps-name">${escHtml(s.name)}</div>
-            ${s.summary ? `<div class="ps-summary">${escHtml(s.summary)}</div>` : ''}
-          </div>
-        `;
-        const chk = lbl.querySelector('input');
-        chk.addEventListener('change', () => {
-          if (chk.checked){
-            if (editorSelectedSkills.size >= 5){
-              chk.checked = false; return;
+      const selectedHere = arr.filter(s => editorSelectedSkills.has(s.id));
+      const isOpen = openSkillDropdown === src;
+
+      const wrap = document.createElement('div');
+      wrap.className = 'ps-dropdown';
+
+      // Trigger button — shows label + count + caret.
+      const trig = document.createElement('button');
+      trig.type = 'button';
+      trig.className = 'ps-trigger' + (isOpen ? ' open' : '');
+      const triggerText = selectedHere.length
+        ? `${label}: ${selectedHere.map(s => s.name).join(', ')}`
+        : `${label} — none selected`;
+      trig.innerHTML = `
+        <span class="ps-trigger-label">${escHtml(triggerText)}</span>
+        <span class="ps-trigger-count">${selectedHere.length} / ${arr.length}</span>
+        <span class="ps-trigger-caret">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none"
+               stroke="currentColor" stroke-width="2.2" stroke-linecap="round"
+               stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </span>
+      `;
+      trig.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openSkillDropdown = isOpen ? null : src;
+        renderSkillsPicker();
+      });
+      wrap.appendChild(trig);
+
+      // Floating panel — only present in DOM when open (avoids stale
+      // listeners + keeps the editor scrollable behind closed panels).
+      if (isOpen){
+        const panel = document.createElement('div');
+        panel.className = 'ps-panel';
+        for (const s of arr){
+          const id = s.id;
+          const checked = editorSelectedSkills.has(id);
+          const atCap = !checked && editorSelectedSkills.size >= 5;
+          const lbl = document.createElement('label');
+          lbl.className = 'ps-row' + (atCap ? ' disabled' : '');
+          lbl.title = atCap ? 'Max 5 skills per persona' : (s.path || '');
+          lbl.innerHTML = `
+            <input type="checkbox" ${checked ? 'checked' : ''} ${atCap ? 'disabled' : ''}>
+            <div class="ps-meta">
+              <div class="ps-name">${escHtml(s.name)}</div>
+              ${s.summary ? `<div class="ps-summary">${escHtml(s.summary)}</div>` : ''}
+            </div>
+          `;
+          const chk = lbl.querySelector('input');
+          chk.addEventListener('change', (e) => {
+            e.stopPropagation();
+            if (chk.checked){
+              if (editorSelectedSkills.size >= 5){
+                chk.checked = false; return;
+              }
+              editorSelectedSkills.add(id);
+            } else {
+              editorSelectedSkills.delete(id);
             }
-            editorSelectedSkills.add(id);
-          } else {
-            editorSelectedSkills.delete(id);
-          }
-          renderSkillsPicker();
-        });
-        root.appendChild(lbl);
+            renderSkillsPicker();
+          });
+          panel.appendChild(lbl);
+        }
+        wrap.appendChild(panel);
       }
+      root.appendChild(wrap);
     }
   }
 
