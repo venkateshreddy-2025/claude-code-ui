@@ -177,6 +177,25 @@ CONFIGS_DIR = Path(os.environ.get('CC_CONFIGS_DIR',
                                   str(CWD_ROOT / 'configs')))
 CONFIGS_INDEX = CONFIGS_DIR / 'index.md'
 
+# Per-persona MCP configs — built at startup from the user's global
+# claude config. Aurora gets the FULL set (including ruflo for her
+# coordination/swarm/embeddings work). All other personas get a
+# stripped variant with `ruflo` removed: less context burned on tool
+# defs they don't use, less RAM (each ruflo MCP is ~150 MB), and no
+# parallel "agent memory" store competing with the bridge's own
+# knowledge/long-term-memory layer. We pass the chosen file via
+# `--mcp-config <path> --strict-mcp-config` per-spawn so claude only
+# loads what we hand it.
+USER_CLAUDE_JSON = HOME / '.claude.json'
+MCP_CONFIG_DIR   = CWD_ROOT / '_mcp'
+MCP_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+MCP_AURORA_FILE  = MCP_CONFIG_DIR / 'aurora.json'
+MCP_DEFAULT_FILE = MCP_CONFIG_DIR / 'default.json'
+# Servers reserved for Aurora — every other persona gets a config
+# that drops these. Add more here later if a different MCP turns out
+# to be Aurora-only.
+AURORA_ONLY_MCP_SERVERS: set[str] = {'ruflo'}
+
 DEFAULT_CWD = str(HOME.resolve())
 
 # Static UI files (only used when CC_SERVE_STATIC=1).
@@ -387,6 +406,19 @@ later. Use them as your first stop before web search or guessing:
 - **Service configs** — `{CONFIGS_DIR}/` (see next section). Registry
   at `{CONFIGS_INDEX}`. One subfolder per service the user has set up
   through any chat — reusable across all chats.
+
+MCP scope
+---------
+The bridge gives Aurora's chat a different MCP set than every other
+persona's. Specifically: **the `ruflo` MCP family
+(`mcp__ruflo__*` — agents, agentdb, hive-mind, swarm, neural,
+embeddings, workflows, etc.) is loaded ONLY in Aurora's chat.** It's
+her coordination + cross-chat-memory layer. If you're not Aurora and
+you don't see `mcp__ruflo__*` in your tools, that's intentional —
+use the bridge's own knowledge / long-term-memory / skills / configs
+stores for persistent state instead. Don't try to cross-reach into
+Aurora's ruflo store from another chat; talk to Aurora via
+`cc-talk.py send <aurora-sid> "..."` if you need her to act on it.
 
 Setting up integrations (the configs flow)
 ------------------------------------------
@@ -1447,6 +1479,66 @@ def build_configs_index() -> int:
     return len(items)
 
 
+# ─────────────────  Per-persona MCP configs  ──────────────────
+# Read the user's global claude config (~/.claude.json) and write
+# two derived MCP-config files:
+#   - aurora.json   = full set, including ruflo
+#   - default.json  = same set MINUS the Aurora-only servers
+# Each spawn passes the right file via `--mcp-config <path>
+# --strict-mcp-config` so claude ignores the global config and only
+# loads what we hand it. This keeps ruflo (heavy, ~150 MB per
+# instance + ~250 tool defs in the system prompt) out of every chat
+# that doesn't actually need it.
+
+def _load_user_mcp_servers() -> dict:
+    """Read ~/.claude.json and return its `mcpServers` map (or empty)."""
+    if not USER_CLAUDE_JSON.is_file():
+        return {}
+    try:
+        d = json.loads(USER_CLAUDE_JSON.read_text(encoding='utf-8'))
+    except Exception as e:
+        log(f'mcp: failed to read {USER_CLAUDE_JSON}: {e}')
+        return {}
+    return dict(d.get('mcpServers') or {})
+
+
+def write_persona_mcp_configs() -> tuple[int, int]:
+    """Build aurora.json + default.json from the user's MCP map.
+    Returns (aurora_count, default_count). Idempotent — safe to call
+    on every startup.
+    """
+    servers = _load_user_mcp_servers()
+    if not servers:
+        # No source config — write empty maps so claude doesn't
+        # fall back to scanning ~/.claude.json. This effectively
+        # disables MCPs across the bridge until the user sets some.
+        for f in (MCP_AURORA_FILE, MCP_DEFAULT_FILE):
+            f.write_text(json.dumps({'mcpServers': {}}, indent=2),
+                         encoding='utf-8')
+        return (0, 0)
+    aurora_set  = dict(servers)
+    default_set = {k: v for k, v in servers.items()
+                   if k not in AURORA_ONLY_MCP_SERVERS}
+    MCP_AURORA_FILE.write_text(
+        json.dumps({'mcpServers': aurora_set}, indent=2), encoding='utf-8')
+    MCP_DEFAULT_FILE.write_text(
+        json.dumps({'mcpServers': default_set}, indent=2), encoding='utf-8')
+    try:
+        os.chmod(MCP_AURORA_FILE,  0o600)
+        os.chmod(MCP_DEFAULT_FILE, 0o600)
+    except Exception:
+        pass
+    return (len(aurora_set), len(default_set))
+
+
+def persona_mcp_config_path(persona_id: str | None) -> Path:
+    """Return which MCP config file a session of this persona should use.
+    Aurora gets the full set; everyone else gets the trimmed set."""
+    if (persona_id or '').lower() == 'aurora':
+        return MCP_AURORA_FILE
+    return MCP_DEFAULT_FILE
+
+
 def resolve_skill(skill_id: str) -> dict | None:
     """Look up a skill by its `<source>:<folder>` id. Returns the same
     shape as `_scan_skills_dir` — used when materialising a persona's
@@ -1663,6 +1755,14 @@ async def start_worker(sid: str, *, force_fresh: bool = False) -> Worker | None:
         '--dangerously-skip-permissions',
         '--model', sess_model,
     ]
+    # Per-persona MCP scoping: Aurora → full set (with ruflo); every
+    # other persona → trimmed set (no ruflo). `--strict-mcp-config`
+    # tells claude to ignore the global ~/.claude.json so only what
+    # we hand it gets loaded.
+    persona_id = ((sess.get('persona') or {}).get('id') or '').lower()
+    mcp_path = persona_mcp_config_path(persona_id)
+    if mcp_path.is_file():
+        args += ['--mcp-config', str(mcp_path), '--strict-mcp-config']
     if system_prompt:
         args += ['--append-system-prompt', system_prompt]
     if use_resume:
@@ -5324,6 +5424,11 @@ async def main():
     # via the |CONFIG| marker.
     CONFIGS_DIR.mkdir(parents=True, exist_ok=True)
     configs_count = build_configs_index()
+    # Per-persona MCP configs derived from the user's global claude
+    # config. Aurora gets the full set; every other persona's chat
+    # gets a stripped variant with `ruflo` removed (heavy + duplicates
+    # the bridge's own memory layer).
+    aurora_mcp_n, default_mcp_n = write_persona_mcp_configs()
     log(f'cc-server starting')
     log(f'  host       : {HOST}:{PORT}')
     log(f'  data dir   : {DATA_DIR}')
@@ -5338,6 +5443,8 @@ async def main():
     log(f'  skills dir : {SKILLS_DIR} ({skills_count} indexed)')
     log(f'  knowledge  : {KNOWLEDGE_DIR} ({knowledge_count} indexed)')
     log(f'  configs    : {CONFIGS_DIR} ({configs_count} indexed)')
+    log(f'  mcp configs: aurora={aurora_mcp_n} default={default_mcp_n} '
+        f'(reserved-for-aurora: {sorted(AURORA_ONLY_MCP_SERVERS)})')
     log(f'  telegram   : {"on" if TELEGRAM_TOKEN else "off"}')
     if SERVE_STATIC:
         log(f'  open       : http://{HOST}:{PORT}/')
