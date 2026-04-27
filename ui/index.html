@@ -1849,10 +1849,9 @@
       <button class="fchip"    data-filter="sort" data-value="asc"  type="button">Oldest</button>
     </div>
     <span class="flabel">Persona</span>
-    <div class="fgroup" id="searchPersonaFilter" role="radiogroup" aria-label="Filter by persona">
-      <button class="fchip on" data-filter="persona" data-value="all" type="button">All</button>
-      <!-- Per-persona chips populated dynamically by JS as personas load -->
-    </div>
+    <select id="searchPersonaSelect" class="rich-select" aria-label="Filter by persona">
+      <!-- Populated dynamically: 'all' + every persona present in sessions. -->
+    </select>
     <span class="flabel">Tag</span>
     <select id="searchTagSelect" class="rich-select" aria-label="Filter by tag">
       <!-- Populated dynamically: 'all' + every tag present in sessions. -->
@@ -5572,12 +5571,12 @@
     runSearch();
   });
 
+  // Persona filter on the search overlay — a rich-select dropdown
+  // (was a chip group; chips wrap awkwardly with 5+ personas, so a
+  // dropdown scales better and matches the tag filter beside it).
   function refreshSearchPersonaChips(){
-    const row = document.getElementById('searchPersonaFilter');
-    if (!row) return;
-    // Keep the static "All" chip; replace any persona-specific chips.
-    Array.from(row.querySelectorAll('[data-value]:not([data-value="all"])'))
-         .forEach(el => el.remove());
+    const sel = document.getElementById('searchPersonaSelect');
+    if (!sel) return;
     // Build a set of persona ids that appear in any session, plus all
     // known personas (so the user can filter even before any chat for
     // that persona has been created).
@@ -5596,19 +5595,29 @@
       if (b.id === 'aurora') return 1;
       return a.name.localeCompare(b.name);
     });
+    sel.innerHTML = '';
+    const allOpt = document.createElement('option');
+    allOpt.value = 'all';
+    allOpt.textContent = 'All';
+    sel.appendChild(allOpt);
     for (const p of ordered){
-      const chip = document.createElement('button');
-      chip.type = 'button';
-      chip.className = 'fchip' + (filterState.persona === p.id ? ' on' : '');
-      chip.dataset.filter = 'persona';
-      chip.dataset.value  = p.id;
-      chip.style.setProperty('--persona-color', personaColor(p.id));
-      chip.innerHTML = `<span class="pf-dot" style="display:inline-block;width:7px;`
-                    + `height:7px;border-radius:50%;background:${personaColor(p.id)};`
-                    + `margin-right:6px;vertical-align:middle"></span>${escHtml(p.name)}`;
-      row.appendChild(chip);
+      const count = sessions.filter(s => (s.persona && s.persona.id) === p.id).length;
+      const o = document.createElement('option');
+      o.value = p.id;
+      o.textContent = count > 0 ? `${p.name} (${count})` : p.name;
+      sel.appendChild(o);
+    }
+    if (Array.from(sel.options).some(o => o.value === filterState.persona)){
+      sel.value = filterState.persona;
+    } else {
+      sel.value = 'all';
+      filterState.persona = 'all';
     }
   }
+  document.getElementById('searchPersonaSelect')?.addEventListener('change', e => {
+    filterState.persona = e.target.value;
+    runSearch();
+  });
 
   function escHtml(s){
     return (s || '').replace(/[&<>"']/g, c => ({
