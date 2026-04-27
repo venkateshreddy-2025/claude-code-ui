@@ -138,6 +138,12 @@ SKILLS_DIR = Path(os.environ.get('CC_SKILLS_DIR',
                                  str(CWD_ROOT / 'skills')))
 SKILLS_INDEX = SKILLS_DIR / 'index.md'
 
+# Snapshots — full point-in-time captures of bridge state. The user
+# can save one any time and restore later (time-machine style). Each
+# snapshot lives in its own timestamped subfolder.
+SNAPSHOTS_DIR = Path(os.environ.get('CC_SNAPSHOTS_DIR',
+                                    str(CWD_ROOT / 'snapshots')))
+
 DEFAULT_CWD = str(HOME.resolve())
 
 # Static UI files (only used when CC_SERVE_STATIC=1).
@@ -1462,6 +1468,232 @@ def is_orchestrator_in_use() -> bool:
         if pers.get('id') == ORCHESTRATOR_PERSONA_ID:
             return True
     return False
+
+
+# ──────────────────  Snapshots — time-machine state captures  ──────────────────
+# A snapshot is a full point-in-time copy of everything mutable under
+# CWD_ROOT (sessions, soul, long-term memory, skills, scratch dirs).
+# bridge.log + the snapshots/ folder itself are excluded.
+#
+# Save: cheap. shutil.copytree of a few hundred KB to a few MB.
+# List: cheap. read snapshot.json from each subfolder.
+# Restore: DESTRUCTIVE. Stops all claude workers + cancels routine PIDs,
+#          wipes current state, copies snapshot back. After restore,
+#          the worker for any chat lazy-spawns when the user opens it
+#          (using --resume so chat history is intact). Routines that
+#          were enabled at snapshot time will be marked cancelled by
+#          the liveness sweep (their PIDs are stale), but the scripts
+#          on disk are preserved so the chat's claude can re-register
+#          them when it next runs.
+
+# What to copy at the top level of CWD_ROOT. (`scratch` is special-
+# cased: every directory matching `2026-*` / `2027-*` etc.)
+_SNAPSHOT_TOP_NAMES = ('_data', 'soul', 'skills')
+_SNAPSHOT_TOP_FILES = ('long-term-memory.md',)
+
+
+def _is_scratch_dir(name: str) -> bool:
+    """Identify chat scratch dirs (timestamp-prefixed) so the snapshot
+    bundles them too. They contain chat.json, MEMORY.md, routine
+    scripts, etc."""
+    return len(name) >= 5 and name[:4].isdigit() and name[4] == '-'
+
+
+def _snapshot_meta_path(snap_dir: Path) -> Path:
+    return snap_dir / 'snapshot.json'
+
+
+def snapshot_save(label: str | None = None) -> dict:
+    """Capture all bridge state into a new timestamped snapshot folder.
+    Returns the snapshot's metadata dict (id, taken_at, label, sessions,
+    routines, active_sid). Idempotent w.r.t. the timestamp — a second
+    save in the same second appends `_2`."""
+    SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime('%Y-%m-%d_%H-%M-%S')
+    snap_dir = SNAPSHOTS_DIR / stamp
+    suffix = 1
+    while snap_dir.exists():
+        suffix += 1
+        snap_dir = SNAPSHOTS_DIR / f'{stamp}_{suffix}'
+    snap_dir.mkdir(parents=True, exist_ok=True)
+
+    # Top-level dirs (deep copies).
+    for name in _SNAPSHOT_TOP_NAMES:
+        src = CWD_ROOT / name
+        if src.exists():
+            shutil.copytree(src, snap_dir / name, dirs_exist_ok=True)
+    # Top-level files (single-file copies).
+    for name in _SNAPSHOT_TOP_FILES:
+        src = CWD_ROOT / name
+        if src.exists():
+            shutil.copy2(src, snap_dir / name)
+    # Scratch dirs (one per chat-cwd) live under <snap>/scratch/.
+    scratch_root = snap_dir / 'scratch'
+    for child in CWD_ROOT.iterdir():
+        if child.is_dir() and _is_scratch_dir(child.name):
+            scratch_root.mkdir(exist_ok=True)
+            shutil.copytree(child, scratch_root / child.name,
+                            dirs_exist_ok=True)
+
+    # Metadata pulled from the snapshotted index/registry.
+    meta = {
+        'id':         snap_dir.name,
+        'label':      (label or '').strip()[:120],
+        'taken_at':   time.time(),
+        'active_sid': None,
+        'sessions':   0,
+        'routines':   0,
+        'size_bytes': 0,
+    }
+    idx_f = snap_dir / '_data' / 'cc-sessions' / 'index.json'
+    if idx_f.exists():
+        try:
+            idx = json.loads(idx_f.read_text())
+            meta['active_sid'] = idx.get('active')
+            meta['sessions']   = len(idx.get('sessions') or [])
+        except Exception as e:
+            log(f'snapshot_save: index read failed: {e}')
+    r_f = snap_dir / '_data' / 'routines.json'
+    if r_f.exists():
+        try:
+            meta['routines'] = len(json.loads(r_f.read_text()).get('routines') or [])
+        except Exception:
+            pass
+    # Cheap size accounting for the UI.
+    try:
+        total = 0
+        for p in snap_dir.rglob('*'):
+            if p.is_file():
+                total += p.stat().st_size
+        meta['size_bytes'] = total
+    except Exception:
+        pass
+
+    _snapshot_meta_path(snap_dir).write_text(json.dumps(meta, indent=2))
+    log(f'snapshot saved: {meta["id"]} '
+        f'(sessions={meta["sessions"]} routines={meta["routines"]} '
+        f'{meta["size_bytes"] // 1024} KB)')
+    return meta
+
+
+def snapshot_list() -> list:
+    """Return all snapshots as metadata dicts, newest first."""
+    if not SNAPSHOTS_DIR.exists():
+        return []
+    items: list = []
+    for d in SNAPSHOTS_DIR.iterdir():
+        if not d.is_dir():
+            continue
+        m_f = _snapshot_meta_path(d)
+        if not m_f.exists():
+            # Legacy / hand-created snapshot without metadata.
+            items.append({'id': d.name, 'label': '', 'taken_at': d.stat().st_mtime,
+                          'sessions': None, 'routines': None})
+            continue
+        try:
+            items.append(json.loads(m_f.read_text()))
+        except Exception:
+            pass
+    items.sort(key=lambda m: -(m.get('taken_at') or 0))
+    return items
+
+
+async def snapshot_restore(snap_id: str) -> dict:
+    """DESTRUCTIVE: stop everything, wipe live state, copy snapshot back.
+
+    After restore: the bridge has a fresh routines manager + index +
+    persona store. Claude workers don't auto-spawn — they wait for the
+    user to open a chat (lazy-spawn via send_to_session uses --resume).
+    Routine PIDs from the snapshot are stale; the liveness sweep marks
+    them dead so the registry stays honest, but the scripts on disk
+    are preserved so a chat can re-register them when active."""
+    snap_dir = SNAPSHOTS_DIR / snap_id
+    if not snap_dir.is_dir():
+        return {'ok': False, 'error': f'unknown snapshot: {snap_id}'}
+
+    log(f'snapshot_restore: starting (target={snap_id})')
+
+    # 1. Stop every claude worker. broadcast_end=False — we don't want
+    #    UI to flash error toasts for each one.
+    for sid in list(state.workers.keys()):
+        try:
+            await stop_worker(sid, broadcast_end=False)
+        except Exception as e:
+            log(f'  stop_worker({sid[:8]}) failed: {e}')
+    state.workers.clear()
+
+    # 2. Cancel every routine (kills PIDs).
+    if state.routines is not None:
+        for r in list(state.routines.routines):
+            if r.enabled:
+                try:
+                    state.routines.cancel(r.id, reason='snapshot_restore')
+                except Exception as e:
+                    log(f'  cancel routine {r.id}: {e}')
+
+    # 3. Wipe current top-level state. Keep snapshots/ + bridge.log.
+    for name in _SNAPSHOT_TOP_NAMES:
+        p = CWD_ROOT / name
+        if p.exists():
+            shutil.rmtree(p, ignore_errors=True)
+    for name in _SNAPSHOT_TOP_FILES:
+        p = CWD_ROOT / name
+        if p.exists():
+            try: p.unlink()
+            except Exception: pass
+    for child in list(CWD_ROOT.iterdir()):
+        if child.is_dir() and _is_scratch_dir(child.name):
+            shutil.rmtree(child, ignore_errors=True)
+
+    # 4. Copy the snapshot back into place.
+    for name in _SNAPSHOT_TOP_NAMES:
+        src = snap_dir / name
+        if src.exists():
+            shutil.copytree(src, CWD_ROOT / name, dirs_exist_ok=False)
+    for name in _SNAPSHOT_TOP_FILES:
+        src = snap_dir / name
+        if src.exists():
+            shutil.copy2(src, CWD_ROOT / name)
+    scratch_src = snap_dir / 'scratch'
+    if scratch_src.is_dir():
+        for child in scratch_src.iterdir():
+            if child.is_dir():
+                shutil.copytree(child, CWD_ROOT / child.name,
+                                dirs_exist_ok=False)
+
+    # 5. Reload routines registry from disk (the snapshot copied a
+    # fresh routines.json into _data/). The periodic liveness sweep
+    # (start_sweep at boot) will catch dead PIDs within ~30s and
+    # mark them cancelled — we don't force it here.
+    if state.routines is not None:
+        try:
+            state.routines.load()
+        except Exception as e:
+            log(f'  routines reload failed: {e}')
+    # 6. Reload session index, set active focus from snapshot.
+    idx = load_index()
+    state.active_id = idx.get('active')
+    set_active(state.active_id)
+
+    # 7. Broadcast fresh state so all connected UIs re-render.
+    await broadcast(state_snapshot())
+    await broadcast({'type': 'personas', **list_personas_brief()})
+
+    log(f'snapshot_restore: complete (active_sid={state.active_id})')
+    return {'ok': True, 'snapshot_id': snap_id, 'active_sid': state.active_id}
+
+
+def snapshot_delete(snap_id: str) -> dict:
+    """Remove a snapshot folder. Best-effort — partial removal is OK."""
+    snap_dir = SNAPSHOTS_DIR / snap_id
+    if not snap_dir.is_dir():
+        return {'ok': False, 'error': f'unknown snapshot: {snap_id}'}
+    try:
+        shutil.rmtree(snap_dir)
+    except Exception as e:
+        return {'ok': False, 'error': str(e)}
+    log(f'snapshot deleted: {snap_id}')
+    return {'ok': True}
 
 
 def build_resume_system_prompt(sess: dict, last_n: int = 200) -> str | None:
@@ -3050,6 +3282,38 @@ async def handle_client(websocket):
                     'index': str(SKILLS_INDEX),
                     'dir':   str(SKILLS_DIR),
                 }))
+            elif cmd == 'snapshot_save':
+                label = (msg.get('label') or '').strip()
+                meta = snapshot_save(label=label or None)
+                await broadcast({'type': 'snapshot_saved', 'snapshot': meta})
+                await broadcast({'type': 'snapshots',
+                                 'snapshots': snapshot_list()})
+            elif cmd == 'snapshot_list':
+                await websocket.send(json.dumps({
+                    'type': 'snapshots',
+                    'snapshots': snapshot_list(),
+                }))
+            elif cmd == 'snapshot_restore':
+                snap_id = (msg.get('id') or '').strip()
+                if not snap_id:
+                    await websocket.send(json.dumps({
+                        'type': 'snapshot_restore_result',
+                        'ok': False, 'error': 'missing snapshot id',
+                    }))
+                else:
+                    res = await snapshot_restore(snap_id)
+                    await broadcast({'type': 'snapshot_restore_result', **res})
+                    # Push fresh snapshots list (in case anything self-saved).
+                    await broadcast({'type': 'snapshots',
+                                     'snapshots': snapshot_list()})
+            elif cmd == 'snapshot_delete':
+                snap_id = (msg.get('id') or '').strip()
+                if snap_id:
+                    res = snapshot_delete(snap_id)
+                    await broadcast({'type': 'snapshot_delete_result',
+                                     'id': snap_id, **res})
+                    await broadcast({'type': 'snapshots',
+                                     'snapshots': snapshot_list()})
             elif cmd == 'state':
                 await websocket.send(json.dumps(state_snapshot()))
             elif cmd == 'stop':

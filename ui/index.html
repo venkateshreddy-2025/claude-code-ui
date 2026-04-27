@@ -1074,6 +1074,45 @@
      The modal itself scrolls vertically; only its inner list
      scrolls. Layout: header (title + help) → list (flex:1, scrolls)
      → actions (sticky bottom). */
+  /* Snapshots modal — same shell as routines, distinct rows. */
+  #snapshotsModal{width:min(720px, calc(100% - 32px));
+    max-height:min(80vh, 720px);
+    display:flex;flex-direction:column;padding-bottom:0}
+  #snapshotsModal[hidden]{display:none}
+  #snapshotsModal h3{flex:0 0 auto}
+  #snapshotsModal > .setting-help{flex:0 0 auto}
+  #snapshotsModal .modal-actions{flex:0 0 auto;
+    margin-top:auto;padding:14px 0 16px;border-top:1px solid var(--border-soft);
+    background:linear-gradient(to top, var(--bg-2), var(--bg-2) 70%, transparent);
+    position:sticky;bottom:0}
+  .snap-create{display:flex;gap:8px;margin:14px 0 0;flex:0 0 auto}
+  .snap-create .setting-input{flex:1;min-width:0}
+  .snapshots-list{flex:1 1 auto;display:flex;flex-direction:column;gap:8px;
+    margin-top:14px;overflow-y:auto;padding-right:6px;
+    scrollbar-width:thin;scrollbar-color:#2c2c33 transparent}
+  .snapshots-list::-webkit-scrollbar{width:8px}
+  .snapshots-list::-webkit-scrollbar-thumb{background:#2c2c33;border-radius:4px}
+  .snap-empty{padding:24px 8px;text-align:center;color:var(--fg-faint);font-size:13px}
+  .snap-row{display:flex;align-items:flex-start;gap:10px;
+    padding:10px 12px;border-radius:10px;
+    border:1px solid var(--border);background:rgba(255,255,255,.02);
+    transition:background .12s,border-color .12s;flex:0 0 auto}
+  .snap-row:hover{background:rgba(255,255,255,.04);border-color:var(--border-soft)}
+  .snap-row .smain{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+  .snap-row .stitle{font-size:13.5px;font-weight:600;color:var(--fg);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .snap-row .smeta{font-size:11.5px;color:var(--fg-dim);
+    display:flex;flex-wrap:wrap;gap:8px;line-height:1.55}
+  .snap-row .stamp{font-family:"SF Mono",Menlo,Monaco,monospace;font-size:11px;
+    background:rgba(255,255,255,.04);padding:1px 6px;border-radius:4px;color:var(--fg-faint)}
+  .snap-row .sactions{display:flex;gap:6px;flex:0 0 auto;align-self:center}
+  .snap-row .sactions button{padding:6px 10px;font-size:12px;border-radius:7px;
+    border:1px solid var(--border);background:transparent;color:var(--fg-dim);
+    cursor:pointer;transition:background .12s, border-color .12s, color .12s}
+  .snap-row .sactions .restore{color:var(--accent)}
+  .snap-row .sactions .restore:hover{background:rgba(255,255,255,.04);border-color:var(--accent)}
+  .snap-row .sactions .delete:hover{background:rgba(220,80,80,.08);
+    border-color:rgba(220,80,80,.5);color:#ff7676}
   #routinesModal{width:min(720px, calc(100% - 32px));
     max-height:min(80vh, 720px);
     display:flex;flex-direction:column;
@@ -1360,6 +1399,16 @@
         </svg>
         <span class="routines-count" id="routinesCount" hidden>0</span>
       </button>
+      <button class="header-action" id="snapshotsBtn" type="button"
+              title="Snapshots — save / restore bridge state"
+              aria-label="Snapshots">
+        <!-- camera glyph -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+          <circle cx="12" cy="13" r="4"/>
+        </svg>
+      </button>
       <button class="header-action" id="debugBracketBtn" type="button"
               title="Show / hide scheduler messages (those starting with [)"
               aria-label="Toggle scheduler messages">
@@ -1512,6 +1561,30 @@
   <div class="modal-actions">
     <button type="button" class="btn-ghost" id="routinesRefresh">Refresh</button>
     <button type="button" class="btn-primary" id="routinesOk">Done</button>
+  </div>
+</div>
+<!-- Snapshots modal — point-in-time captures of bridge state. -->
+<div class="modal-backdrop" id="snapshotsBackdrop"></div>
+<div class="modal" id="snapshotsModal" hidden>
+  <button class="close" id="snapshotsClose" aria-label="Close">×</button>
+  <h3>Snapshots · time-machine</h3>
+  <p class="setting-help" style="margin-top:6px">
+    Save a copy of every chat, memory, routine, and skill. Restore
+    a snapshot to roll the entire bridge back to that moment —
+    workers stop, state swaps, and chats lazy-respawn when you open
+    them. Routines from the snapshot keep their scripts on disk; their
+    PIDs (stale) get marked cancelled until a chat re-registers them.
+  </p>
+  <div class="snap-create">
+    <input type="text" id="snapshotLabel" class="setting-input wide"
+           placeholder="Optional label (e.g. 'before risky refactor')"
+           autocomplete="off" spellcheck="false" maxlength="120">
+    <button type="button" class="btn-primary" id="snapshotSaveBtn">📸 Save snapshot</button>
+  </div>
+  <div id="snapshotsList" class="snapshots-list"></div>
+  <div class="modal-actions">
+    <button type="button" class="btn-ghost" id="snapshotsRefresh">Refresh</button>
+    <button type="button" class="btn-primary" id="snapshotsOk">Done</button>
   </div>
 </div>
 <div id="lightbox">
@@ -3532,6 +3605,32 @@
         // this directly — the followup `routines` broadcast is what
         // actually updates the panel. Optional: log for debugging.
         break;
+      case 'snapshots':
+        // Authoritative list of saved snapshots. Repaint the modal
+        // if it's open; otherwise just cache for next open.
+        snapshots = m.snapshots || [];
+        renderSnapshotsList();
+        break;
+      case 'snapshot_saved':
+        // Toast-ish: the modal will repaint via the 'snapshots' event
+        // that follows. No further action needed here.
+        break;
+      case 'snapshot_restore_result':
+        // After restore the bridge broadcasts a fresh state event and
+        // a personas list. We just close the modal so the user sees
+        // the restored UI cleanly.
+        if (m.ok){
+          closeSnapshotsPanel();
+        } else {
+          alert('Restore failed: ' + (m.error || 'unknown error'));
+        }
+        break;
+      case 'snapshot_delete_result':
+        // Followup 'snapshots' event repaints the list. Show error if any.
+        if (!m.ok && m.error){
+          alert('Delete failed: ' + m.error);
+        }
+        break;
       case 'summary_error':     // legacy alias
       case 'save_error':
         if (sid){
@@ -4511,6 +4610,89 @@
     document.getElementById('routinesBackdrop').classList.remove('on');
     document.getElementById('routinesModal').hidden = true;
   }
+
+  // ───── Snapshots — time-machine state captures ─────
+  let snapshots = [];
+  function fmtBytes2(n){
+    if (!n) return '0 KB';
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(0) + ' KB';
+    return (n / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+  function renderSnapshotsList(){
+    const el = document.getElementById('snapshotsList');
+    if (!el) return;
+    el.innerHTML = '';
+    if (!snapshots.length){
+      const e = document.createElement('div');
+      e.className = 'snap-empty';
+      e.textContent = 'No snapshots yet. Save one to start a time-machine point.';
+      el.appendChild(e);
+      return;
+    }
+    for (const s of snapshots){
+      const row = document.createElement('div');
+      row.className = 'snap-row';
+      const taken = s.taken_at ? new Date(s.taken_at * 1000) : null;
+      const when = taken ? taken.toLocaleString() : (s.id || '');
+      const label = s.label ? s.label : '(no label)';
+      const sessions = (s.sessions != null) ? s.sessions : '?';
+      const routines = (s.routines != null) ? s.routines : '?';
+      const size = s.size_bytes ? fmtBytes2(s.size_bytes) : '';
+      row.innerHTML = `
+        <div class="smain">
+          <div class="stitle">${escHtml(label)}</div>
+          <div class="smeta">
+            <span class="stamp">${escHtml(s.id || '')}</span>
+            <span>${escHtml(when)}</span>
+            <span>· ${sessions} chat${sessions === 1 ? '' : 's'}</span>
+            <span>· ${routines} routine${routines === 1 ? '' : 's'}</span>
+            ${size ? `<span>· ${escHtml(size)}</span>` : ''}
+          </div>
+        </div>
+        <div class="sactions">
+          <button type="button" class="restore" data-id="${escHtml(s.id)}"
+                  title="Roll bridge state back to this point — destructive">↺ Restore</button>
+          <button type="button" class="delete" data-id="${escHtml(s.id)}"
+                  title="Delete this snapshot">Delete</button>
+        </div>
+      `;
+      el.appendChild(row);
+    }
+    // Wire actions.
+    el.querySelectorAll('.sactions .restore').forEach(b => {
+      b.addEventListener('click', () => {
+        const id = b.dataset.id;
+        const ok = confirm(
+          'RESTORE SNAPSHOT\n\n' +
+          'This is destructive — it will:\n' +
+          '  • Stop every running claude worker\n' +
+          '  • Cancel every active routine (kills their PIDs)\n' +
+          '  • Replace _data, soul, skills, scratch dirs with the snapshot\n\n' +
+          'Snapshot: ' + id + '\n\nProceed?'
+        );
+        if (!ok) return;
+        send({ type: 'snapshot_restore', id });
+      });
+    });
+    el.querySelectorAll('.sactions .delete').forEach(b => {
+      b.addEventListener('click', () => {
+        const id = b.dataset.id;
+        if (!confirm('Delete snapshot ' + id + '? This cannot be undone.')) return;
+        send({ type: 'snapshot_delete', id });
+      });
+    });
+  }
+  function openSnapshotsPanel(){
+    document.getElementById('snapshotsBackdrop').classList.add('on');
+    document.getElementById('snapshotsModal').hidden = false;
+    send({ type: 'snapshot_list' });
+    renderSnapshotsList();
+  }
+  function closeSnapshotsPanel(){
+    document.getElementById('snapshotsBackdrop').classList.remove('on');
+    document.getElementById('snapshotsModal').hidden = true;
+  }
   // Debug toggle for scheduler messages. Flips `showBracketed`,
   // persists to localStorage, re-renders the active chat so already-
   // hidden bubbles re-appear (or freshly hide). The icon swaps from
@@ -4533,6 +4715,19 @@
     // When toggling ON, hidden bubbles need to be un-hidden via re-render.
     // When toggling OFF, the next render will skip them.
     renderAllMessages();
+  });
+  document.getElementById('snapshotsBtn')?.addEventListener('click', openSnapshotsPanel);
+  document.getElementById('snapshotsClose')?.addEventListener('click', closeSnapshotsPanel);
+  document.getElementById('snapshotsOk')?.addEventListener('click', closeSnapshotsPanel);
+  document.getElementById('snapshotsBackdrop')?.addEventListener('click', closeSnapshotsPanel);
+  document.getElementById('snapshotsRefresh')?.addEventListener('click', () => {
+    send({ type: 'snapshot_list' });
+  });
+  document.getElementById('snapshotSaveBtn')?.addEventListener('click', () => {
+    const labelEl = document.getElementById('snapshotLabel');
+    const label = (labelEl?.value || '').trim();
+    send({ type: 'snapshot_save', label });
+    if (labelEl) labelEl.value = '';
   });
   document.getElementById('routinesBtn')?.addEventListener('click', openRoutinesPanel);
   document.getElementById('routinesClose')?.addEventListener('click', closeRoutinesPanel);
