@@ -170,7 +170,29 @@
   .session-item:hover{background:rgba(255,255,255,.04);color:var(--fg)}
   .session-item.active{background:rgba(255,255,255,.06);color:var(--fg)}
   .session-item.active::before{content:"";position:absolute;left:-2px;top:8px;bottom:8px;
-    width:3px;background:var(--accent);border-radius:2px}
+    width:3px;background:var(--persona-color, var(--accent));border-radius:2px}
+  /* Title row inside the chat-list item: persona color dot + title input. */
+  .session-item .title-row{display:flex;align-items:center;gap:6px;min-width:0}
+  .session-item .persona-dot{flex:0 0 auto;width:8px;height:8px;border-radius:50%;
+    background:var(--persona-color, var(--fg-faint));
+    box-shadow:0 0 0 1px rgba(0,0,0,.25) inset}
+  /* Aurora-pinned (orchestrator persona) gets a subtle border accent at the
+     top so it's clearly anchored in place. */
+  .session-item.pinned-top{border:1px solid rgba(245,158,11,.25);
+    background:rgba(245,158,11,.04)}
+  .session-item.pinned-top:hover{background:rgba(245,158,11,.08)}
+  /* Persona filter chip row above the chat list. */
+  .persona-filter-row{display:flex;flex-wrap:wrap;gap:5px;
+    padding:6px 12px 4px;align-items:center}
+  .persona-filter-row .pf-chip{display:inline-flex;align-items:center;gap:5px;
+    padding:3px 9px;border-radius:11px;border:1px solid var(--border);
+    background:transparent;color:var(--fg-dim);font-size:11.5px;cursor:pointer;
+    transition:background .12s, border-color .12s, color .12s}
+  .persona-filter-row .pf-chip:hover{background:rgba(255,255,255,.04);color:var(--fg)}
+  .persona-filter-row .pf-chip.on{background:rgba(255,255,255,.08);
+    color:var(--fg);border-color:var(--persona-color, var(--accent))}
+  .persona-filter-row .pf-chip .pf-dot{width:7px;height:7px;border-radius:50%;
+    background:var(--persona-color, var(--fg-faint))}
   .session-item .title-block{flex:1;display:flex;flex-direction:column;gap:1px;min-width:0}
   .session-item .title{font-size:13.5px;overflow:hidden;text-overflow:ellipsis;
     white-space:nowrap;line-height:1.35;background:transparent;border:none;color:inherit;
@@ -355,6 +377,8 @@
   .who{display:flex;flex-direction:column;line-height:1.15;flex:1;min-width:0}
   .who .name{font-weight:600;font-size:14.5px;letter-spacing:-.005em;
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .who .name .t-persona{font-weight:700}
+  .who .name .t-sep{color:var(--fg-faint);margin:0 4px}
   .who .status{font-size:11.5px;color:var(--fg-dim);display:flex;align-items:center;gap:6px;
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .dot{width:7px;height:7px;border-radius:50%;background:#5d5d66;flex:0 0 7px;transition:background .25s}
@@ -1298,6 +1322,38 @@
   .back-btn:hover{color:var(--fg);background:var(--hover)}
   .back-btn svg{width:16px;height:16px}
   .persona-text-tall{min-height:160px;max-height:300px;resize:vertical}
+  /* Persona color picker — inline color input + hex label + reset. */
+  .persona-color-input{width:38px;height:32px;border:1px solid var(--border);
+    border-radius:6px;padding:2px;background:transparent;cursor:pointer}
+  .persona-color-hex{font-family:"SF Mono",Menlo,Monaco,monospace;font-size:11.5px;
+    color:var(--fg-dim);min-width:60px}
+  /* Skills multi-select — checkboxes grouped by source (claude / user). */
+  .setting-help-inline{font-size:11px;color:var(--fg-faint);margin-left:8px;
+    font-weight:400}
+  .persona-skills-list{margin-top:6px;border:1px solid var(--border);border-radius:8px;
+    background:rgba(255,255,255,.02);max-height:280px;overflow-y:auto;
+    padding:6px;display:flex;flex-direction:column;gap:2px;
+    scrollbar-width:thin;scrollbar-color:#2c2c33 transparent}
+  .persona-skills-list .ps-loading,
+  .persona-skills-list .ps-empty{padding:18px;text-align:center;color:var(--fg-faint);font-size:12.5px}
+  .persona-skills-list .ps-group-label{font-size:10px;text-transform:uppercase;
+    letter-spacing:.08em;color:var(--fg-faint);font-weight:600;
+    padding:8px 8px 4px;border-top:1px solid var(--border-soft);margin-top:4px}
+  .persona-skills-list .ps-group-label:first-child{border-top:none;margin-top:0;padding-top:4px}
+  .persona-skills-list label.ps-row{display:flex;align-items:flex-start;gap:8px;
+    padding:7px 8px;border-radius:6px;cursor:pointer;
+    transition:background .12s}
+  .persona-skills-list label.ps-row:hover{background:rgba(255,255,255,.04)}
+  .persona-skills-list label.ps-row input{margin-top:2px;flex:0 0 auto}
+  .persona-skills-list label.ps-row.disabled{opacity:.45;cursor:not-allowed}
+  .persona-skills-list label.ps-row.disabled:hover{background:transparent}
+  .persona-skills-list label.ps-row .ps-name{font-size:13px;font-weight:500;color:var(--fg);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .persona-skills-list label.ps-row .ps-summary{font-size:11.5px;color:var(--fg-dim);
+    line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+    overflow:hidden}
+  .persona-skills-list label.ps-row .ps-meta{display:flex;flex-direction:column;gap:2px;
+    flex:1;min-width:0}
   .persona-edit-view input.setting-input{flex:0 0 auto}
   .persona-edit-actions{justify-content:flex-start;gap:8px;margin-top:12px}
   .persona-edit-actions .spacer{flex:1}
@@ -1331,9 +1387,13 @@
         <span>New session</span>
       </button>
     </div>
+    <!-- Persona filter chips. Populated dynamically based on which
+         personas have at least one chat. "All" + one chip per persona,
+         each tinted with that persona's color. -->
+    <div class="persona-filter-row" id="personaFilterRow"></div>
     <!-- starred sessions render as a pinned section above the main list -->
     <div id="starredHeader" hidden style="padding:10px 14px 4px;font-size:10.5px;text-transform:uppercase;
-      letter-spacing:.08em;color:var(--fg-faint);font-weight:600">Starred</div>
+      letter-spacing:.08em;color:var(--fg-faint);font-weight:600">Starred · Pinned</div>
     <div class="session-list" id="starredList" style="flex:0 0 auto;border-bottom:1px solid var(--border-soft);max-height:35vh"></div>
     <div id="recentHeader" hidden style="padding:10px 14px 4px;font-size:10.5px;text-transform:uppercase;
       letter-spacing:.08em;color:var(--fg-faint);font-weight:600">Recent</div>
@@ -1635,6 +1695,11 @@
       <button class="fchip on" data-filter="sort" data-value="desc" type="button">Newest</button>
       <button class="fchip"    data-filter="sort" data-value="asc"  type="button">Oldest</button>
     </div>
+    <span class="flabel">Persona</span>
+    <div class="fgroup" id="searchPersonaFilter" role="radiogroup" aria-label="Filter by persona">
+      <button class="fchip on" data-filter="persona" data-value="all" type="button">All</button>
+      <!-- Per-persona chips populated dynamically by JS as personas load -->
+    </div>
     <span class="flabel">Path</span>
     <input type="text" class="se-text" id="searchPath" placeholder="cwd contains…" spellcheck="false">
   </div>
@@ -1745,6 +1810,28 @@
         New sessions started with this persona will use this model by
         default. Pick "— server default —" to fall back to whatever the
         server is configured with.
+      </p>
+      <label class="setting-label" for="personaColor">Color tag</label>
+      <div class="setting-row" style="gap:8px;align-items:center">
+        <input type="color" id="personaColor" class="persona-color-input"
+               title="Used to tint this persona's chats in the sidebar"
+               value="#64748b">
+        <span id="personaColorHex" class="persona-color-hex">#64748b</span>
+        <button type="button" class="btn-ghost" id="personaColorReset"
+                title="Reset to default for this persona">Reset</button>
+      </div>
+      <label class="setting-label">
+        Skills (max 5)
+        <span class="setting-help-inline" id="personaSkillsCount">0 / 5 selected</span>
+      </label>
+      <div id="personaSkillsList" class="persona-skills-list">
+        <div class="ps-loading">Loading available skills…</div>
+      </div>
+      <p class="setting-help">
+        Skills get pre-loaded into this persona's system prompt so the
+        first reply already knows the recipe. Mix Claude built-ins
+        (`~/.claude/skills/`) and your installed packs from clawhub
+        (`~/claude-ui/skills/`).
       </p>
       <label class="setting-row" style="gap:6px;align-items:center;margin-top:10px">
         <input type="checkbox" id="personaMakeDefault">
@@ -2176,6 +2263,26 @@
   const PENCIL_ICON  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>';
   const TRASH_ICON   = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
 
+  // Persona color resolution. The bridge supplies a `color` field on
+  // every persona brief; if a session's persona is unknown to the
+  // current client (rare, race), fall back to a deterministic hash
+  // so colors are stable across reloads.
+  const PERSONA_FALLBACK_COLOR = '#64748b';   // slate
+  function personaIdOf(s){
+    return s && s.persona && s.persona.id ? s.persona.id : '';
+  }
+  function personaNameOf(s){
+    return s && s.persona && s.persona.name ? s.persona.name : '';
+  }
+  function personaColor(personaId){
+    if (!personaId) return PERSONA_FALLBACK_COLOR;
+    const p = personasState.personas.find(x => x.id === personaId);
+    if (p && p.color) return p.color;
+    // deterministic fallback hue from id
+    let h = 0; for (const ch of personaId) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    return `hsl(${h % 360}, 55%, 55%)`;
+  }
+
   function buildSessionItem(s){
     const c = chats.get(s.id);
     const isUnread = !!(c && c.unread);
@@ -2186,11 +2293,26 @@
       + (isUnread          ? ' unread' : '')
       + (isLive            ? ' live'   : '');
     item.dataset.id = s.id;
+    // Color tag — left-edge stripe in the persona's color, plus a
+    // small dot next to the title. Lets the user identify which
+    // persona is on each chat at a glance.
+    const pid = personaIdOf(s);
+    const col = personaColor(pid);
+    item.style.setProperty('--persona-color', col);
 
     // Title is an inline-editable input (display-only until focused).
-    // Title block = bigger title + tiny relative time underneath
+    // Title block = bigger title + tiny relative time underneath.
     const titleBlock = document.createElement('div');
     titleBlock.className = 'title-block';
+
+    // Title row: persona color dot + inline-editable input.
+    const titleRow = document.createElement('div');
+    titleRow.className = 'title-row';
+    const dot = document.createElement('span');
+    dot.className = 'persona-dot';
+    dot.style.background = col;
+    dot.title = personaNameOf(s) || '(no persona)';
+    titleRow.appendChild(dot);
 
     const title = document.createElement('input');
     title.className = 'title';
@@ -2218,7 +2340,8 @@
       parts.push(d.toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}));
     }
     when.textContent = parts.join(' · ');
-    titleBlock.appendChild(title);
+    titleRow.appendChild(title);
+    titleBlock.appendChild(titleRow);
     titleBlock.appendChild(when);
 
     const actions = document.createElement('div');
@@ -2341,26 +2464,106 @@
     send({type:'rename', id, title: next});
   }
 
+  // Active persona filter for the chat list. 'all' = no filter; any
+  // other value matches s.persona.id. Stored in localStorage so the
+  // user's pick persists across reloads.
+  let chatPersonaFilter = 'all';
+  try { chatPersonaFilter = localStorage.getItem('cc.chatPersonaFilter') || 'all'; }
+  catch (e) {}
+
+  function renderPersonaFilterChips(){
+    const row = document.getElementById('personaFilterRow');
+    if (!row) return;
+    // Find which personas appear in the current session list.
+    const present = new Map();   // pid → name
+    for (const s of sessions){
+      const pid = personaIdOf(s);
+      if (pid) present.set(pid, personaNameOf(s) || pid);
+    }
+    // Hide the row entirely if there's only one persona (or none)
+    // — no filter affordance needed.
+    if (present.size <= 1){
+      row.innerHTML = '';
+      row.style.display = 'none';
+      return;
+    }
+    row.style.display = '';
+    row.innerHTML = '';
+    // Always-on "All" chip.
+    const all = document.createElement('button');
+    all.type = 'button';
+    all.className = 'pf-chip' + (chatPersonaFilter === 'all' ? ' on' : '');
+    all.textContent = `All (${sessions.length})`;
+    all.addEventListener('click', () => setChatPersonaFilter('all'));
+    row.appendChild(all);
+    // One chip per persona (sorted alphabetical, except Aurora first).
+    const ordered = Array.from(present.entries()).sort((a, b) => {
+      if (a[0] === 'aurora') return -1;
+      if (b[0] === 'aurora') return 1;
+      return a[1].localeCompare(b[1]);
+    });
+    for (const [pid, pname] of ordered){
+      const count = sessions.filter(s => personaIdOf(s) === pid).length;
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'pf-chip' + (chatPersonaFilter === pid ? ' on' : '');
+      chip.style.setProperty('--persona-color', personaColor(pid));
+      chip.innerHTML =
+        `<span class="pf-dot"></span><span>${escHtml(pname)} (${count})</span>`;
+      chip.addEventListener('click', () => setChatPersonaFilter(pid));
+      row.appendChild(chip);
+    }
+  }
+  function setChatPersonaFilter(pid){
+    chatPersonaFilter = pid;
+    try { localStorage.setItem('cc.chatPersonaFilter', pid); } catch (e) {}
+    renderSessions();
+  }
+
   function renderSessions(){
     starredList.innerHTML = '';
     sessionList.innerHTML = '';
-    const starred = sessions.filter(s => s.favorite);
-    const recent = sessions.filter(s => !s.favorite);
+    // Apply persona filter (Aurora-pinned still shows even when filter
+    // is set — she's the orchestrator and always relevant).
+    const visibleAll = sessions.filter(s => {
+      if (chatPersonaFilter === 'all') return true;
+      const pid = personaIdOf(s);
+      // Always show Aurora pinned, regardless of filter.
+      if (pid === 'aurora') return true;
+      return pid === chatPersonaFilter;
+    });
+    // Aurora always pinned to the very top, then favorites, then recent.
+    const aurora  = visibleAll.filter(s => personaIdOf(s) === 'aurora');
+    const starred = visibleAll.filter(s => s.favorite && personaIdOf(s) !== 'aurora');
+    const recent  = visibleAll.filter(s => !s.favorite && personaIdOf(s) !== 'aurora');
 
-    starredHeader.hidden = !starred.length;
-    starredList.hidden = !starred.length;
-    recentHeader.hidden = !recent.length || !starred.length;
+    // Render Aurora rows directly into the starredList area (top of
+    // the sidebar). They're flagged with `.pinned-top` for styling.
+    starredHeader.hidden = !(aurora.length || starred.length);
+    starredList.hidden  = !(aurora.length || starred.length);
+    recentHeader.hidden = !recent.length || !(aurora.length || starred.length);
 
+    for (const s of aurora){
+      const it = buildSessionItem(s);
+      it.classList.add('pinned-top');
+      starredList.appendChild(it);
+    }
     for (const s of starred) starredList.appendChild(buildSessionItem(s));
 
-    if (!recent.length && !starred.length){
+    if (!recent.length && !starred.length && !aurora.length){
       const e = document.createElement('div');
       e.className = 'empty-list';
-      e.textContent = 'No sessions yet. Click "New session" above to start.';
+      e.textContent = chatPersonaFilter === 'all'
+        ? 'No sessions yet. Click "New session" above to start.'
+        : `No chats with this persona yet.`;
       sessionList.appendChild(e);
       return;
     }
     for (const s of recent) sessionList.appendChild(buildSessionItem(s));
+
+    // Refresh the filter chip row above the list whenever sessions
+    // change (new persona may need a new chip).
+    renderPersonaFilterChips();
   }
 
   // ───── messages ─────
@@ -3296,7 +3499,27 @@
   function refreshHeaderTitle(){
     if (!titleLabel) return;
     const s = sessions.find(x => x.id === activeId);
-    titleLabel.textContent = s ? (s.title || 'New chat') : 'Claude Code';
+    if (!s){
+      titleLabel.textContent = 'Claude Code';
+      titleLabel.style.removeProperty('--persona-color');
+      titleLabel.classList.remove('with-persona');
+      return;
+    }
+    const pid = personaIdOf(s);
+    const pname = personaNameOf(s);
+    const col = personaColor(pid);
+    // Render: persona name in color + chat title (so it's instantly
+    // clear which persona is on this chat). Falls back to title only
+    // when there's no persona.
+    titleLabel.style.setProperty('--persona-color', col);
+    titleLabel.classList.toggle('with-persona', !!pid);
+    if (pid){
+      titleLabel.innerHTML =
+        `<span class="t-persona" style="color:${col}">${escHtml(pname)}</span>` +
+        ` <span class="t-sep">·</span> ${escHtml(s.title || 'New chat')}`;
+    } else {
+      titleLabel.textContent = s.title || 'New chat';
+    }
   }
   function setActive(id){
     activeId = id;
@@ -3610,6 +3833,12 @@
         // if it's open; otherwise just cache for next open.
         snapshots = m.snapshots || [];
         renderSnapshotsList();
+        break;
+      case 'skills_brief':
+        // Live skills list for the persona-editor picker. Repaints
+        // whenever the editor is open (or no-op otherwise).
+        editorSkillsAvailable = m.skills || [];
+        renderSkillsPicker();
         break;
       case 'snapshot_saved':
         // Toast-ish: the modal will repaint via the 'snapshots' event
@@ -4351,6 +4580,16 @@
     send({ type: 'persona_get', id: pid });
   }
 
+  // Working set for the editor's skill picker. Repopulated on every
+  // editor open via `skills_brief`. The persona's currently-pinned
+  // skill ids live in `editorSelectedSkills` (a Set for O(1) toggles).
+  let editorSkillsAvailable = [];
+  let editorSelectedSkills = new Set();
+  const PERSONA_DEFAULT_COLORS = {
+    aurora: '#f59e0b', claudy: '#f97316', atlas:  '#3b82f6',
+    forge:  '#ef4444', quill:  '#8b5cf6', sentry: '#10b981',
+  };
+
   function applyPersonaToEditor(p){
     document.getElementById('personaName').value  = p ? (p.name || '') : '';
     document.getElementById('personaText').value  = p ? (p.persona || '') : '';
@@ -4359,6 +4598,85 @@
                     p ? (p.model || '') : '');
     document.getElementById('personaMakeDefault').checked =
       !!(p && personasState.default === p.id);
+    // Color: stored value, or default-for-id, or a slate fallback.
+    const colorEl = document.getElementById('personaColor');
+    const hexEl   = document.getElementById('personaColorHex');
+    const fallbackCol = (p && p.id && PERSONA_DEFAULT_COLORS[p.id]) || '#64748b';
+    const col = (p && p.color) || fallbackCol;
+    if (colorEl) colorEl.value = col;
+    if (hexEl) hexEl.textContent = col;
+    // Skills: rebuild selection set + ask the bridge for the live list.
+    editorSelectedSkills = new Set((p && p.skills) || []);
+    fetchAndRenderSkills();
+  }
+
+  function fetchAndRenderSkills(){
+    // Always ask the bridge — the underlying folders may have changed
+    // since last open (user dropped in a new clawhub skill).
+    send({ type: 'skills_brief' });
+    // Repaint with whatever we have now (will repaint again when the
+    // server's `skills_brief` event lands).
+    renderSkillsPicker();
+  }
+
+  function renderSkillsPicker(){
+    const root = document.getElementById('personaSkillsList');
+    if (!root) return;
+    const countEl = document.getElementById('personaSkillsCount');
+    if (countEl) countEl.textContent =
+      `${editorSelectedSkills.size} / 5 selected`;
+    root.innerHTML = '';
+    if (!editorSkillsAvailable.length){
+      const e = document.createElement('div');
+      e.className = 'ps-empty';
+      e.textContent = 'No skills found. Drop folders under '
+                    + '~/.claude/skills/ or ~/claude-ui/skills/.';
+      root.appendChild(e);
+      return;
+    }
+    // Group by source.
+    const groups = {claude: [], user: []};
+    for (const s of editorSkillsAvailable){
+      (groups[s.source] || (groups[s.source] = [])).push(s);
+    }
+    const labels = {claude: 'Claude built-ins', user: 'User packs (clawhub)'};
+    const order  = ['claude', 'user'];
+    for (const src of order){
+      const arr = groups[src] || [];
+      if (!arr.length) continue;
+      const label = document.createElement('div');
+      label.className = 'ps-group-label';
+      label.textContent = `${labels[src] || src} (${arr.length})`;
+      root.appendChild(label);
+      for (const s of arr){
+        const id = s.id;
+        const checked = editorSelectedSkills.has(id);
+        const atCap = !checked && editorSelectedSkills.size >= 5;
+        const lbl = document.createElement('label');
+        lbl.className = 'ps-row' + (atCap ? ' disabled' : '');
+        lbl.title = atCap ? 'Max 5 skills per persona' : (s.path || '');
+        lbl.innerHTML = `
+          <input type="checkbox" ${checked ? 'checked' : ''} ${atCap ? 'disabled' : ''}>
+          <div class="ps-meta">
+            <div class="ps-name">${escHtml(s.name)}</div>
+            ${s.summary ? `<div class="ps-summary">${escHtml(s.summary)}</div>` : ''}
+          </div>
+        `;
+        const chk = lbl.querySelector('input');
+        chk.addEventListener('change', () => {
+          if (chk.checked){
+            if (editorSelectedSkills.size >= 5){
+              chk.checked = false; return;
+            }
+            editorSelectedSkills.add(id);
+          } else {
+            editorSelectedSkills.delete(id);
+          }
+          renderSkillsPicker();
+        });
+        root.appendChild(lbl);
+      }
+    }
   }
 
   function newPersonaForm(){
@@ -4392,11 +4710,29 @@
   // Personas list view → "+ Add persona" + per-row edit.
   document.getElementById('personaAdd').addEventListener('click', newPersonaForm);
   document.getElementById('personaBack').addEventListener('click', showPersonaList);
+  // Color picker: live-update the hex label as the user drags, and a
+  // "Reset" button reverts to the per-persona default (or slate).
+  document.getElementById('personaColor')?.addEventListener('input', e => {
+    const hexEl = document.getElementById('personaColorHex');
+    if (hexEl) hexEl.textContent = e.target.value;
+  });
+  document.getElementById('personaColorReset')?.addEventListener('click', () => {
+    const fallback = personaEditingId
+      ? (PERSONA_DEFAULT_COLORS[personaEditingId] || '#64748b')
+      : '#64748b';
+    const colorEl = document.getElementById('personaColor');
+    const hexEl   = document.getElementById('personaColorHex');
+    if (colorEl) colorEl.value = fallback;
+    if (hexEl)   hexEl.textContent = fallback;
+  });
+
   document.getElementById('personaSave').addEventListener('click', () => {
     const name  = document.getElementById('personaName').value.trim();
     const text  = document.getElementById('personaText').value;
     const instr = document.getElementById('personaInstr').value;
     const model = document.getElementById('personaModel').value;
+    const color = document.getElementById('personaColor').value;
+    const skills = Array.from(editorSelectedSkills);
     const makeDefault = document.getElementById('personaMakeDefault').checked;
     if (!name && !text && !instr){
       showBanner('Persona is empty — nothing to save.');
@@ -4409,6 +4745,8 @@
       persona: text,
       instructions: instr,
       model,
+      color,
+      skills,
       makeDefault,
     });
     showBanner('Persona saved.');
@@ -4839,7 +5177,45 @@
   let lastResults = [];
   let searchReqSeq = 0;
   let searchDebounce = null;
-  const filterState = { role: 'all', sort: 'desc', path: '' };
+  const filterState = { role: 'all', sort: 'desc', path: '', persona: 'all' };
+
+  function refreshSearchPersonaChips(){
+    const row = document.getElementById('searchPersonaFilter');
+    if (!row) return;
+    // Keep the static "All" chip; replace any persona-specific chips.
+    Array.from(row.querySelectorAll('[data-value]:not([data-value="all"])'))
+         .forEach(el => el.remove());
+    // Build a set of persona ids that appear in any session, plus all
+    // known personas (so the user can filter even before any chat for
+    // that persona has been created).
+    const present = new Set();
+    for (const s of sessions){
+      const pid = (s.persona && s.persona.id) || '';
+      if (pid) present.add(pid);
+    }
+    for (const p of personasState.personas){ present.add(p.id); }
+    // Aurora-first ordering, then alphabetical by display name.
+    const ordered = Array.from(present).map(pid => {
+      const p = personasState.personas.find(x => x.id === pid);
+      return { id: pid, name: (p && p.name) || pid };
+    }).sort((a, b) => {
+      if (a.id === 'aurora') return -1;
+      if (b.id === 'aurora') return 1;
+      return a.name.localeCompare(b.name);
+    });
+    for (const p of ordered){
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'fchip' + (filterState.persona === p.id ? ' on' : '');
+      chip.dataset.filter = 'persona';
+      chip.dataset.value  = p.id;
+      chip.style.setProperty('--persona-color', personaColor(p.id));
+      chip.innerHTML = `<span class="pf-dot" style="display:inline-block;width:7px;`
+                    + `height:7px;border-radius:50%;background:${personaColor(p.id)};`
+                    + `margin-right:6px;vertical-align:middle"></span>${escHtml(p.name)}`;
+      row.appendChild(chip);
+    }
+  }
 
   function escHtml(s){
     return (s || '').replace(/[&<>"']/g, c => ({
@@ -4892,6 +5268,7 @@
     searchActive = true;
     searchOverlay.classList.add('on');
     searchOverlay.setAttribute('aria-hidden', 'false');
+    refreshSearchPersonaChips();    // populate persona chip row
     setTimeout(() => searchInput.focus(), 30);
     // Load all-recent on first open so the screen isn't empty.
     runSearch();
@@ -4966,6 +5343,7 @@
       role: filterState.role,
       sort: filterState.sort,
       path: filterState.path,
+      personaId: filterState.persona === 'all' ? '' : filterState.persona,
       reqId,
     })){
       searchSummary.textContent = 'Not connected.';

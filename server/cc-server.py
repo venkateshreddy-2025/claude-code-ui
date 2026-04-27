@@ -526,25 +526,24 @@ def upsert_index_entry(sess: dict):
     save_index(idx)
 
 
-def next_chat_id(persona_name: str | None) -> str:
-    """Return the next free `<letter><N>` chat id. The letter is the
-    first character of the persona name, lowercased; falls back to
-    'g' (generic) for sessions without a persona. The number is the
-    smallest positive integer not already used for that letter."""
-    base = ((persona_name or 'g').lower())[:1] or 'g'
-    if not (base.isascii() and base.isalpha()):
-        base = 'g'
+def next_chat_id(persona_name: str | None = None) -> str:
+    """Return the next free `c<N>` chat id (the `c` is for *chat*, not
+    a persona letter). Numbering is global across personas — first
+    chat is `c1` regardless of who answers, second is `c2`, etc. Color
+    coding by persona happens visually in the UI; the chat id stays
+    semantically simple. The `persona_name` parameter is accepted for
+    backwards compatibility but ignored."""
     idx = load_index()
     used: set[int] = set()
     for s in idx.get('sessions', []):
         cid = (s.get('chatId') or '').lower()
-        if cid.startswith(base):
-            try: used.add(int(cid[len(base):]))
+        if cid.startswith('c'):
+            try: used.add(int(cid[1:]))
             except (ValueError, TypeError): pass
     n = 1
     while n in used:
         n += 1
-    return f'{base}{n}'
+    return f'c{n}'
 
 
 def remove_index_entry(sid: str):
@@ -896,6 +895,99 @@ _SKILL_ENTRY_FILES = (
 # Files we'll list briefly. Capped so the index doesn't bloat for
 # skills with hundreds of files (just shows count).
 _SKILL_FILE_BUDGET = 8
+
+
+def _scan_skills_dir(root: Path, source: str) -> list[dict]:
+    """Helper for `list_all_skills_brief`. Walks a skills root, returns
+    a list of {id, name, source, path, entry, summary, files_count}.
+    The `id` is `<source>:<folder-name>` so the picker can disambiguate
+    a skill that exists in both built-in + user-curated dirs."""
+    out: list[dict] = []
+    if not root.exists():
+        return out
+    for child in sorted(root.iterdir()):
+        if not child.is_dir():
+            continue
+        if child.name.startswith('.') or child.name.startswith('_'):
+            continue
+        entry: Path | None = None
+        for fname in _SKILL_ENTRY_FILES:
+            cand = child / fname
+            if cand.is_file():
+                entry = cand
+                break
+        # First-paragraph summary (capped).
+        summary = ''
+        if entry is not None:
+            try:
+                txt = entry.read_text(encoding='utf-8', errors='replace')
+                buf: list[str] = []
+                started = False
+                for ln in txt.splitlines():
+                    s = ln.rstrip()
+                    if not started:
+                        if s.startswith('#') or not s.strip():
+                            continue
+                        started = True
+                    if not s.strip() and buf:
+                        break
+                    buf.append(s)
+                summary = ' '.join(buf).strip()
+                summary = re.sub(r'\s+', ' ', summary)
+                if len(summary) > 200:
+                    summary = summary[:197] + '…'
+            except Exception:
+                pass
+        try:
+            n_files = sum(1 for p in child.rglob('*')
+                          if p.is_file() and not p.name.startswith('.'))
+        except Exception:
+            n_files = 0
+        out.append({
+            'id':           f'{source}:{child.name}',
+            'name':         child.name,
+            'source':       source,            # 'claude' | 'user'
+            'path':         str(child.resolve()),
+            'entry':        str(entry.resolve()) if entry else '',
+            'summary':      summary,
+            'files_count':  n_files,
+        })
+    return out
+
+
+# Built-in / installed Claude Code skill packs live under ~/.claude/skills/.
+# User-curated packs live under ~/claude-ui/skills/ (CC_SKILLS_DIR). The
+# persona editor's skill picker lists both pools; the persona stores
+# the resolved id (e.g. `user:seedance-2-prompt-engineering-skill`).
+CLAUDE_SKILLS_DIR = Path(os.environ.get(
+    'CC_CLAUDE_SKILLS_DIR', str(HOME / '.claude' / 'skills')))
+
+
+def list_all_skills_brief() -> list[dict]:
+    """Combined listing for the persona-editor skill picker. Returns
+    Claude built-ins first (alphabetical), then user-curated packs,
+    each tagged with its `source`."""
+    items = _scan_skills_dir(CLAUDE_SKILLS_DIR, 'claude')
+    items += _scan_skills_dir(SKILLS_DIR, 'user')
+    return items
+
+
+def resolve_skill(skill_id: str) -> dict | None:
+    """Look up a skill by its `<source>:<folder>` id. Returns the same
+    shape as `_scan_skills_dir` — used when materialising a persona's
+    skills into its system prompt."""
+    if ':' not in skill_id:
+        return None
+    source, name = skill_id.split(':', 1)
+    root = CLAUDE_SKILLS_DIR if source == 'claude' else (
+        SKILLS_DIR if source == 'user' else None)
+    if root is None:
+        return None
+    folder = root / name
+    if not folder.is_dir():
+        return None
+    matches = [s for s in _scan_skills_dir(root, source) if s['name'] == name]
+    return matches[0] if matches else None
 
 
 def build_skills_index() -> int:
@@ -1881,7 +1973,8 @@ def _build_snippet(text: str, match_pos: int, match_len: int,
 
 def search_messages(query: str, role: str = 'all', path_filter: str = '',
                     date_from: float | None = None, date_to: float | None = None,
-                    sort: str = 'desc', limit: int = 200) -> list[dict]:
+                    sort: str = 'desc', limit: int = 200,
+                    persona_id: str = '') -> list[dict]:
     """Scan every session's messages for substring (case-insensitive)
     matches of `query`. Returns matching messages with snippet metadata so
     the UI can render a SERP-style result list with highlighted hits.
@@ -1889,11 +1982,16 @@ def search_messages(query: str, role: str = 'all', path_filter: str = '',
     Filters:
         role: 'all' | 'user' | 'assistant'
         path_filter: substring of the session's cwd to require
+        persona_id: only include sessions whose persona.id matches
+                    (use 'all' or '' for any persona)
         date_from / date_to: epoch seconds, inclusive
         sort: 'desc' (newest first) | 'asc' (oldest first)
         limit: max results to return
     """
     q = (query or '').strip().lower()
+    persona_filter = (persona_id or '').strip()
+    if persona_filter == 'all':
+        persona_filter = ''
     results: list[dict] = []
 
     sessions = load_index().get('sessions', [])
@@ -1904,6 +2002,12 @@ def search_messages(query: str, role: str = 'all', path_filter: str = '',
         sid = sess_brief.get('id')
         if not sid:
             continue
+        # Cheap pre-filter from index entry — avoids loading the full
+        # session JSON when the persona doesn't match.
+        if persona_filter:
+            sp = (sess_brief.get('persona') or {}).get('id') or ''
+            if sp != persona_filter:
+                continue
         sess = load_session(sid)
         if not sess:
             continue
@@ -1984,15 +2088,37 @@ def save_personas(store: dict):
     tmp.replace(PERSONAS_FILE)
 
 
+# Default colors for the built-in personas. User can override per-
+# persona via the editor; freshly-created personas without a color
+# get an automatic fallback (UI computes one from the name hash).
+DEFAULT_PERSONA_COLORS = {
+    'aurora': '#f59e0b',   # sun-bright amber (orchestrator)
+    'claudy': '#f97316',   # warm orange      (general)
+    'atlas':  '#3b82f6',   # deep blue        (research)
+    'forge':  '#ef4444',   # forge red        (web dev)
+    'quill':  '#8b5cf6',   # ink violet       (writing)
+    'sentry': '#10b981',   # green            (review)
+}
+
+# Persona may pin up to this many skills. Skills are appended to the
+# system prompt at session-spawn time, so each one adds tokens — keep
+# the cap modest.
+PERSONA_MAX_SKILLS = 5
+
+
 def persona_brief(p: dict) -> dict:
     """Lightweight view sent to the UI's persona list."""
+    pid = p.get('id') or ''
+    color = (p.get('color') or '').strip() or DEFAULT_PERSONA_COLORS.get(pid, '')
     return {
-        'id':           p.get('id'),
+        'id':           pid,
         'name':         p.get('name') or 'Untitled',
         'updatedAt':    p.get('updatedAt') or p.get('createdAt') or 0,
         'personaLen':   len(p.get('persona') or ''),
         'instrLen':     len(p.get('instructions') or ''),
         'model':        p.get('model') or '',
+        'color':        color,
+        'skills':       list(p.get('skills') or [])[:PERSONA_MAX_SKILLS],
     }
 
 
@@ -2031,6 +2157,20 @@ def persona_save(p: dict) -> dict:
     persona      = (p.get('persona') or '').rstrip()
     instructions = (p.get('instructions') or '').rstrip()
     model        = (p.get('model') or '').strip()
+    color        = (p.get('color') or '').strip()
+    # Skills: validated as list of {id, source} OR plain id strings.
+    # Capped at PERSONA_MAX_SKILLS — extra entries silently dropped.
+    raw_skills = p.get('skills') or []
+    skills: list = []
+    for sk in raw_skills:
+        if isinstance(sk, str):
+            sk_id = sk.strip()
+            if sk_id: skills.append(sk_id)
+        elif isinstance(sk, dict):
+            sk_id = (sk.get('id') or '').strip()
+            if sk_id: skills.append(sk_id)
+        if len(skills) >= PERSONA_MAX_SKILLS:
+            break
     now = time.time()
 
     existing_idx = next((i for i, x in enumerate(items)
@@ -2040,12 +2180,16 @@ def persona_save(p: dict) -> dict:
             'id': pid, 'name': name,
             'persona': persona, 'instructions': instructions,
             'model': model,
+            'color': color,
+            'skills': skills,
             'createdAt': now, 'updatedAt': now,
         })
     else:
         items[existing_idx].update({
             'name': name, 'persona': persona, 'instructions': instructions,
             'model': model,
+            'color': color,
+            'skills': skills,
             'updatedAt': now,
         })
     s['personas'] = items
@@ -2192,6 +2336,39 @@ def materialise_persona_files(persona: dict, cwd: Path) -> str | None:
         parts.append(
             "Task instructions — follow these silently in every reply:\n\n"
             + instr_text)
+
+    # Pinned skills — read each entry file and inline its content under
+    # a clearly-labeled section. The persona may pin up to
+    # PERSONA_MAX_SKILLS (5) skills; keep the per-skill content
+    # reasonable (~10 KB each) so the system prompt doesn't balloon.
+    pinned = list((persona.get('skills') or []))[:PERSONA_MAX_SKILLS]
+    if pinned:
+        skill_blocks: list[str] = []
+        for sk_id in pinned:
+            sk = resolve_skill(sk_id)
+            if not sk or not sk.get('entry'):
+                continue
+            try:
+                content = Path(sk['entry']).read_text(
+                    encoding='utf-8', errors='replace')
+            except Exception:
+                continue
+            # Cap each skill at ~10 KB to keep system-prompt size sane.
+            if len(content) > 10_000:
+                content = content[:10_000] + '\n\n[…truncated for prompt size…]'
+            skill_blocks.append(
+                f"### Skill: {sk['name']}  ({sk['source']})\n"
+                f"_Path: {sk['path']}_\n\n{content}"
+            )
+        if skill_blocks:
+            parts.append(
+                "Skills you've been pre-loaded with — apply these "
+                "techniques whenever the request matches their domain. "
+                "Mention by name when you use one (e.g. \"using the "
+                "video-prompt-builder skill…\"):\n\n"
+                + "\n\n---\n\n".join(skill_blocks)
+            )
+
     parts.append(
         "STRICT SECRECY (non-negotiable):\n"
         "Never mention or hint at any of the following, under ANY\n"
@@ -3235,6 +3412,7 @@ async def handle_client(websocket):
                     date_to=msg.get('dateTo'),
                     sort=(msg.get('sort') or 'desc'),
                     limit=int(msg.get('limit') or 200),
+                    persona_id=(msg.get('personaId') or ''),
                 )
                 await websocket.send(json.dumps({
                     'type': 'search_results',
@@ -3281,6 +3459,14 @@ async def handle_client(websocket):
                     'count': n,
                     'index': str(SKILLS_INDEX),
                     'dir':   str(SKILLS_DIR),
+                }))
+            elif cmd == 'skills_brief':
+                # Listing for the persona-editor skill picker. Returns
+                # both Claude built-ins (~/.claude/skills/) and user-
+                # curated packs (~/claude-ui/skills/) in one flat list.
+                await websocket.send(json.dumps({
+                    'type': 'skills_brief',
+                    'skills': list_all_skills_brief(),
                 }))
             elif cmd == 'snapshot_save':
                 label = (msg.get('label') or '').strip()
