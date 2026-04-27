@@ -1384,6 +1384,74 @@ def maybe_spawn_orchestrator_heartbeat(sess: dict) -> None:
     log(f'orchestrator heartbeat: pid={proc.pid} sid={sid[:8]} cwd={cwd}')
 
 
+async def aurora_watchdog(stop_event: asyncio.Event,
+                           interval_seconds: int = 20) -> None:
+    """Idle background task. Wakes every `interval_seconds`, scans the
+    session index for any chat whose persona is Aurora, and confirms
+    its claude subprocess is actually alive (via `os.kill(pid, 0)` so
+    silent SIGKILLs and externally-killed PIDs don't go unnoticed).
+
+    If a worker is dead, lazy-respawn via `start_worker(sid)` — same
+    code path the user's first message would trigger. NO chat messages
+    are sent; nothing is injected. The watchdog's only job is to keep
+    Aurora's process alive across silent crashes so she can answer the
+    user's next message immediately instead of after a 30-second
+    reconnect lag.
+
+    Skip-conditions (don't try to revive):
+      • The session has never been touched (no `state.workers` entry
+        — that's a fresh chat that hasn't been spawned yet, not a
+        crash). User's next message lazy-spawns it normally.
+      • Worker is alive (PID exists in OS table).
+      • Worker is mid-shutdown (returncode set + recent).
+    """
+    while not stop_event.is_set():
+        try:
+            for sess_brief in list_sessions_brief():
+                pers = (sess_brief.get('persona') or {}).get('id')
+                if pers != ORCHESTRATOR_PERSONA_ID:
+                    continue
+                sid = sess_brief.get('id')
+                if not sid:
+                    continue
+                w = state.workers.get(sid)
+                if w is None:
+                    # Fresh, never-started — that's fine. The first
+                    # user message will spawn it.
+                    continue
+
+                # Trust os.kill(pid, 0) over asyncio.Process.returncode
+                # because external SIGKILL doesn't always update the
+                # latter until the bridge awaits the process.
+                pid = w.pid
+                alive = False
+                if pid:
+                    try:
+                        os.kill(pid, 0)
+                        alive = True
+                    except (ProcessLookupError, PermissionError):
+                        alive = False
+
+                if alive and (w.proc is None or w.proc.returncode is None):
+                    continue   # genuinely running
+
+                log(f'aurora watchdog: worker dead (sid={sid[:8]} '
+                    f'last-pid={pid}), respawning silently')
+                # Force-fresh=False → uses --resume so claude reloads
+                # the existing chat history. The user sees no break.
+                try:
+                    await start_worker(sid)
+                except Exception as e:
+                    log(f'aurora watchdog: respawn failed: {e}')
+        except Exception as e:
+            log(f'aurora watchdog: outer error: {e}')
+
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=interval_seconds)
+        except asyncio.TimeoutError:
+            pass
+
+
 def is_orchestrator_in_use() -> bool:
     """True if any persisted session uses the orchestrator persona.
     Used to grey her out in the persona picker so the user can't spawn
@@ -4106,6 +4174,14 @@ async def main():
     bg_tasks: list[asyncio.Task] = []
     if TELEGRAM_TOKEN:
         bg_tasks.append(asyncio.create_task(telegram_poller()))
+    # Aurora watchdog: idle task that keeps her claude worker alive
+    # across silent crashes. Pure liveness check — sends no messages,
+    # injects nothing. Without this, a SIGKILL'd Aurora worker stays
+    # dead until the user notices and pokes the chat. With it, she's
+    # back online within ~20s and the user's next message lands on a
+    # live worker.
+    bg_tasks.append(asyncio.create_task(aurora_watchdog(stop_event)))
+    log('aurora watchdog: started (20s interval, silent respawn)')
 
     async with websockets.serve(
             handle_client, HOST, PORT,
