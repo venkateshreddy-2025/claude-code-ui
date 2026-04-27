@@ -1108,7 +1108,7 @@
      → actions (sticky bottom). */
   /* Snapshots modal — same shell as routines, distinct rows. */
   #snapshotsModal{width:min(720px, calc(100% - 32px));
-    max-height:min(80vh, 720px);
+    height:min(80vh, 720px);
     display:flex;flex-direction:column;padding-bottom:0}
   #snapshotsModal[hidden]{display:none}
   #snapshotsModal h3{flex:0 0 auto}
@@ -1147,8 +1147,11 @@
   .snap-row .sactions .restore:hover{background:rgba(255,255,255,.04);border-color:var(--accent)}
   .snap-row .sactions .delete:hover{background:rgba(220,80,80,.08);
     border-color:rgba(220,80,80,.5);color:#ff7676}
+  /* Fixed height (not max-height) so the action row at the bottom
+     always sits at the bottom edge of the modal — short lists no
+     longer leave the buttons stranded mid-modal. */
   #routinesModal{width:min(720px, calc(100% - 32px));
-    max-height:min(80vh, 720px);
+    height:min(80vh, 720px);
     display:flex;flex-direction:column;
     padding-bottom:0}
   #routinesModal[hidden]{display:none}
@@ -2057,6 +2060,11 @@
   // multi-line non-greedy match. |ROUTINE_CANCEL| is single-line.
   const ROUTINE_MARKER_RE    = /\|\s*ROUTINE\s*\|\s*\{[\s\S]*?\}\s*\|/g;
   const ROUTINE_CANCEL_RE    = /\|\s*ROUTINE_CANCEL\s*\|\s*[^|\n]+?\s*\|/g;
+  // |KNOWLEDGE| <abs path> | — chat saved a knowledge MD file.
+  // |ROUTINE_VIEW| <routine-id> | <abs html path> | — chat wrote
+  //   an HTML visualization for a routine.
+  const KNOWLEDGE_MARKER_RE  = /\|\s*KNOWLEDGE\s*\|\s*[^|\n]+?\s*\|/g;
+  const ROUTINE_VIEW_RE      = /\|\s*ROUTINE_VIEW\s*\|\s*[^|\n]+?\s*\|\s*[^|\n]+?\s*\|/g;
   function stripSendMarkers(text){
     if (!text || text.indexOf('|') < 0) return text;
     return text
@@ -2064,6 +2072,8 @@
       .replace(ARTIFACT_MARKER_RE, '')
       .replace(ROUTINE_MARKER_RE, '')
       .replace(ROUTINE_CANCEL_RE, '')
+      .replace(KNOWLEDGE_MARKER_RE, '')
+      .replace(ROUTINE_VIEW_RE, '')
       .replace(/[ \t]+\n/g,'\n').replace(/\n{3,}/g,'\n\n').replace(/\s+$/, '');
   }
 
@@ -5016,9 +5026,15 @@
       // Two action buttons: Kill (live → cancel + SIGTERM, leaves
       // the row in the registry as cancelled), Delete (cancelled →
       // hard-remove from JSON entirely). Show whichever applies.
+      // Plus a View button when the chat wrote an HTML visualization
+      // (an "infinite canvas" of triggers + nodes).
+      const viewBtn = r.viewPath
+        ? `<button class="rview" data-path="${escHtml(r.viewPath)}" type="button" title="Open the routine's visualization">View</button>`
+        : '';
       const actions = `
         <div class="ractions">
           ${status}
+          ${viewBtn}
           <button class="rkill"   data-id="${escHtml(r.id)}" type="button">Kill</button>
           <button class="rdelete" data-id="${escHtml(r.id)}" type="button">Delete</button>
         </div>`;
@@ -5046,6 +5062,24 @@
         if (!rid) return;
         if (!confirm('Delete this routine entirely? This removes it from the registry. (No active process to kill — already cancelled.)')) return;
         send({ type: 'routine_remove', id: rid });
+      });
+    });
+    // View button → open the routine's HTML visualization in the
+    // existing artifact side-panel. Bridge serves it via /file?p=<abs>
+    // (validated against the bridge's known roots — see http_handler).
+    list.querySelectorAll('.rview').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const p = btn.dataset.path;
+        if (!p) return;
+        const url = '/file?p=' + encodeURIComponent(p);
+        if (typeof openArtifact === 'function'){
+          openArtifact({
+            url, name: p.split('/').pop(),
+            mimeType: 'text/html',
+          });
+        } else {
+          window.open(url, '_blank');
+        }
       });
     });
   }

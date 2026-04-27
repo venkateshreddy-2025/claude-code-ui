@@ -70,6 +70,10 @@ class Routine:
     enabled: bool = True              # false after cancel; routine kept for audit
     cancelled_at: float | None = None
     cancel_reason: str = ''           # 'user', 'process_died', 'session_deleted'
+    view_path: str = ''               # absolute path of the routine's HTML
+                                      # visualization (an "infinite canvas"
+                                      # showing triggers/actions as nodes).
+                                      # Set when claude emits |ROUTINE_VIEW|.
 
     def to_dict(self) -> dict:
         return {
@@ -89,6 +93,7 @@ class Routine:
             'enabled':       self.enabled,
             'cancelled_at':  self.cancelled_at,
             'cancel_reason': self.cancel_reason,
+            'view_path':     self.view_path,
         }
 
     @classmethod
@@ -110,6 +115,7 @@ class Routine:
             enabled       = d.get('enabled', True),
             cancelled_at  = d.get('cancelled_at'),
             cancel_reason = d.get('cancel_reason') or '',
+            view_path     = d.get('view_path') or '',
         )
 
     def is_alive(self) -> bool:
@@ -145,6 +151,7 @@ class Routine:
             'fires':        self.fire_count,
             'cancelledAt':  self.cancelled_at,
             'cancelReason': self.cancel_reason,
+            'viewPath':     self.view_path,
         }
 
 

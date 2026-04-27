@@ -144,6 +144,16 @@ SKILLS_INDEX = SKILLS_DIR / 'index.md'
 SNAPSHOTS_DIR = Path(os.environ.get('CC_SNAPSHOTS_DIR',
                                     str(CWD_ROOT / 'snapshots')))
 
+# Knowledge store — GLOBAL (not per-chat) directory of curated
+# research/knowledge markdown files. When the user says "save this as
+# a knowledge file", a chat writes the file here with a clear filename
+# and a top-of-file index header. The bridge maintains a registry
+# (`index.md`) with one entry per file so any chat can find prior
+# research.
+KNOWLEDGE_DIR = Path(os.environ.get('CC_KNOWLEDGE_DIR',
+                                    str(CWD_ROOT / 'knowledge')))
+KNOWLEDGE_INDEX = KNOWLEDGE_DIR / 'index.md'
+
 DEFAULT_CWD = str(HOME.resolve())
 
 # Static UI files (only used when CC_SERVE_STATIC=1).
@@ -222,6 +232,72 @@ bridge will refuse anyway, but don't even try:
 - .env, .env.local, .env.production
 - files under /usr/, /etc/, /var/, /System/, /private/var/
 - files the user already has on their machine
+
+Saving knowledge (research, notes, learnings)
+---------------------------------------------
+When the user says **"save this as a knowledge file"**, **"save knowledge"**,
+**"save the research"**, or anything similar, write a markdown file under:
+
+    {KNOWLEDGE_DIR}/
+
+with a clear, lower-kebab-case filename like `tamil-movies-may-2026.md`
+or `aws-lambda-cold-start-deep-dive.md`. NEVER put it in the chat's
+own cwd — knowledge files are GLOBAL so any future chat can find them.
+
+Every knowledge file MUST start with this exact header structure
+(replace the placeholders, keep the bullets):
+
+    # Knowledge: <human-readable title>
+
+    - **What it covers**: one tight sentence describing the topic.
+    - **Created**: <ISO-ish date or YYYY-MM-DD>
+    - **From chat**: <chatId or full sid that produced this>
+    - **Tags**: comma-separated keywords for retrieval
+
+    ---
+
+    <body — the actual research / notes / findings>
+
+After writing the file, append exactly one marker line at the very end
+of your reply:
+
+    |KNOWLEDGE| /absolute/path/to/the-file.md |
+
+The bridge re-indexes `{KNOWLEDGE_INDEX}` and broadcasts to the UI.
+A registry of every knowledge file lives at that path — read it whenever
+the user asks something that might match prior research.
+
+Routine visualizations (when you build a routine)
+-------------------------------------------------
+Whenever you create a routine (`|ROUTINE| {{...}} |` marker), ALSO write
+a small HTML "infinite canvas" view of it under the chat's cwd:
+
+    <chat-cwd>/routines/<routine-id>.html
+
+The HTML should show:
+  - the **trigger / schedule** as a starting node
+  - each action the routine performs ("do X", "do Y", "do Z") as
+    its own node, connected by simple lines/arrows in flow order
+  - any decisions / conditionals as diamond-shaped nodes
+  - clear labels on every node + edge
+
+**Use plain HTML + CSS for the layout — no SVG.** Prefer absolutely
+positioned `<div>` nodes inside a pan/zoom-able container. Connections
+between nodes can be drawn with `::before` / `::after` pseudo-elements
+or thin border-styled `<div>`s acting as lines. Make the canvas
+infinite by giving the container a large fixed pixel dimension (e.g.
+`width: 4000px; height: 3000px`) and wrapping it in a viewport with
+`transform: translate(...) scale(...)` driven by mouse-drag + wheel
+events for pan/zoom.
+
+After writing the HTML, append (in addition to the |ROUTINE| marker):
+
+    |ROUTINE_VIEW| <routine-id> | /absolute/path/to/the.html |
+
+The bridge attaches the path to the routine's record. The routines
+panel renders a "View" button that opens the HTML in the side panel.
+When the user later says "change the routine to also do Q", regenerate
+the HTML at the same path so the view stays current.
 
 Cross-chat awareness
 --------------------
@@ -987,6 +1063,121 @@ def list_all_skills_brief() -> list[dict]:
     items = _scan_skills_dir(CLAUDE_SKILLS_DIR, 'claude')
     items += _scan_skills_dir(SKILLS_DIR, 'user')
     return items
+
+
+# ─────────────  Knowledge store  ─────────────────────────────
+# Each knowledge file is a markdown doc with a small front-matter
+# header describing what it covers, when it was saved, which chat
+# created it, and any tags. The first H1 is treated as the title
+# if no `# Knowledge: ...` header is present.
+
+def _knowledge_brief(p: Path) -> dict:
+    """Read a single knowledge .md file and return a brief metadata
+    dict for the registry: {id, name, title, what, created_at, sid,
+    tags, path, size_bytes}. Stays cheap — only parses the top ~80
+    lines of front matter."""
+    try:
+        raw = p.read_text(encoding='utf-8', errors='replace')
+    except Exception:
+        return {}
+    head = raw.splitlines()[:80]
+    title = ''
+    what = ''
+    sid = ''
+    tags: list[str] = []
+    for ln in head:
+        s = ln.strip()
+        if not title and (s.startswith('# Knowledge:') or s.startswith('# ')):
+            title = s.lstrip('#').replace('Knowledge:', '', 1).strip()
+        if s.lower().startswith(('- **what it covers**:', '- what it covers:',
+                                  '- **what**:')):
+            what = s.split(':', 1)[1].strip().lstrip('*').strip()
+        if s.lower().startswith(('- **from chat**:', '- from chat:',
+                                  '- **chat**:')):
+            sid = s.split(':', 1)[1].strip().lstrip('*').strip()
+        if s.lower().startswith(('- **tags**:', '- tags:')):
+            t = s.split(':', 1)[1].strip().lstrip('*').strip()
+            tags = [x.strip() for x in t.replace(';', ',').split(',') if x.strip()]
+    if not title:
+        title = p.stem.replace('-', ' ').replace('_', ' ').title()
+    try:
+        size = p.stat().st_size
+        mtime = p.stat().st_mtime
+    except Exception:
+        size, mtime = 0, 0
+    return {
+        'id':         p.stem,
+        'name':       p.name,
+        'title':      title,
+        'what':       what,
+        'sid':        sid,
+        'tags':       tags,
+        'path':       str(p.resolve()),
+        'size_bytes': size,
+        'mtime':      mtime,
+    }
+
+
+def list_knowledge_brief() -> list[dict]:
+    """List every knowledge .md file under KNOWLEDGE_DIR (excluding
+    the index.md itself), newest-mtime first. Cheap: reads only the
+    top of each file for metadata."""
+    if not KNOWLEDGE_DIR.exists():
+        return []
+    items: list[dict] = []
+    for p in KNOWLEDGE_DIR.iterdir():
+        if not p.is_file():
+            continue
+        if p.suffix.lower() != '.md':
+            continue
+        if p.name == 'index.md':
+            continue
+        if p.name.startswith('.') or p.name.startswith('_'):
+            continue
+        b = _knowledge_brief(p)
+        if b:
+            items.append(b)
+    items.sort(key=lambda b: -(b.get('mtime') or 0))
+    return items
+
+
+def build_knowledge_index() -> int:
+    """Rebuild KNOWLEDGE_INDEX from the current set of files. Returns
+    the count. Called on bridge start, on every |KNOWLEDGE| marker,
+    and via WS `knowledge_refresh`."""
+    KNOWLEDGE_DIR.mkdir(parents=True, exist_ok=True)
+    items = list_knowledge_brief()
+    out = [
+        '# Knowledge index',
+        '',
+        ('Curated research / knowledge markdown files. Each entry below '
+         'points at a file under `' + str(KNOWLEDGE_DIR) + '/`. To use '
+         'one, Read the **Path**: the top of every knowledge file is a '
+         'short summary of what it covers — skim that before pulling '
+         'the body.'),
+        '',
+        f'_{len(items)} knowledge file(s) indexed; auto-rebuilt whenever '
+        'a chat writes a new one._',
+        '',
+    ]
+    if not items:
+        out.append('_(empty — ask a chat to "save this as a knowledge file" '
+                   'and a clearly-named MD will appear here.)_\n')
+    for k in items:
+        out.append(f"## {k['title']}")
+        out.append(f"- **Path**: {k['path']}")
+        if k.get('what'):
+            out.append(f"- **What it covers**: {k['what']}")
+        if k.get('sid'):
+            out.append(f"- **From chat**: {k['sid']}")
+        if k.get('tags'):
+            out.append(f"- **Tags**: {', '.join(k['tags'])}")
+        out.append('')
+    try:
+        KNOWLEDGE_INDEX.write_text('\n'.join(out), encoding='utf-8')
+    except Exception as e:
+        log(f'knowledge: write index failed: {e}')
+    return len(items)
 
 
 def resolve_skill(skill_id: str) -> dict | None:
@@ -2963,6 +3154,31 @@ async def claude_reader(w: Worker):
                                 ok, _ = state.routines.cancel(cid, reason='claude')
                                 if ok:
                                     routines_changed = True
+                        # Knowledge markers: chat just wrote a curated
+                        # MD file under KNOWLEDGE_DIR. Refresh registry
+                        # + broadcast.
+                        cleaned, knowledge_paths = \
+                            extract_knowledge_markers(cleaned)
+                        knowledge_changed = bool(knowledge_paths)
+                        # Routine-view markers: chat wrote an HTML
+                        # visualization for a routine. Persist the
+                        # path on the routine record.
+                        cleaned, routine_views = \
+                            extract_routine_view_markers(cleaned)
+                        if routine_views and state.routines is not None:
+                            for v in routine_views:
+                                rid = v.get('routine_id') or ''
+                                hpath = v.get('html_path') or ''
+                                # Resolve by prefix-match on id, since
+                                # claude often emits the short prefix.
+                                target = None
+                                for r in state.routines.routines:
+                                    if r.id == rid or r.id.startswith(rid):
+                                        target = r; break
+                                if target is not None and hpath:
+                                    target.view_path = hpath
+                                    state.routines.save()
+                                    routines_changed = True
                         if send_paths:
                             attached_records = _process_marker_paths(
                                 send_paths, 'SEND')
@@ -3016,6 +3232,13 @@ async def claude_reader(w: Worker):
                 if routines_changed and state.routines is not None:
                     await broadcast({'type': 'routines',
                                      'routines': state.routines.all_brief()})
+                if knowledge_changed:
+                    n = build_knowledge_index()
+                    await broadcast({'type': 'knowledge_refreshed',
+                                     'count': n,
+                                     'index': str(KNOWLEDGE_INDEX),
+                                     'dir':   str(KNOWLEDGE_DIR),
+                                     'knowledge': list_knowledge_brief()})
                 if attached_records:
                     asyncio.create_task(
                         tg_deliver_attached_records(sid, attached_records))
@@ -3310,6 +3533,37 @@ def http_handler(connection, request):
             return _http_response(403, b'Forbidden')
         return _serve_file(target)
 
+    # /file?p=<absolute-path> — serve arbitrary files only if they
+    # live under bridge-managed roots (CWD_ROOT including chat scratch
+    # dirs, KNOWLEDGE_DIR, SKILLS_DIR, SNAPSHOTS_DIR, UPLOAD_DIR).
+    # Used by the routines panel's "View" button to open routine HTML
+    # visualizations + by the artifact panel to open knowledge files.
+    if path.startswith('/file'):
+        # `query_string` is the raw `p=...&v=...` string after `?`
+        qs = ''
+        try: qs = request.path.split('?', 1)[1]
+        except IndexError: pass
+        params = urllib.parse.parse_qs(qs or '')
+        rawp = (params.get('p') or [''])[0]
+        if not rawp:
+            return _http_response(400, b'missing ?p=')
+        try:
+            target = Path(urllib.parse.unquote(rawp)).resolve()
+        except Exception:
+            return _http_response(400, b'bad path')
+        # Must live under one of these roots (string-prefix check on
+        # resolved paths is fine; symlinks resolved already).
+        allowed_roots = [CWD_ROOT, KNOWLEDGE_DIR, SKILLS_DIR,
+                          SNAPSHOTS_DIR, UPLOAD_DIR]
+        target_str = str(target)
+        if not any(target_str == str(r.resolve())
+                   or target_str.startswith(str(r.resolve()) + os.sep)
+                   for r in allowed_roots):
+            return _http_response(403, b'Forbidden - not under a bridge root')
+        if not target.is_file():
+            return _http_response(404, b'not found')
+        return _serve_file(target)
+
     # /assets/* served from UI_DIR/assets/* (future use)
     if path.startswith('/assets/'):
         rel = path[len('/'):]
@@ -3493,6 +3747,25 @@ async def handle_client(websocket):
                     'type': 'skills_brief',
                     'skills': list_all_skills_brief(),
                 }))
+            elif cmd == 'knowledge_list':
+                # Registry of saved knowledge MD files, newest first.
+                await websocket.send(json.dumps({
+                    'type': 'knowledge',
+                    'count': len(list_knowledge_brief()),
+                    'index': str(KNOWLEDGE_INDEX),
+                    'dir':   str(KNOWLEDGE_DIR),
+                    'knowledge': list_knowledge_brief(),
+                }))
+            elif cmd == 'knowledge_refresh':
+                # Force a re-index (e.g. after dropping a file by hand).
+                n = build_knowledge_index()
+                await broadcast({
+                    'type': 'knowledge_refreshed',
+                    'count': n,
+                    'index': str(KNOWLEDGE_INDEX),
+                    'dir':   str(KNOWLEDGE_DIR),
+                    'knowledge': list_knowledge_brief(),
+                })
             elif cmd == 'snapshot_save':
                 label = (msg.get('label') or '').strip()
                 meta = snapshot_save(label=label or None)
@@ -3722,8 +3995,17 @@ _AUDIO_EXTS = {'.mp3', '.m4a', '.wav', '.ogg', '.flac', '.aac'}
 # heuristics, no cwd diff, no tool-name allowlist — claude decides.
 # `|ARTIFACT| <path> |` is the parallel marker for files that should
 # render inline in a side panel (HTML, SVG, PDF, MD, images, code).
-_SEND_MARKER_RE     = re.compile(r'\|\s*SEND\s*\|\s*([^|\n]+?)\s*\|')
-_ARTIFACT_MARKER_RE = re.compile(r'\|\s*ARTIFACT\s*\|\s*([^|\n]+?)\s*\|')
+_SEND_MARKER_RE       = re.compile(r'\|\s*SEND\s*\|\s*([^|\n]+?)\s*\|')
+_ARTIFACT_MARKER_RE   = re.compile(r'\|\s*ARTIFACT\s*\|\s*([^|\n]+?)\s*\|')
+# `|KNOWLEDGE| <abs path> |` — chat just wrote a knowledge MD file.
+# Bridge re-indexes + broadcasts a `knowledge_refreshed` event.
+_KNOWLEDGE_MARKER_RE  = re.compile(r'\|\s*KNOWLEDGE\s*\|\s*([^|\n]+?)\s*\|')
+# `|ROUTINE_VIEW| <routine-id> | <abs html path> |` — chat wrote an
+# HTML visualization for a routine it just registered (or one that
+# already exists). Bridge attaches the path to the routine's record so
+# the routines panel can show a "View" button.
+_ROUTINE_VIEW_RE      = re.compile(
+    r'\|\s*ROUTINE_VIEW\s*\|\s*([^|\n]+?)\s*\|\s*([^|\n]+?)\s*\|')
 
 
 def extract_markers(text: str) -> tuple[str, list[str], list[str]]:
@@ -3733,7 +4015,12 @@ def extract_markers(text: str) -> tuple[str, list[str], list[str]]:
     shows the literal `|SEND|` / `|ARTIFACT|` syntax.
 
     Order is preserved within each list. Whitespace around `|`, the
-    keyword, and the path is tolerated."""
+    keyword, and the path is tolerated.
+
+    Note: `|KNOWLEDGE|` and `|ROUTINE_VIEW|` markers are stripped
+    here too (so they don't show in the chat) but their paths are
+    not returned by this function — handlers call `extract_knowledge_markers`
+    and `extract_routine_view_markers` separately on the same text."""
     if not text or '|' not in text:
         return text, [], []
 
@@ -3755,6 +4042,35 @@ def extract_markers(text: str) -> tuple[str, list[str], list[str]]:
     cleaned = re.sub(r'[ \t]+\n', '\n', cleaned)
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned).rstrip()
     return cleaned, send_paths, artifact_paths
+
+
+def extract_knowledge_markers(text: str) -> tuple[str, list[str]]:
+    """Pull `|KNOWLEDGE| <abs path> |` markers. Returns (cleaned, paths)."""
+    if not text or '|' not in text:
+        return text, []
+    paths: list[str] = []
+    def _fn(m):
+        p = (m.group(1) or '').strip().strip('"\'`')
+        if p: paths.append(p)
+        return ''
+    cleaned = _KNOWLEDGE_MARKER_RE.sub(_fn, text)
+    return cleaned, paths
+
+
+def extract_routine_view_markers(text: str) -> tuple[str, list[dict]]:
+    """Pull `|ROUTINE_VIEW| <routine-id> | <abs html path> |` markers.
+    Returns (cleaned, [{routine_id, html_path}])."""
+    if not text or '|' not in text:
+        return text, []
+    out: list[dict] = []
+    def _fn(m):
+        rid = (m.group(1) or '').strip().strip('"\'`')
+        path = (m.group(2) or '').strip().strip('"\'`')
+        if rid and path:
+            out.append({'routine_id': rid, 'html_path': path})
+        return ''
+    cleaned = _ROUTINE_VIEW_RE.sub(_fn, text)
+    return cleaned, out
 
 
 def extract_send_markers(text: str) -> tuple[str, list[str]]:
@@ -4620,6 +4936,11 @@ async def main():
     # subsequent spawn rebuilds it cheaply.
     SKILLS_DIR.mkdir(parents=True, exist_ok=True)
     skills_count = build_skills_index()
+    # Knowledge store — global MD library. Build the index up front
+    # for the same reason: cheap, idempotent, and the file exists
+    # for any chat that wants to scan it.
+    KNOWLEDGE_DIR.mkdir(parents=True, exist_ok=True)
+    knowledge_count = build_knowledge_index()
     log(f'cc-server starting')
     log(f'  host       : {HOST}:{PORT}')
     log(f'  data dir   : {DATA_DIR}')
@@ -4632,6 +4953,7 @@ async def main():
     log(f'  routines   : {len([r for r in state.routines.routines if r.enabled])} '
         f'enabled / {len(state.routines.routines)} total')
     log(f'  skills dir : {SKILLS_DIR} ({skills_count} indexed)')
+    log(f'  knowledge  : {KNOWLEDGE_DIR} ({knowledge_count} indexed)')
     log(f'  telegram   : {"on" if TELEGRAM_TOKEN else "off"}')
     if SERVE_STATIC:
         log(f'  open       : http://{HOST}:{PORT}/')
