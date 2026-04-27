@@ -189,8 +189,8 @@ Every knob is an environment variable. Defaults shown.
 | `CC_SERVER_PORT` | `8765` | HTTP + WebSocket port. |
 | `CC_CLAUDE_BIN` | `claude` | Path to the claude CLI. Use a full path if not on `PATH` (e.g. inside a launchd plist). |
 | `CC_MODEL_DEFAULT` | `claude-sonnet-4-5` | Model for new sessions. Override per-session with `/model <name>` in chat. |
-| `CC_DATA_DIR` | `~/.claude-code-ui` | Where session metadata, uploads, and logs live. |
-| `CC_CWD_ROOT` | `~/claude-ui` | Where per-session working directories are created. |
+| `CC_DATA_DIR` | `<repo>/runtime/_data` | Where session metadata, uploads, and logs live. |
+| `CC_CWD_ROOT` | `<repo>/runtime` | Root for all per-session working dirs and global stores (knowledge, skills, configs, snapshots, soul, long-term-memory). Co-located with the source so there's nothing to hunt for; `runtime/` is gitignored. |
 | `CC_UI_DIR` | `<repo>/ui` | Where `index.html` lives. |
 | `CC_SERVE_STATIC` | `1` | Serve the UI from this server. Set `0` if you have Caddy/nginx in front. |
 | `CC_PATH_PREFIX` | (empty) | URL prefix the proxy mounts you at, e.g. `/cc`. |
@@ -209,7 +209,7 @@ Every knob is an environment variable. Defaults shown.
 Every "+ New chat" in the UI:
 
 1. Generates a UUID.
-2. Creates `~/claude-ui/<YYYY-MM-DD_HH-MM-SS>/` as the session's
+2. Creates `<repo>/runtime/<YYYY-MM-DD_HH-MM-SS>/` as the session's
    working directory.
 3. Spawns `claude -p --session-id <uuid>` with that directory as cwd.
 4. After every message, mirrors the conversation into
@@ -407,18 +407,24 @@ Limits and behaviour:
    </dict>
    ```
 
-   Or for a quick shell run, store the token in a file and load it:
+   Or, simpler: drop a JSON config in the repo's runtime configs
+   folder and the server picks it up automatically — no env vars
+   needed:
 
    ```bash
-   # one-time
-   mkdir -p ~/.config/claude-code-ui
+   mkdir -p runtime/configs/telegram
+   chmod 700 runtime/configs/telegram
    umask 077
-   echo "YOUR_BOTFATHER_TOKEN" > ~/.config/claude-code-ui/telegram.token
-   chmod 600 ~/.config/claude-code-ui/telegram.token
+   cat > runtime/configs/telegram/config.json <<'JSON'
+   {
+     "bot_token": "YOUR_BOTFATHER_TOKEN",
+     "allowed_users": [YOUR_TELEGRAM_USER_ID],
+     "allowed_chats": []
+   }
+   JSON
+   chmod 600 runtime/configs/telegram/config.json
 
-   # every run
-   CC_TELEGRAM_BOT_TOKEN=$(cat ~/.config/claude-code-ui/telegram.token) \
-   CC_TELEGRAM_ALLOWED_USERS=YOUR_TELEGRAM_USER_ID \
+   # then just run the server
    python3 server/cc-server.py
    ```
 
@@ -440,10 +446,11 @@ Limits and behaviour:
 ### Helper script
 
 `scripts/run-telegram-bridge.sh` is an interactive launcher that
-loads the token from `~/.config/claude-code-ui/telegram.token` (or
-prompts for it with hidden input), then execs the server with the
-right env. Useful for ad-hoc development; for daemonised setups,
-prefer the launchd / systemd path above.
+prompts for the token + your Telegram user id on first run, writes
+them to `runtime/configs/telegram/config.json` (chmod 600), then
+execs the server. Subsequent runs reuse the saved config. Useful
+for ad-hoc development; for daemonised setups, prefer the launchd /
+systemd path above.
 
 ### Safety
 

@@ -1883,7 +1883,7 @@
         Skills get pre-loaded into this persona's system prompt so the
         first reply already knows the recipe. Mix Claude built-ins
         (`~/.claude/skills/`) and your installed packs from clawhub
-        (`~/claude-ui/skills/`).
+        (`runtime/skills/`).
       </p>
       <label class="setting-row" style="gap:6px;align-items:center;margin-top:10px">
         <input type="checkbox" id="personaMakeDefault">
@@ -4718,7 +4718,7 @@
       const e = document.createElement('div');
       e.className = 'ps-empty';
       e.textContent = 'No skills found. Drop folders under '
-                    + '~/.claude/skills/ or ~/claude-ui/skills/.';
+                    + '~/.claude/skills/ or runtime/skills/.';
       root.appendChild(e);
       return;
     }

@@ -143,7 +143,7 @@ Environment overrides:
     CC_SERVER_PORT=$PORT       (port to listen on)
     CC_MODEL_DEFAULT=...       (default model — see "claude" docs)
     CC_DATA_DIR=$DATA_DIR
-    CC_CWD_ROOT=~/claude-ui
+    CC_CWD_ROOT=<repo>/runtime  (default — keeps state next to source)
 
 See README.md for full configuration options.
 EOF

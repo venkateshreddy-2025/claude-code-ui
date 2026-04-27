@@ -26,7 +26,10 @@ from pathlib import Path
 
 WS_URL = os.environ.get('CC_WS_URL', 'ws://127.0.0.1:18793/ws')
 
-CWD_ROOT = Path(os.environ.get('CC_CWD_ROOT', str(Path.home() / 'claude-ui')))
+# Default to <repo>/runtime/ — same convention as cc-server.py. tools/
+# is at <repo>/tools/, so the parent of this script's parent is the repo.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+CWD_ROOT = Path(os.environ.get('CC_CWD_ROOT', str(_REPO_ROOT / 'runtime')))
 DATA_DIR = Path(os.environ.get('CC_DATA_DIR', str(CWD_ROOT / '_data')))
 SESS_DIR = DATA_DIR / 'cc-sessions'
 INDEX_FILE = SESS_DIR / 'index.json'

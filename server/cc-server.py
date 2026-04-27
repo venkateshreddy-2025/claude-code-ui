@@ -15,7 +15,7 @@ Architecture
   a time (the active session's). Switching sessions kills the current
   subprocess and respawns claude with `--resume <session-id>` so the new
   session's prior turns are loaded.
-* Each new session gets its own working directory under ~/claude-ui/<ts>/
+* Each new session gets its own working directory under <repo>/runtime/<ts>/
   so claude can drop scratch files there without colliding with other
   sessions.
 * File uploads ride the WS as base64 chunks. Images are passed to claude
@@ -96,21 +96,33 @@ HOST = os.environ.get('CC_SERVER_HOST', '127.0.0.1')
 PORT = int(os.environ.get('CC_SERVER_PORT', 8765))
 
 HOME = Path.home()
-# Single visible root for everything the bridge owns:
-#   $HOME/claude-ui/
+# Single visible root for everything the bridge owns. By default it
+# sits inside the repo so source + state are co-located and there's
+# nothing to hunt for on disk:
+#
+#   <repo>/runtime/
 #     ├─ long-term-memory.md      # the cross-chat index
 #     ├─ bridge.log                # server log (was /tmp/...)
 #     ├─ <chat-folder>/            # per-chat working dir
 #     │    ├─ chat.json            # mirror of the session messages
 #     │    ├─ MEMORY.md            # per-chat memory (overwritten on save)
 #     │    └─ uploads/             # any files the chat received
-#     └─ _data/                    # bookkeeping the user rarely touches
-#          ├─ cc-sessions/         # per-session JSON (id → messages)
-#          ├─ cc-uploads/<sid>/    # legacy upload location
-#          └─ cc-telegram.json     # Telegram chat-id ↔ session-id map
+#     ├─ _data/                    # bookkeeping the user rarely touches
+#     │    ├─ cc-sessions/         # per-session JSON (id → messages)
+#     │    ├─ cc-uploads/<sid>/    # legacy upload location
+#     │    └─ personas.json        # saved personas
+#     ├─ knowledge/                # global knowledge MD store + index
+#     ├─ skills/                   # global skill packs + index
+#     ├─ configs/                  # global service-integration configs
+#     │    └─ telegram/            #   bot token + allowlist (chmod 600)
+#     ├─ snapshots/                # time-machine state captures
+#     └─ soul/                     # Aurora's operational memory
 #
-# Nothing under ~/.openclaw, nothing in /tmp. All persistent and visible.
-CWD_ROOT = Path(os.environ.get('CC_CWD_ROOT', str(HOME / 'claude-ui')))
+# `runtime/` is gitignored so user state never leaks into the repo.
+# Override CC_CWD_ROOT to put it elsewhere; everything below derives
+# from this one root.
+REPO_ROOT = Path(__file__).resolve().parent.parent  # cc-server.py is in <repo>/server/
+CWD_ROOT = Path(os.environ.get('CC_CWD_ROOT', str(REPO_ROOT / 'runtime')))
 CWD_ROOT.mkdir(parents=True, exist_ok=True)
 
 DATA_DIR = Path(os.environ.get('CC_DATA_DIR', str(CWD_ROOT / '_data')))
@@ -470,11 +482,45 @@ GLOBAL_SYSTEM_PROMPT = _global_system_prompt()
 # Anyone can talk to a Telegram bot — without an allowlist, anyone who
 # finds the bot username can run claude as you. So messages from any
 # user not in CC_TELEGRAM_ALLOWED_USERS are firmly refused.
-TELEGRAM_TOKEN = os.environ.get('CC_TELEGRAM_BOT_TOKEN', '').strip()
+#
+# Token + allowlist resolution order:
+#   1. CC_TELEGRAM_BOT_TOKEN / CC_TELEGRAM_ALLOWED_USERS env vars
+#   2. <CONFIGS_DIR>/telegram/config.json — JSON like:
+#        {"bot_token": "...", "allowed_users": [123], "allowed_chats": []}
+#   3. blank — bridge runs without Telegram support
+#
+# The config file is part of the integrations store (CONFIGS_DIR), so
+# rotating the token is the same as updating any other service config:
+# edit the file, restart the bridge.
+def _telegram_config_file() -> Path | None:
+    p = CONFIGS_DIR / 'telegram' / 'config.json'
+    return p if p.is_file() else None
 
 
-def _parse_int_set(raw: str) -> set[int]:
+def _load_telegram_config() -> dict:
+    f = _telegram_config_file()
+    if f is None:
+        return {}
+    try:
+        return json.loads(f.read_text(encoding='utf-8'))
+    except Exception as e:
+        log(f'telegram: failed to parse {f}: {e}')
+        return {}
+
+
+_TG_CONFIG = _load_telegram_config()
+TELEGRAM_TOKEN = (os.environ.get('CC_TELEGRAM_BOT_TOKEN', '').strip()
+                  or str(_TG_CONFIG.get('bot_token') or '').strip())
+
+
+def _parse_int_set(raw) -> set[int]:
+    """Accept either a CSV/space string (env var form) or a list (JSON form)."""
     out: set[int] = set()
+    if isinstance(raw, (list, tuple)):
+        for v in raw:
+            try: out.add(int(v))
+            except (TypeError, ValueError): pass
+        return out
     for part in (raw or '').replace(',', ' ').split():
         try:
             out.add(int(part))
@@ -483,13 +529,15 @@ def _parse_int_set(raw: str) -> set[int]:
     return out
 
 
-TELEGRAM_ALLOWED_USERS: set[int] = _parse_int_set(
-    os.environ.get('CC_TELEGRAM_ALLOWED_USERS', ''))
+TELEGRAM_ALLOWED_USERS: set[int] = (
+    _parse_int_set(os.environ.get('CC_TELEGRAM_ALLOWED_USERS', ''))
+    or _parse_int_set(_TG_CONFIG.get('allowed_users', [])))
 # Optional: also allow specific chat ids (e.g. a private group with the
 # user). Both checks must pass — sender must be in ALLOWED_USERS AND the
 # chat must be in ALLOWED_CHATS, if ALLOWED_CHATS is set.
-TELEGRAM_ALLOWED_CHATS: set[int] = _parse_int_set(
-    os.environ.get('CC_TELEGRAM_ALLOWED_CHATS', ''))
+TELEGRAM_ALLOWED_CHATS: set[int] = (
+    _parse_int_set(os.environ.get('CC_TELEGRAM_ALLOWED_CHATS', ''))
+    or _parse_int_set(_TG_CONFIG.get('allowed_chats', [])))
 # Min ms between editMessageText calls per Telegram chat. Telegram
 # enforces ~1 msg/sec per chat for editing; 1200 ms gives headroom.
 TELEGRAM_EDIT_INTERVAL_MS = int(os.environ.get('CC_TELEGRAM_EDIT_INTERVAL_MS', '1200'))
@@ -1078,7 +1126,7 @@ def build_routines_preamble(sid: str) -> str:
 # ───────────────────  skills index  ───────────────────
 # A flat index of the global skills folder. Every spawn rebuilds it
 # (cheap — just glob a few files) so dropping a new skill in
-# ~/claude-ui/skills/ shows up to the next claude turn without any
+# <repo>/runtime/skills/ shows up to the next claude turn without any
 # manual refresh. Each entry is the skill's folder name + path +
 # entry-point file + first ~200 chars of summary.
 
@@ -1154,7 +1202,7 @@ def _scan_skills_dir(root: Path, source: str) -> list[dict]:
 
 
 # Built-in / installed Claude Code skill packs live under ~/.claude/skills/.
-# User-curated packs live under ~/claude-ui/skills/ (CC_SKILLS_DIR). The
+# User-curated packs live under <repo>/runtime/skills/ (CC_SKILLS_DIR). The
 # persona editor's skill picker lists both pools; the persona stores
 # the resolved id (e.g. `user:seedance-2-prompt-engineering-skill`).
 CLAUDE_SKILLS_DIR = Path(os.environ.get(
@@ -1659,7 +1707,7 @@ async def new_session(cwd_override: str | None = None,
 
     * cwd_override: absolute path the user wants claude to run in. We
       expand `~` and create the directory if needed. Empty / None → use
-      the default ~/claude-ui/<timestamp>/ folder.
+      the default <repo>/runtime/<timestamp>/ folder.
     * model_override: model id to pin to this session (also persisted on
       the session JSON so future resumes use the same model).
     * persona_id: id of a saved persona. If set, we materialise
@@ -3972,7 +4020,7 @@ async def handle_client(websocket):
             elif cmd == 'skills_brief':
                 # Listing for the persona-editor skill picker. Returns
                 # both Claude built-ins (~/.claude/skills/) and user-
-                # curated packs (~/claude-ui/skills/) in one flat list.
+                # curated packs (<repo>/runtime/skills/) in one flat list.
                 await websocket.send(json.dumps({
                     'type': 'skills_brief',
                     'skills': list_all_skills_brief(),

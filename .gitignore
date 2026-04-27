@@ -16,8 +16,10 @@ __pycache__/
 .venv/
 venv/
 
-# Local data — these are written by cc-server at runtime, never tracked.
-# (CC_DATA_DIR / CC_CWD_ROOT defaults; override paths via env vars.)
+# Local data — written by cc-server at runtime, never tracked.
+# `runtime/` is the current default (everything lives next to source so
+# there's nothing to hunt for). Older default paths kept for back-compat.
+runtime/
 .claude-code-ui/
 claude-ui/
 
