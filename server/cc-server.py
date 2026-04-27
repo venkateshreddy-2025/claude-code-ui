@@ -2615,12 +2615,14 @@ def save_personas(store: dict):
 # persona via the editor; freshly-created personas without a color
 # get an automatic fallback (UI computes one from the name hash).
 DEFAULT_PERSONA_COLORS = {
-    'aurora': '#f59e0b',   # sun-bright amber (orchestrator)
-    'claudy': '#f97316',   # warm orange      (general)
-    'atlas':  '#3b82f6',   # deep blue        (research)
-    'forge':  '#ef4444',   # forge red        (web dev)
-    'quill':  '#8b5cf6',   # ink violet       (writing)
-    'sentry': '#10b981',   # green            (review)
+    'aurora':    '#f59e0b',  # sun-bright amber  (orchestrator)
+    'claudy':    '#f97316',  # warm orange       (general default)
+    'curator':   '#14b8a6',  # teal              (organise / install / summarise)
+    'quick':     '#22d3ee',  # cyan              (Haiku — fast snappy)
+    'research':  '#3b82f6',  # deep blue         (multi-source research)
+    'pallavi':   '#ec4899',  # pink              (roleplay / social)
+    'presenter': '#eab308',  # gold              (decks + companion docs)
+    'critique':  '#dc2626',  # crimson           (review / verdict)
 }
 
 # Persona may pin up to this many skills. Skills are appended to the

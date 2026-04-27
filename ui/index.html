@@ -4790,12 +4790,14 @@
   // under the persona dropdown in the new-session popup so users see
   // what each persona is for before they click Create.
   const PERSONA_CAPABILITIES = {
-    aurora: 'Chief of staff — never does the work herself, spawns the right specialist, briefs them, follows up. Default for new chats.',
-    claudy: 'Friendly engineering generalist — coding, debugging, system design, web research. Most general work.',
-    atlas:  'Research analyst — multi-source web research with inline citations + confidence tags + structured findings.',
-    forge:  'Full-stack web engineer — modern stacks (TypeScript, Vite, Next, Tailwind, Postgres), small reviewable diffs, ships fast.',
-    quill:  'Writer + editor — docs, copy, prose. Active voice, no AI-tells, ruthless cuts.',
-    sentry: 'Code reviewer — security, correctness, performance, readability. Read-only by default; PR-comment style output.',
+    aurora:    'Chief of staff — never does the work herself, spawns the right specialist, briefs them, follows up. Pinned to top of the chat list.',
+    claudy:    'Friendly engineering generalist — coding, debugging, system design, web research. Default for new chats.',
+    curator:   'Organiser — installs skills, finds files on disk, summarises into knowledge MDs. Uses desktop-commander MCP for fast scans.',
+    quick:     'Haiku-fast snappy answers — lookups, math, definitions, one-liners. No multi-step plans, no big context.',
+    research:  'Deep research with citations — multi-source web search, inline `[N]` markers, confidence tags, structured TL;DR.',
+    pallavi:   'Roleplay companion — Pallavi, 24, romanized Telugu only, casual + teasing. Never breaks character. Not for work.',
+    presenter: 'Topic → polished single-file HTML deck + companion MD. Researches first, ships visuals, no thin text-walls.',
+    critique:  'Structured critique — works/doesn\'t work/missing/change-first/score. Code, prose, design, plans, anything.',
   };
   function renderPersonaCap(personaId){
     const el = document.getElementById('newSessionPersonaCap');
@@ -4847,8 +4849,9 @@
   let editorSkillsAvailable = [];
   let editorSelectedSkills = new Set();
   const PERSONA_DEFAULT_COLORS = {
-    aurora: '#f59e0b', claudy: '#f97316', atlas:  '#3b82f6',
-    forge:  '#ef4444', quill:  '#8b5cf6', sentry: '#10b981',
+    aurora:    '#f59e0b', claudy:    '#f97316', curator:  '#14b8a6',
+    quick:     '#22d3ee', research:  '#3b82f6', pallavi:  '#ec4899',
+    presenter: '#eab308', critique:  '#dc2626',
   };
 
   function applyPersonaToEditor(p){
