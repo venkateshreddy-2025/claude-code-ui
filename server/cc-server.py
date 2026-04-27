@@ -755,6 +755,11 @@ def upsert_index_entry(sess: dict):
         # references in the user's prose.
         'chatId': sess.get('chatId'),
         'persona': sess.get('persona'),
+        # User-defined 2-10 char tag for grouping unrelated chats around
+        # the same project / theme. Defaults to 'general' on every new
+        # session; the user can change it from the chat header. The
+        # filter dropdown + search both honor it. See `set_tag` WS cmd.
+        'tag': (sess.get('tag') or 'general'),
     })
     idx['sessions'] = items
     save_index(idx)
@@ -1753,6 +1758,10 @@ async def new_session(cwd_override: str | None = None,
         # letter. Lets the user refer to chats with `@c1`, `@c2`,
         # etc. — claude looks them up via the live index.
         'chatId': next_chat_id(persona_meta.get('name') if persona_meta else None),
+        # User-defined project / theme tag (2-10 chars). Used for
+        # filtering the chat list, header search, etc. Defaults to
+        # 'general'; the user can rename it from the header.
+        'tag': 'general',
     }
     if effective_model:
         sess['model'] = effective_model
@@ -2355,6 +2364,32 @@ async def star_session(sid: str, value: bool):
     await broadcast({'type': 'sessions', 'sessions': list_sessions_brief()})
 
 
+# Tags: 2-10 chars, lowercase letters/digits/underscore. Used for
+# grouping unrelated chats around the same project / theme. Bridge
+# sanitises (lowercase, strip junk, trim length); UI does first-pass
+# validation but bridge is authoritative.
+_TAG_RE = re.compile(r'[^a-z0-9_]+')
+
+
+def _sanitise_tag(raw) -> str:
+    s = (str(raw or '')).strip().lower()
+    s = _TAG_RE.sub('', s)
+    s = s[:10]
+    if len(s) < 2:
+        return 'general'
+    return s
+
+
+async def set_session_tag(sid: str, tag: str):
+    sess = load_session(sid)
+    if sess is None:
+        return
+    sess['tag'] = _sanitise_tag(tag)
+    save_session(sess)
+    upsert_index_entry(sess)
+    await broadcast({'type': 'sessions', 'sessions': list_sessions_brief()})
+
+
 async def fork_session(source_id: str, last_n: int = 200):
     """Create a brand-new claude session that inherits the last N messages
     from `source_id`. The full message log is preloaded into the new
@@ -2398,6 +2433,8 @@ async def fork_session(source_id: str, last_n: int = 200):
         'systemPrompt': sys_blob,
         # Forks inherit the original's persona prefix for chat-id.
         'chatId': next_chat_id(src_persona.get('name')),
+        # Forks inherit the parent's tag — same project / theme.
+        'tag': src.get('tag') or 'general',
     }
     if src_persona:
         sess['persona'] = src_persona
@@ -2452,7 +2489,7 @@ def _build_snippet(text: str, match_pos: int, match_len: int,
 def search_messages(query: str, role: str = 'all', path_filter: str = '',
                     date_from: float | None = None, date_to: float | None = None,
                     sort: str = 'desc', limit: int = 200,
-                    persona_id: str = '') -> list[dict]:
+                    persona_id: str = '', tag: str = '') -> list[dict]:
     """Scan every session's messages for substring (case-insensitive)
     matches of `query`. Returns matching messages with snippet metadata so
     the UI can render a SERP-style result list with highlighted hits.
@@ -2470,6 +2507,9 @@ def search_messages(query: str, role: str = 'all', path_filter: str = '',
     persona_filter = (persona_id or '').strip()
     if persona_filter == 'all':
         persona_filter = ''
+    tag_filter = (tag or '').strip().lower()
+    if tag_filter == 'all':
+        tag_filter = ''
     results: list[dict] = []
 
     sessions = load_index().get('sessions', [])
@@ -2485,6 +2525,11 @@ def search_messages(query: str, role: str = 'all', path_filter: str = '',
         if persona_filter:
             sp = (sess_brief.get('persona') or {}).get('id') or ''
             if sp != persona_filter:
+                continue
+        # Tag filter — same idea, before we load the session JSON.
+        if tag_filter:
+            st = (sess_brief.get('tag') or 'general').lower()
+            if st != tag_filter:
                 continue
         sess = load_session(sid)
         if not sess:
@@ -3950,6 +3995,9 @@ async def handle_client(websocket):
             elif cmd == 'star':
                 sid = msg.get('id'); val = bool(msg.get('value'))
                 if sid: await star_session(sid, val)
+            elif cmd == 'set_tag':
+                sid = msg.get('id'); tag = msg.get('tag')
+                if sid: await set_session_tag(sid, tag)
             elif cmd == 'fork':
                 sid = msg.get('id') or state.active_id
                 last_n = int(msg.get('lastN') or 200)
@@ -3970,6 +4018,7 @@ async def handle_client(websocket):
                     sort=(msg.get('sort') or 'desc'),
                     limit=int(msg.get('limit') or 200),
                     persona_id=(msg.get('personaId') or ''),
+                    tag=(msg.get('tag') or ''),
                 )
                 await websocket.send(json.dumps({
                     'type': 'search_results',
