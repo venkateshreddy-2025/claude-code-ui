@@ -2063,8 +2063,11 @@
   // |KNOWLEDGE| <abs path> | — chat saved a knowledge MD file.
   // |ROUTINE_VIEW| <routine-id> | <abs html path> | — chat wrote
   //   an HTML visualization for a routine.
+  // |CONFIG| <abs folder path> | <service-slug> | — chat set up
+  //   a service integration under the configs store.
   const KNOWLEDGE_MARKER_RE  = /\|\s*KNOWLEDGE\s*\|\s*[^|\n]+?\s*\|/g;
   const ROUTINE_VIEW_RE      = /\|\s*ROUTINE_VIEW\s*\|\s*[^|\n]+?\s*\|\s*[^|\n]+?\s*\|/g;
+  const CONFIG_MARKER_RE     = /\|\s*CONFIG\s*\|\s*[^|\n]+?\s*\|\s*[^|\n]+?\s*\|/g;
   function stripSendMarkers(text){
     if (!text || text.indexOf('|') < 0) return text;
     return text
@@ -2074,6 +2077,7 @@
       .replace(ROUTINE_CANCEL_RE, '')
       .replace(KNOWLEDGE_MARKER_RE, '')
       .replace(ROUTINE_VIEW_RE, '')
+      .replace(CONFIG_MARKER_RE, '')
       .replace(/[ \t]+\n/g,'\n').replace(/\n{3,}/g,'\n\n').replace(/\s+$/, '');
   }
 

@@ -154,6 +154,17 @@ KNOWLEDGE_DIR = Path(os.environ.get('CC_KNOWLEDGE_DIR',
                                     str(CWD_ROOT / 'knowledge')))
 KNOWLEDGE_INDEX = KNOWLEDGE_DIR / 'index.md'
 
+# Service configs — credentials + setup metadata for external integrations
+# the chat sets up on the user's behalf (Gmail, Slack, Jira, custom MCPs,
+# custom APIs, etc.). One subfolder per service. Each subfolder contains:
+#   config.json  — actual creds / settings (chmod 600 by convention)
+#   README.md    — what was set up, when, by which chat
+# Globally readable across chats so a Gmail OAuth set up in one chat is
+# reusable from any other.
+CONFIGS_DIR = Path(os.environ.get('CC_CONFIGS_DIR',
+                                  str(CWD_ROOT / 'configs')))
+CONFIGS_INDEX = CONFIGS_DIR / 'index.md'
+
 DEFAULT_CWD = str(HOME.resolve())
 
 # Static UI files (only used when CC_SERVE_STATIC=1).
@@ -335,6 +346,100 @@ a deep dive is needed.
 
 The index is always live — re-read it on every cross-reference; the
 user may have renamed chats or added new ones.
+
+Global resources (read these whenever they fit the question)
+------------------------------------------------------------
+You and every other chat in this install share the same global stores.
+None of them are persona-specific — they are inherited by every chat
+the user (or another agent) spawns, including any sub-process spawned
+later. Use them as your first stop before web search or guessing:
+
+- **Long-term memory** — `{MEMORY_FILE}`
+  Cross-chat notes about the user, preferences, recurring tasks, and
+  long-running threads. Read it when the user references "what we
+  talked about before" or anything that might pre-date this chat.
+
+- **Knowledge library** — `{KNOWLEDGE_DIR}/`
+  Registry at `{KNOWLEDGE_INDEX}`. Curated MD files of prior research
+  + findings. Scan the index whenever the user asks a question that
+  might match earlier work — re-using a saved file beats re-doing
+  the search.
+
+- **Skills** — `{SKILLS_DIR}/` (user-curated) and `~/.claude/skills/`
+  (Claude built-ins). Registry at `{SKILLS_INDEX}`. Each subfolder is
+  a self-contained technique pack with a `SKILL.md`. Skills the user
+  pinned to the active persona are already inlined into your system
+  prompt; for everything else, check the registry and `Read` the
+  `SKILL.md` of any pack that fits the task.
+
+- **Service configs** — `{CONFIGS_DIR}/` (see next section). Registry
+  at `{CONFIGS_INDEX}`. One subfolder per service the user has set up
+  through any chat — reusable across all chats.
+
+Setting up integrations (the configs flow)
+------------------------------------------
+When the user asks for a task or routine that depends on an external
+system the chat doesn't already have access to (any third-party API,
+OAuth-protected service, MCP server, hardware integration, paid SDK
+— anything that needs credentials or setup the chat can't invent),
+**do not silently fail and do not pretend it's done.** Run the
+onboarding flow:
+
+1. **Check first.** Read `{CONFIGS_INDEX}` and look for an existing
+   subfolder under `{CONFIGS_DIR}/` that matches the service. If one
+   exists, load its README.md + config.json (the config is plain
+   JSON; secrets live in there) and proceed — no re-onboarding.
+
+2. **Ask follow-ups.** What exactly does the user want? Which
+   account / instance / scope / model / endpoint? What triggers it,
+   how often, what's the success signal? Don't assume — confirm.
+
+3. **Declare CAN / CANNOT.** Tell the user, plainly:
+   - what you can do right now with what's available
+   - what you'd need to set up to do the rest
+   - what's outside the scope of this install entirely
+
+4. **Walk through setup, step by step.** If the integration needs an
+   API key, OAuth flow, webhook, MCP install, or any credential the
+   user has to fetch themselves, guide them — one step at a time,
+   with copy-pasteable commands and links where they apply. Never
+   ask the user to paste secrets in the chat if a file path will do;
+   prefer "save the token to `<path>` and tell me when it's there".
+
+5. **Save the config.** Once it's working, write to:
+
+       {CONFIGS_DIR}/<service-slug>/config.json
+       {CONFIGS_DIR}/<service-slug>/README.md
+
+   `<service-slug>` is your call — pick a stable lower-kebab-case
+   name based on what the user is integrating. Use the same slug
+   next time. The README MUST start:
+
+       # Config: <human-readable name>
+
+       - **Service**: <slug or display name>
+       - **Description**: one sentence on what it covers
+       - **From chat**: <chatId or sid>
+       - **Configured**: <YYYY-MM-DD>
+
+   Then describe, in plain prose, what's set up, which scopes / keys
+   are present, how another chat should use it, and any gotchas
+   (rate limits, expiry dates, refresh-token caveats). Never paste
+   the secrets into the README — they belong in `config.json` only.
+   `chmod 600` the config file.
+
+6. **Emit the marker.** On the same reply that finishes setup,
+   append exactly one line:
+
+       |CONFIG| /absolute/path/to/<service-slug>/ | <service-slug> |
+
+   The bridge re-indexes `{CONFIGS_INDEX}` and broadcasts. Future
+   chats discover the integration through that registry without
+   needing the user to redo setup.
+
+The point: be the agent who admits what's missing and walks the user
+through it once, instead of either silently failing or pretending the
+job is done. Configs are global — set up once, reusable everywhere.
 
 Don't expose internals
 ----------------------
@@ -1177,6 +1282,115 @@ def build_knowledge_index() -> int:
         KNOWLEDGE_INDEX.write_text('\n'.join(out), encoding='utf-8')
     except Exception as e:
         log(f'knowledge: write index failed: {e}')
+    return len(items)
+
+
+# ─────────────  Service configs (Gmail / Slack / Jira / etc.)  ────
+# Each integration the chat sets up gets its own subfolder under
+# CONFIGS_DIR. The chat owns the file contents — config.json holds
+# whatever the service needs (oauth tokens, API keys, base urls);
+# README.md describes what's there + how to use it. The bridge just
+# scans + indexes — never reads the secrets.
+
+def _config_brief(folder: Path) -> dict:
+    """Lightweight metadata for one configured service. Reads only
+    the README.md (or the first ~40 lines of config.json's keys, NOT
+    values) so we never surface secrets in the registry."""
+    out: dict = {
+        'id':           folder.name,
+        'name':         folder.name,
+        'path':         str(folder.resolve()),
+        'service':      folder.name,
+        'description':  '',
+        'configured_at': 0,
+        'has_secrets':  False,
+        'sid':          '',
+        'files':        [],
+    }
+    readme = folder / 'README.md'
+    if readme.is_file():
+        try:
+            text = readme.read_text(encoding='utf-8', errors='replace')
+            for ln in text.splitlines()[:60]:
+                s = ln.strip()
+                if not out['name'] or out['name'] == folder.name:
+                    if s.startswith('# Config:') or s.startswith('# '):
+                        out['name'] = s.lstrip('#').replace('Config:', '', 1).strip()
+                if s.lower().startswith(('- **service**:', '- service:')):
+                    out['service'] = s.split(':', 1)[1].strip().lstrip('*').strip()
+                if s.lower().startswith(('- **description**:', '- description:',
+                                          '- **what it covers**:', '- what:')):
+                    out['description'] = s.split(':', 1)[1].strip().lstrip('*').strip()
+                if s.lower().startswith(('- **from chat**:', '- from chat:',
+                                          '- **chat**:')):
+                    out['sid'] = s.split(':', 1)[1].strip().lstrip('*').strip()
+        except Exception:
+            pass
+    config = folder / 'config.json'
+    if config.is_file():
+        out['has_secrets'] = True
+        try:
+            out['configured_at'] = config.stat().st_mtime
+        except Exception:
+            pass
+    try:
+        out['files'] = sorted(p.name for p in folder.iterdir()
+                               if p.is_file() and not p.name.startswith('.'))
+    except Exception:
+        pass
+    return out
+
+
+def list_configs_brief() -> list[dict]:
+    """Return one brief per configured-service folder under CONFIGS_DIR.
+    Sorted by configured_at desc (most recently changed first)."""
+    if not CONFIGS_DIR.exists():
+        return []
+    items: list[dict] = []
+    for child in CONFIGS_DIR.iterdir():
+        if not child.is_dir():
+            continue
+        if child.name.startswith('.') or child.name.startswith('_'):
+            continue
+        items.append(_config_brief(child))
+    items.sort(key=lambda b: -(b.get('configured_at') or 0))
+    return items
+
+
+def build_configs_index() -> int:
+    """Rebuild CONFIGS_INDEX as a markdown registry of every configured
+    service. Idempotent. Returns the count."""
+    CONFIGS_DIR.mkdir(parents=True, exist_ok=True)
+    items = list_configs_brief()
+    out = [
+        '# Configured services',
+        '',
+        ('Credentials + setup notes for external integrations '
+         '(Gmail, Slack, Jira, custom APIs, MCP servers). Each entry '
+         'below points at a folder under `' + str(CONFIGS_DIR) + '/`. '
+         'Reuse these across chats — set up once, available everywhere.'),
+        '',
+        f'_{len(items)} service(s) configured._',
+        '',
+    ]
+    if not items:
+        out.append('_(empty — ask any chat to set up an integration; '
+                   'it will write the config here on completion.)_\n')
+    for c in items:
+        out.append(f"## {c['name']}")
+        out.append(f"- **Path**: {c['path']}")
+        out.append(f"- **Service**: {c['service']}")
+        if c.get('description'):
+            out.append(f"- **Description**: {c['description']}")
+        if c.get('sid'):
+            out.append(f"- **From chat**: {c['sid']}")
+        out.append(f"- **Files**: {', '.join(c['files']) or '(none)'}")
+        out.append(f"- **Has secrets**: {'yes' if c.get('has_secrets') else 'no'}")
+        out.append('')
+    try:
+        CONFIGS_INDEX.write_text('\n'.join(out), encoding='utf-8')
+    except Exception as e:
+        log(f'configs: write index failed: {e}')
     return len(items)
 
 
@@ -3129,6 +3343,8 @@ async def claude_reader(w: Worker):
 
                 sess_after = load_session(sid)
                 routines_changed = False
+                knowledge_changed = False
+                configs_changed = False
                 if sess_after:
                     msgs_after = sess_after.get('messages') or []
                     last_idx = -1
@@ -3179,6 +3395,13 @@ async def claude_reader(w: Worker):
                                     target.view_path = hpath
                                     state.routines.save()
                                     routines_changed = True
+                        # Config markers: chat just stood up (or
+                        # updated) a service integration under
+                        # CONFIGS_DIR. We don't read the credentials —
+                        # just note that the registry needs a refresh.
+                        cleaned, config_specs = \
+                            extract_config_markers(cleaned)
+                        configs_changed = bool(config_specs)
                         if send_paths:
                             attached_records = _process_marker_paths(
                                 send_paths, 'SEND')
@@ -3239,6 +3462,13 @@ async def claude_reader(w: Worker):
                                      'index': str(KNOWLEDGE_INDEX),
                                      'dir':   str(KNOWLEDGE_DIR),
                                      'knowledge': list_knowledge_brief()})
+                if configs_changed:
+                    n = build_configs_index()
+                    await broadcast({'type': 'configs_refreshed',
+                                     'count': n,
+                                     'index': str(CONFIGS_INDEX),
+                                     'dir':   str(CONFIGS_DIR),
+                                     'configs': list_configs_brief()})
                 if attached_records:
                     asyncio.create_task(
                         tg_deliver_attached_records(sid, attached_records))
@@ -3766,6 +3996,28 @@ async def handle_client(websocket):
                     'dir':   str(KNOWLEDGE_DIR),
                     'knowledge': list_knowledge_brief(),
                 })
+            elif cmd == 'configs_list':
+                # Registry of configured services (Gmail, Slack, custom
+                # MCPs, custom APIs, anything the chat set up). Bridge
+                # only surfaces metadata from each folder's README.md
+                # — never the secrets in config.json.
+                await websocket.send(json.dumps({
+                    'type': 'configs',
+                    'count': len(list_configs_brief()),
+                    'index': str(CONFIGS_INDEX),
+                    'dir':   str(CONFIGS_DIR),
+                    'configs': list_configs_brief(),
+                }))
+            elif cmd == 'configs_refresh':
+                # Force a re-index after manual edits.
+                n = build_configs_index()
+                await broadcast({
+                    'type': 'configs_refreshed',
+                    'count': n,
+                    'index': str(CONFIGS_INDEX),
+                    'dir':   str(CONFIGS_DIR),
+                    'configs': list_configs_brief(),
+                })
             elif cmd == 'snapshot_save':
                 label = (msg.get('label') or '').strip()
                 meta = snapshot_save(label=label or None)
@@ -4006,6 +4258,15 @@ _KNOWLEDGE_MARKER_RE  = re.compile(r'\|\s*KNOWLEDGE\s*\|\s*([^|\n]+?)\s*\|')
 # the routines panel can show a "View" button.
 _ROUTINE_VIEW_RE      = re.compile(
     r'\|\s*ROUTINE_VIEW\s*\|\s*([^|\n]+?)\s*\|\s*([^|\n]+?)\s*\|')
+# `|CONFIG| <abs folder path> | <service-slug> |` — chat just set up
+# (or updated) a service configuration under CONFIGS_DIR. Bridge
+# re-indexes + broadcasts a `configs_refreshed` event so any UI
+# listening can refresh its panel. The folder is whatever the chat
+# decided to call the service (gmail, slack, jira-acme, custom-mcp-foo,
+# etc.) — bridge doesn't enumerate or validate service names; it just
+# scans whatever folders are present.
+_CONFIG_MARKER_RE     = re.compile(
+    r'\|\s*CONFIG\s*\|\s*([^|\n]+?)\s*\|\s*([^|\n]+?)\s*\|')
 
 
 def extract_markers(text: str) -> tuple[str, list[str], list[str]]:
@@ -4070,6 +4331,24 @@ def extract_routine_view_markers(text: str) -> tuple[str, list[dict]]:
             out.append({'routine_id': rid, 'html_path': path})
         return ''
     cleaned = _ROUTINE_VIEW_RE.sub(_fn, text)
+    return cleaned, out
+
+
+def extract_config_markers(text: str) -> tuple[str, list[dict]]:
+    """Pull `|CONFIG| <abs folder path> | <service-slug> |` markers.
+    Returns (cleaned, [{path, service}]). The chat owns the folder
+    contents (config.json, README.md, whatever); bridge just notes
+    that something under CONFIGS_DIR changed and re-indexes."""
+    if not text or '|' not in text:
+        return text, []
+    out: list[dict] = []
+    def _fn(m):
+        path = (m.group(1) or '').strip().strip('"\'`')
+        svc = (m.group(2) or '').strip().strip('"\'`')
+        if path and svc:
+            out.append({'path': path, 'service': svc})
+        return ''
+    cleaned = _CONFIG_MARKER_RE.sub(_fn, text)
     return cleaned, out
 
 
@@ -4941,6 +5220,11 @@ async def main():
     # for any chat that wants to scan it.
     KNOWLEDGE_DIR.mkdir(parents=True, exist_ok=True)
     knowledge_count = build_knowledge_index()
+    # Service configs — global, shared across chats. Same idempotent
+    # build-on-boot. Subfolders get added as chats configure services
+    # via the |CONFIG| marker.
+    CONFIGS_DIR.mkdir(parents=True, exist_ok=True)
+    configs_count = build_configs_index()
     log(f'cc-server starting')
     log(f'  host       : {HOST}:{PORT}')
     log(f'  data dir   : {DATA_DIR}')
@@ -4954,6 +5238,7 @@ async def main():
         f'enabled / {len(state.routines.routines)} total')
     log(f'  skills dir : {SKILLS_DIR} ({skills_count} indexed)')
     log(f'  knowledge  : {KNOWLEDGE_DIR} ({knowledge_count} indexed)')
+    log(f'  configs    : {CONFIGS_DIR} ({configs_count} indexed)')
     log(f'  telegram   : {"on" if TELEGRAM_TOKEN else "off"}')
     if SERVE_STATIC:
         log(f'  open       : http://{HOST}:{PORT}/')
