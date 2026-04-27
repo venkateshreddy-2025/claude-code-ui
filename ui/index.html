@@ -358,7 +358,13 @@
   /* Spawn-pending indicator. Shows while we're starting a claude
      subprocess for a session — replaces the search button on the right
      side of the header so it's always visible during the spin-up. */
-  .spawn-chip{display:none;align-items:center;gap:7px;
+  /* The spawn-chip used to show "starting…" with a spinner in the
+     header when a fresh chat was spawning. It overlapped with the
+     in-bubble typing/thinking indicator and the streaming cursor —
+     redundant. Force-hidden so the only progress indicator the user
+     sees is the per-bubble one. */
+  .spawn-chip{display:none !important}
+  .spawn-chip-OLD{display:none;align-items:center;gap:7px;
     padding:5px 11px;border-radius:14px;font-size:11.5px;line-height:1;
     color:var(--accent-2);background:rgba(199,143,91,.10);
     border:1px solid rgba(199,143,91,.25);font-weight:500;
@@ -1110,7 +1116,9 @@
   #snapshotsModal .modal-actions{flex:0 0 auto;
     margin-top:auto;padding:14px 0 16px;border-top:1px solid var(--border-soft);
     background:linear-gradient(to top, var(--bg-2), var(--bg-2) 70%, transparent);
-    position:sticky;bottom:0}
+    position:sticky;bottom:0;
+    display:flex;justify-content:space-between;align-items:center;gap:8px}
+  #snapshotsModal .modal-actions #snapshotsRefresh{margin-right:auto}
   .snap-create{display:flex;gap:8px;margin:14px 0 0;flex:0 0 auto}
   .snap-create .setting-input{flex:1;min-width:0}
   .snapshots-list{flex:1 1 auto;display:flex;flex-direction:column;gap:8px;
@@ -1149,7 +1157,12 @@
   #routinesModal .modal-actions{flex:0 0 auto;
     margin-top:auto;padding:14px 0 16px;border-top:1px solid var(--border-soft);
     background:linear-gradient(to top, var(--bg-2), var(--bg-2) 70%, transparent);
-    position:sticky;bottom:0}
+    position:sticky;bottom:0;
+    /* Refresh on the left, Done on the right. Was inheriting
+       justify-content:flex-end from the base rule, which crammed
+       both into the right corner. */
+    display:flex;justify-content:space-between;align-items:center;gap:8px}
+  #routinesModal .modal-actions #routinesRefresh{margin-right:auto}
   .routines-list{flex:1 1 auto;display:flex;flex-direction:column;gap:8px;
     margin-top:14px;overflow-y:auto;
     padding-right:6px;

@@ -509,6 +509,11 @@ def upsert_index_entry(sess: dict):
         'title': sess.get('title') or 'New chat',
         'createdAt': sess.get('createdAt'),
         'lastActiveAt': sess.get('lastActiveAt') or sess.get('createdAt'),
+        # `lastHumanActiveAt`: only bumped on real human input (excludes
+        # routine-injected user messages + assistant replies). Used by
+        # schedulers like Aurora's heartbeat to detect "user is mid-
+        # conversation" without being fooled by their own traffic.
+        'lastHumanActiveAt': sess.get('lastHumanActiveAt'),
         # `lastSavedAt` powers the Save button's enabled-state in the
         # UI (button enabled iff lastActiveAt > lastSavedAt). Absent
         # field = never saved → the button is enabled as soon as the
@@ -585,13 +590,25 @@ def derive_title_from_message(text: str) -> str:
 def append_message(sid: str, msg: dict):
     """Append a message to session `sid`'s persisted JSON. The sid is
     explicit (not implicit on state.active_id) so background workers
-    for non-focused sessions still write to the right file."""
+    for non-focused sessions still write to the right file.
+
+    `lastActiveAt` semantics: bumped on EVERY message (user/assistant/
+    routine) so the index sort still reflects "most recently changed".
+    `lastHumanActiveAt` is bumped ONLY on real human input — i.e.
+    role='user' AND source != 'routine'. Schedulers + watchdogs use
+    that field to decide whether the user is mid-conversation and
+    should be left alone, without being fooled by the chat's own
+    routine traffic or assistant replies."""
     sess = load_session(sid)
     if sess is None:
         return
     sess.setdefault('messages', []).append(msg)
-    sess['lastActiveAt'] = time.time()
-    if msg.get('role') == 'user':
+    now = time.time()
+    sess['lastActiveAt'] = now
+    role = msg.get('role')
+    source = msg.get('source') or ''
+    if role == 'user' and source != 'routine':
+        sess['lastHumanActiveAt'] = now
         if not sess.get('title') or sess.get('title') == 'New chat':
             sess['title'] = derive_title_from_message(msg.get('text') or '')
     save_session(sess)
@@ -1405,7 +1422,15 @@ def maybe_spawn_orchestrator_heartbeat(sess: dict) -> None:
         '            sess = next((s for s in (msg.get("sessions") or [])\n'
         '                          if s.get("id") == SESSION_ID), None)\n'
         '            if sess:\n'
-        '                last_at = sess.get("lastActiveAt") or 0\n'
+        '                # `lastHumanActiveAt` only counts real human input —\n'
+        '                # not routine-injected wake-ups or assistant replies.\n'
+        '                # Falls back to `lastActiveAt` for old sessions that\n'
+        '                # never got the new field set. Without this fallback\n'
+        '                # to the human-only field, the heartbeat\\\'s own [\n'
+        '                # heartbeat] message would reset the activity clock\n'
+        '                # and the next cycle would always skip — creating a\n'
+        '                # ~10-minute gap instead of the 5-min schedule.\n'
+        '                last_at = sess.get("lastHumanActiveAt") or sess.get("lastActiveAt") or 0\n'
         '                idle = time.time() - last_at\n'
         '                if 0 < idle < INTERVAL_SECONDS:\n'
         '                    return f"skip:active({int(idle)}s ago)"\n'
