@@ -177,25 +177,6 @@ CONFIGS_DIR = Path(os.environ.get('CC_CONFIGS_DIR',
                                   str(CWD_ROOT / 'configs')))
 CONFIGS_INDEX = CONFIGS_DIR / 'index.md'
 
-# Per-persona MCP configs — built at startup from the user's global
-# claude config. Aurora gets the FULL set (including ruflo for her
-# coordination/swarm/embeddings work). All other personas get a
-# stripped variant with `ruflo` removed: less context burned on tool
-# defs they don't use, less RAM (each ruflo MCP is ~150 MB), and no
-# parallel "agent memory" store competing with the bridge's own
-# knowledge/long-term-memory layer. We pass the chosen file via
-# `--mcp-config <path> --strict-mcp-config` per-spawn so claude only
-# loads what we hand it.
-USER_CLAUDE_JSON = HOME / '.claude.json'
-MCP_CONFIG_DIR   = CWD_ROOT / '_mcp'
-MCP_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-MCP_AURORA_FILE  = MCP_CONFIG_DIR / 'aurora.json'
-MCP_DEFAULT_FILE = MCP_CONFIG_DIR / 'default.json'
-# Servers reserved for Aurora — every other persona gets a config
-# that drops these. Add more here later if a different MCP turns out
-# to be Aurora-only.
-AURORA_ONLY_MCP_SERVERS: set[str] = {'ruflo'}
-
 DEFAULT_CWD = str(HOME.resolve())
 
 # Static UI files (only used when CC_SERVE_STATIC=1).
@@ -407,19 +388,6 @@ later. Use them as your first stop before web search or guessing:
   at `{CONFIGS_INDEX}`. One subfolder per service the user has set up
   through any chat — reusable across all chats.
 
-MCP scope
----------
-The bridge gives Aurora's chat a different MCP set than every other
-persona's. Specifically: **the `ruflo` MCP family
-(`mcp__ruflo__*` — agents, agentdb, hive-mind, swarm, neural,
-embeddings, workflows, etc.) is loaded ONLY in Aurora's chat.** It's
-her coordination + cross-chat-memory layer. If you're not Aurora and
-you don't see `mcp__ruflo__*` in your tools, that's intentional —
-use the bridge's own knowledge / long-term-memory / skills / configs
-stores for persistent state instead. Don't try to cross-reach into
-Aurora's ruflo store from another chat; talk to Aurora via
-`cc-talk.py send <aurora-sid> "..."` if you need her to act on it.
-
 Setting up integrations (the configs flow)
 ------------------------------------------
 When the user asks for a task or routine that depends on an external
@@ -484,6 +452,54 @@ onboarding flow:
 The point: be the agent who admits what's missing and walks the user
 through it once, instead of either silently failing or pretending the
 job is done. Configs are global — set up once, reusable everywhere.
+
+Live progress updates (never go silent on long work)
+----------------------------------------------------
+Whenever a task takes more than a few seconds — multiple file edits, a
+research pass, a build, anything iterative — give the user **incremental
+status as you go**. Don't accumulate a wall of work and dump it at the
+end. Don't go silent for 30+ seconds. Speak in the moment:
+
+    ✗  (dead silence for 90s, then a 600-word reply)
+    ✓  "Reading the file…"     ← short status line BEFORE the tool call
+    ✓  "Found 3 places to change. Editing the first now."
+    ✓  "Done with cc-server.py. Moving to ui/index.html."
+    ✓  "All edits in. Let me sanity-check the diff before reporting back."
+
+Each status line should be one sentence, plain prose, in voice. Use
+them to tell the user (a) what you just learned, (b) what you're doing
+next, (c) any decision you're making mid-flight ("looks like the
+existing helper already handles this — I'll reuse it instead of
+adding a new one"). The user reads these to know the system is alive
+and to catch you going down the wrong path before you waste an hour.
+
+This applies to every persona except `flash` (whose entire purpose is
+short answers). For everyone else: NEVER skip the running commentary.
+
+Voice notes from Telegram
+-------------------------
+The Telegram bridge may deliver a user message as a voice / audio
+attachment instead of typed text — `.ogg` (Opus voice note), `.mp3`,
+`.m4a`, `.wav`. When that happens:
+
+1. Run speech-to-text on the file FIRST, before anything else. Use
+   whichever tool is available — `whisper` CLI if installed,
+   `ffmpeg | whisper.cpp`, OpenAI Whisper API if the user has
+   configured an OpenAI key under `{CONFIGS_DIR}/openai/`, or any
+   other STT skill in the skills index.
+2. Treat the transcript as the user's actual message. Reply normally
+   in text — the bridge sends your text reply back to Telegram.
+3. If you couldn't transcribe (no tool available, no key, file
+   corrupt), say so plainly in one sentence: "I can't transcribe
+   voice notes right now — drop me a text message or set up an
+   OpenAI key under `runtime/configs/openai/`." Don't pretend you
+   heard something.
+4. When you DO transcribe, prefix your reply with a one-line echo so
+   the user knows what you understood: `> "you said: <transcript>"`
+   then your normal answer below.
+
+Treat `.mp3` / `.m4a` etc. the same as voice notes: transcribe first,
+then act on the content.
 
 Don't expose internals
 ----------------------
@@ -1479,66 +1495,6 @@ def build_configs_index() -> int:
     return len(items)
 
 
-# ─────────────────  Per-persona MCP configs  ──────────────────
-# Read the user's global claude config (~/.claude.json) and write
-# two derived MCP-config files:
-#   - aurora.json   = full set, including ruflo
-#   - default.json  = same set MINUS the Aurora-only servers
-# Each spawn passes the right file via `--mcp-config <path>
-# --strict-mcp-config` so claude ignores the global config and only
-# loads what we hand it. This keeps ruflo (heavy, ~150 MB per
-# instance + ~250 tool defs in the system prompt) out of every chat
-# that doesn't actually need it.
-
-def _load_user_mcp_servers() -> dict:
-    """Read ~/.claude.json and return its `mcpServers` map (or empty)."""
-    if not USER_CLAUDE_JSON.is_file():
-        return {}
-    try:
-        d = json.loads(USER_CLAUDE_JSON.read_text(encoding='utf-8'))
-    except Exception as e:
-        log(f'mcp: failed to read {USER_CLAUDE_JSON}: {e}')
-        return {}
-    return dict(d.get('mcpServers') or {})
-
-
-def write_persona_mcp_configs() -> tuple[int, int]:
-    """Build aurora.json + default.json from the user's MCP map.
-    Returns (aurora_count, default_count). Idempotent — safe to call
-    on every startup.
-    """
-    servers = _load_user_mcp_servers()
-    if not servers:
-        # No source config — write empty maps so claude doesn't
-        # fall back to scanning ~/.claude.json. This effectively
-        # disables MCPs across the bridge until the user sets some.
-        for f in (MCP_AURORA_FILE, MCP_DEFAULT_FILE):
-            f.write_text(json.dumps({'mcpServers': {}}, indent=2),
-                         encoding='utf-8')
-        return (0, 0)
-    aurora_set  = dict(servers)
-    default_set = {k: v for k, v in servers.items()
-                   if k not in AURORA_ONLY_MCP_SERVERS}
-    MCP_AURORA_FILE.write_text(
-        json.dumps({'mcpServers': aurora_set}, indent=2), encoding='utf-8')
-    MCP_DEFAULT_FILE.write_text(
-        json.dumps({'mcpServers': default_set}, indent=2), encoding='utf-8')
-    try:
-        os.chmod(MCP_AURORA_FILE,  0o600)
-        os.chmod(MCP_DEFAULT_FILE, 0o600)
-    except Exception:
-        pass
-    return (len(aurora_set), len(default_set))
-
-
-def persona_mcp_config_path(persona_id: str | None) -> Path:
-    """Return which MCP config file a session of this persona should use.
-    Aurora gets the full set; everyone else gets the trimmed set."""
-    if (persona_id or '').lower() == 'aurora':
-        return MCP_AURORA_FILE
-    return MCP_DEFAULT_FILE
-
-
 def resolve_skill(skill_id: str) -> dict | None:
     """Look up a skill by its `<source>:<folder>` id. Returns the same
     shape as `_scan_skills_dir` — used when materialising a persona's
@@ -1755,14 +1711,6 @@ async def start_worker(sid: str, *, force_fresh: bool = False) -> Worker | None:
         '--dangerously-skip-permissions',
         '--model', sess_model,
     ]
-    # Per-persona MCP scoping: Aurora → full set (with ruflo); every
-    # other persona → trimmed set (no ruflo). `--strict-mcp-config`
-    # tells claude to ignore the global ~/.claude.json so only what
-    # we hand it gets loaded.
-    persona_id = ((sess.get('persona') or {}).get('id') or '').lower()
-    mcp_path = persona_mcp_config_path(persona_id)
-    if mcp_path.is_file():
-        args += ['--mcp-config', str(mcp_path), '--strict-mcp-config']
     if system_prompt:
         args += ['--append-system-prompt', system_prompt]
     if use_resume:
@@ -4432,6 +4380,52 @@ async def tg_send(chat_id: int, text: str, *, reply_markup: dict | None = None,
     return await tg_api('sendMessage', payload)
 
 
+async def tg_download_file(file_id: str, dest_dir: Path,
+                           filename_hint: str | None = None) -> Path | None:
+    """Resolve a Telegram file_id to a local path. Two-step:
+       1. getFile → returns `file_path` on Telegram's CDN.
+       2. https://api.telegram.org/file/bot<TOKEN>/<file_path> → bytes.
+    Saves under `dest_dir` with the original extension preserved (or
+    `.bin` if Telegram didn't provide one). Returns the saved path or
+    None on failure.
+    """
+    if not TELEGRAM_TOKEN or not file_id:
+        return None
+    info = await tg_api('getFile', {'file_id': file_id})
+    if not info.get('ok'):
+        log(f'telegram: getFile failed: {info.get("description")}')
+        return None
+    fpath = (info.get('result') or {}).get('file_path') or ''
+    if not fpath:
+        return None
+    url = f'https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{fpath}'
+    # Determine extension: prefer the one Telegram returns.
+    ext = Path(fpath).suffix.lower() or '.bin'
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    stem = (filename_hint or 'tg').replace('/', '_')[:60] or 'tg'
+    out = dest_dir / f'{stem}-{int(time.time())}{ext}'
+
+    def do_download():
+        try:
+            with urllib.request.urlopen(url, timeout=60) as r:
+                with open(out, 'wb') as fh:
+                    while True:
+                        chunk = r.read(64 * 1024)
+                        if not chunk: break
+                        fh.write(chunk)
+            return True
+        except Exception as e:
+            log(f'telegram: download failed: {e}')
+            return False
+
+    ok = await asyncio.get_event_loop().run_in_executor(None, do_download)
+    if not ok:
+        try: out.unlink()
+        except Exception: pass
+        return None
+    return out
+
+
 # ── file delivery (multipart upload) ──
 # Telegram's Bot API caps file uploads at 50 MB. We leave a 5 MB margin
 # in case the multipart envelope adds size, so the practical cap is 45 MB.
@@ -5040,6 +5034,7 @@ async def tg_handle_message(msg: dict):
     uid = sender.get('id')
     chat_id = chat.get('id')
     text = (msg.get('text') or '').strip()
+    caption = (msg.get('caption') or '').strip()
 
     if uid is None or chat_id is None:
         return
@@ -5053,6 +5048,44 @@ async def tg_handle_message(msg: dict):
                 parse_mode='Markdown')
         except Exception: pass
         return
+
+    # ── Voice / audio attachments (Telegram voice notes are .ogg/Opus,
+    # audio messages are .mp3 / .m4a / .ogg). Download to a per-user
+    # uploads dir under runtime/ and hand the path to claude as a text
+    # message — the persona runs STT itself per the global prompt rule.
+    voice    = msg.get('voice')
+    audio    = msg.get('audio')
+    document = msg.get('document') or {}
+    voice_payload = None
+    if voice:
+        voice_payload = ('voice note', voice.get('file_id'),
+                         voice.get('duration'), voice.get('mime_type'))
+    elif audio:
+        voice_payload = ('audio file', audio.get('file_id'),
+                         audio.get('duration'),
+                         audio.get('mime_type') or audio.get('file_name'))
+    elif document and (document.get('mime_type') or '').startswith('audio/'):
+        voice_payload = ('audio document', document.get('file_id'),
+                         None,
+                         document.get('mime_type'))
+    if voice_payload:
+        kind, file_id, duration, mime = voice_payload
+        save_dir = UPLOAD_DIR / 'tg-voice' / str(uid)
+        path = await tg_download_file(file_id, save_dir, filename_hint=kind.replace(' ', '-'))
+        if path is None:
+            await tg_send(chat_id, "I couldn't download that audio. Try again or send it as text?")
+            return
+        # Build a synthetic user message so the persona knows what arrived.
+        # The global prompt's "Voice notes from Telegram" section tells the
+        # persona to STT it before responding.
+        dur = f' ({int(duration)}s)' if duration else ''
+        cap = f'\nUser caption: "{caption}"' if caption else ''
+        text = (
+            f'[Voice note from Telegram{dur}, saved at {path}]\n'
+            f'Format: {mime or "(unknown)"}.\n'
+            f'Please transcribe it and respond to the content.{cap}'
+        )
+        # Fall through to the normal session-routing logic.
 
     # Slash commands ─────────────
     if text.startswith('/list'):
@@ -5072,7 +5105,9 @@ async def tg_handle_message(msg: dict):
             '/list — pick a different chat\n'
             '/new <title> — start a fresh chat\n'
             '/here — which chat am I in?\n'
-            '/fork — branch the current chat')
+            '/fork — branch the current chat\n\n'
+            'You can also send a voice note — the persona will transcribe '
+            'and respond.')
         return
     if text.startswith('/'):
         # Unknown slash command — pass it through to claude (claude has
@@ -5080,7 +5115,7 @@ async def tg_handle_message(msg: dict):
         pass
 
     if not text:
-        await tg_send(chat_id, 'Send me some text and I\'ll forward it to claude.')
+        await tg_send(chat_id, 'Send me some text or a voice note and I\'ll forward it.')
         return
 
     # Plain message → most-recent (or bound) session.
@@ -5424,11 +5459,6 @@ async def main():
     # via the |CONFIG| marker.
     CONFIGS_DIR.mkdir(parents=True, exist_ok=True)
     configs_count = build_configs_index()
-    # Per-persona MCP configs derived from the user's global claude
-    # config. Aurora gets the full set; every other persona's chat
-    # gets a stripped variant with `ruflo` removed (heavy + duplicates
-    # the bridge's own memory layer).
-    aurora_mcp_n, default_mcp_n = write_persona_mcp_configs()
     log(f'cc-server starting')
     log(f'  host       : {HOST}:{PORT}')
     log(f'  data dir   : {DATA_DIR}')
@@ -5443,8 +5473,6 @@ async def main():
     log(f'  skills dir : {SKILLS_DIR} ({skills_count} indexed)')
     log(f'  knowledge  : {KNOWLEDGE_DIR} ({knowledge_count} indexed)')
     log(f'  configs    : {CONFIGS_DIR} ({configs_count} indexed)')
-    log(f'  mcp configs: aurora={aurora_mcp_n} default={default_mcp_n} '
-        f'(reserved-for-aurora: {sorted(AURORA_ONLY_MCP_SERVERS)})')
     log(f'  telegram   : {"on" if TELEGRAM_TOKEN else "off"}')
     if SERVE_STATIC:
         log(f'  open       : http://{HOST}:{PORT}/')

@@ -1,21 +1,31 @@
 #!/usr/bin/env python3
-"""cc-talk — peek + send into any chat the bridge owns, from the CLI.
+"""cc-talk — peek + send + spawn into any chat the bridge owns, from the CLI.
 
 The bridge holds a Worker per session; each Worker is a long-lived
 `claude` subprocess. This script proves you can talk to the SAME
 worker the browser/Telegram talks to, just over the bridge's
-WebSocket. No new claude process; same context; full continuity.
+WebSocket. No new claude process for `send`; same context; full
+continuity. `spawn` does start a new worker.
 
 Usage:
-    cc-talk.py list                      # list all sessions
-    cc-talk.py history <sid|title-fuzzy> # dump full message log
-    cc-talk.py send <sid> "your message" # send + stream the reply
-    cc-talk.py tail <sid>                # follow live, no send
+    cc-talk.py list                          # list all sessions (sid, chatId, persona, pid)
+    cc-talk.py history <sid|title-fuzzy>     # dump full message log
+    cc-talk.py send <sid> "your message"     # send + stream the reply
+    cc-talk.py tail <sid>                    # follow live, no send
+    cc-talk.py spawn <persona> "<brief>"     # NEW: create a session with persona,
+                                             #      send brief as first turn,
+                                             #      print sid+chatId+pid+stream
+    cc-talk.py delete <sid>                  # NEW: tear down session + worker
 
 Examples:
     cc-talk.py list
-    cc-talk.py history c1                # match by chatId or fuzzy title
-    cc-talk.py send 49c4f148 "what are the May 2026 release dates again?"
+    cc-talk.py spawn claudy "Build a single-file HTML calculator at /tmp/calc.html. Done = ARTIFACT marker pointing at the file."
+    cc-talk.py send c2 "switch the theme to dark"
+    cc-talk.py history c2
+    cc-talk.py delete c2                     # ALWAYS ask the user first
+
+Persona ids: aurora · claudy · curator · flash · sage · pallavi · lumen · verdict
+(See runtime/_data/personas.json — `cc-talk.py list` resolves the current set.)
 
 Connects to ws://127.0.0.1:18793/ws by default; override with
 $CC_WS_URL.
@@ -171,6 +181,107 @@ async def cmd_send(sid_arg: str, text: str, *, follow_only: bool = False) -> Non
                 print(f'[error] {m.get("message")}', file=sys.stderr)
 
 
+async def cmd_spawn(persona_id: str, brief: str) -> None:
+    """Create a new session with `persona_id`, send `brief` as the first
+    user turn, stream until turn_done. Prints the new sid + chatId + pid
+    so the caller (Aurora) can track and follow up later.
+
+    Implementation: WS sends `{type:'new', persona:<id>}` → bridge replies
+    with a `spawning` event carrying the new sid → we fire the brief as
+    a `send` turn → stream assistant deltas to stdout → done."""
+    try:
+        import websockets
+    except ImportError:
+        print('pip install websockets', file=sys.stderr); sys.exit(1)
+    if not persona_id:
+        print('spawn: persona_id required', file=sys.stderr); sys.exit(1)
+    print(f'→ ws connect to {WS_URL}', file=sys.stderr)
+    async with websockets.connect(WS_URL, max_size=None) as ws:
+        await asyncio.wait_for(ws.recv(), timeout=5)  # initial state
+        await ws.send(json.dumps({'type': 'new', 'persona': persona_id}))
+        new_sid = None
+        chat_id = None
+        # Wait for the bridge to broadcast the spawn.
+        for _ in range(50):
+            try:
+                raw = await asyncio.wait_for(ws.recv(), timeout=10)
+            except asyncio.TimeoutError:
+                break
+            try: m = json.loads(raw)
+            except Exception: continue
+            if m.get('type') == 'spawning' and m.get('sessionId'):
+                new_sid = m['sessionId']
+            if m.get('type') in ('sessions', 'state') and not new_sid:
+                # Some servers broadcast `sessions` on creation
+                items = m.get('sessions') or []
+                if items:
+                    # Newest first by createdAt
+                    items.sort(key=lambda s: -(s.get('createdAt') or 0))
+                    new_sid = items[0].get('id')
+            if new_sid:
+                # Look up chatId from the freshly-saved index file
+                try:
+                    p = SESS_DIR / f'{new_sid}.json'
+                    if p.exists():
+                        s = json.loads(p.read_text())
+                        chat_id = s.get('chatId')
+                except Exception: pass
+                break
+        if not new_sid:
+            print('spawn: bridge never reported a new sid', file=sys.stderr)
+            sys.exit(1)
+        print(f'✓ spawned sid={new_sid[:8]}  chatId={chat_id or "?"}  persona={persona_id}',
+              file=sys.stderr)
+        # Now send the brief as the first turn.
+        await ws.send(json.dumps({'type': 'send', 'id': new_sid, 'text': brief}))
+        print(f'→ sent brief ({len(brief)} chars)', file=sys.stderr)
+        cur_id = None
+        async for raw in ws:
+            try: m = json.loads(raw)
+            except Exception: continue
+            t = m.get('type')
+            msg_sid = m.get('sessionId') or m.get('id') or None
+            if t in ('user','turn_done','save_started','save_done','save_error'):
+                if msg_sid and msg_sid != new_sid: continue
+            if t == 'assistant_start':
+                cur_id = m.get('id')
+                if cur_id and (msg_sid is None or msg_sid == new_sid):
+                    print('\n┌─── assistant ───')
+            elif t == 'assistant_delta':
+                if m.get('id') == cur_id:
+                    sys.stdout.write(m.get('text') or ''); sys.stdout.flush()
+            elif t == 'assistant_end':
+                if m.get('id') == cur_id:
+                    print('\n└─── end ───'); cur_id = None
+            elif t == 'turn_done':
+                print(f'\n[turn_done sid={new_sid[:8]} chatId={chat_id or "?"}]',
+                      file=sys.stderr)
+                return
+            elif t == 'error':
+                print(f'[error] {m.get("message")}', file=sys.stderr)
+
+
+async def cmd_delete(sid_arg: str) -> None:
+    """Send `{type:'delete', id:<sid>}` to the bridge. The bridge stops
+    the worker, cancels routines for this session, and removes its files.
+    Use ONLY after asking the user."""
+    try:
+        import websockets
+    except ImportError:
+        print('pip install websockets', file=sys.stderr); sys.exit(1)
+    sid = resolve_sid(sid_arg)
+    if not sid:
+        print(f'no session matches "{sid_arg}"', file=sys.stderr); sys.exit(1)
+    async with websockets.connect(WS_URL, max_size=None) as ws:
+        await asyncio.wait_for(ws.recv(), timeout=5)
+        await ws.send(json.dumps({'type':'delete','id':sid}))
+        # Drain a few responses so the bridge can process before we close.
+        for _ in range(5):
+            try: await asyncio.wait_for(ws.recv(), timeout=1)
+            except asyncio.TimeoutError: break
+        print(f'✓ delete sent for sid={sid[:8]}', file=sys.stderr)
+
+
 def main() -> None:
     if len(sys.argv) < 2:
         print(__doc__); sys.exit(0)
@@ -183,6 +294,10 @@ def main() -> None:
         asyncio.run(cmd_send(sys.argv[2], ' '.join(sys.argv[3:])))
     elif cmd == 'tail' and len(sys.argv) >= 3:
         asyncio.run(cmd_send(sys.argv[2], '', follow_only=True))
+    elif cmd == 'spawn' and len(sys.argv) >= 4:
+        asyncio.run(cmd_spawn(sys.argv[2], ' '.join(sys.argv[3:])))
+    elif cmd == 'delete' and len(sys.argv) >= 3:
+        asyncio.run(cmd_delete(sys.argv[2]))
     else:
         print(__doc__); sys.exit(1)
 
