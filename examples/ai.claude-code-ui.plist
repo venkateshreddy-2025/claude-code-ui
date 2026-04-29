@@ -35,7 +35,7 @@
 
         <!-- Default model for new chats. /model inside chat overrides per-session. -->
         <key>CC_MODEL_DEFAULT</key>
-        <string>claude-sonnet-4-5</string>
+        <string>claude-opus-4-6[1m]</string>
 
         <!-- Make the standard PATH visible so claude can find node, ripgrep, etc. -->
         <key>PATH</key>

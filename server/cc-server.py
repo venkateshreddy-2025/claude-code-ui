@@ -187,7 +187,7 @@ CLAUDE_BIN = os.environ.get('CC_CLAUDE_BIN', 'claude')
 # Default model for newly spawned claude subprocesses. Override per-session
 # inside the chat with `/model <name>`. Set CC_MODEL_DEFAULT env to change
 # the global default.
-MODEL_DEFAULT = os.environ.get('CC_MODEL_DEFAULT', 'claude-sonnet-4-5')
+MODEL_DEFAULT = os.environ.get('CC_MODEL_DEFAULT', 'claude-opus-4-6[1m]')
 
 # When mounted behind a reverse proxy that strips a path prefix (e.g.
 # Caddy mapping /cc/* → /*), set CC_PATH_PREFIX=/cc so upload URLs the
@@ -359,34 +359,115 @@ a deep dive is needed.
 The index is always live — re-read it on every cross-reference; the
 user may have renamed chats or added new ones.
 
-Global resources (read these whenever they fit the question)
-------------------------------------------------------------
-You and every other chat in this install share the same global stores.
-None of them are persona-specific — they are inherited by every chat
-the user (or another agent) spawns, including any sub-process spawned
-later. Use them as your first stop before web search or guessing:
+Global indexes — skim on every turn
+------------------------------------
+Four index files hold everything other chats have learned. Skim them
+at the start of every turn — just the headings, triggers, and one-
+liners. Do NOT Read the full linked files unless a trigger actually
+matches the user's question.
 
-- **Long-term memory** — `{MEMORY_FILE}`
-  Cross-chat notes about the user, preferences, recurring tasks, and
-  long-running threads. Read it when the user references "what we
-  talked about before" or anything that might pre-date this chat.
+    {MEMORY_FILE}          — past decisions, preferences, gotchas
+    {KNOWLEDGE_INDEX}      — curated research & solutions
+    {SKILLS_INDEX}         — technique packs & recipes
+    {CONFIGS_INDEX}        — saved credentials & integrations
 
-- **Knowledge library** — `{KNOWLEDGE_DIR}/`
-  Registry at `{KNOWLEDGE_INDEX}`. Curated MD files of prior research
-  + findings. Scan the index whenever the user asks a question that
-  might match earlier work — re-using a saved file beats re-doing
-  the search.
+Workflow: skim → spot a match? → Read the linked Path → use it.
+No match? → proceed normally. Never skip the skim — if you do,
+you'll duplicate work another chat already solved.
 
-- **Skills** — `{SKILLS_DIR}/` (user-curated) and `~/.claude/skills/`
-  (Claude built-ins). Registry at `{SKILLS_INDEX}`. Each subfolder is
-  a self-contained technique pack with a `SKILL.md`. Skills the user
-  pinned to the active persona are already inlined into your system
-  prompt; for everything else, check the registry and `Read` the
-  `SKILL.md` of any pack that fits the task.
+This skim takes ~2 seconds. Do it silently. Never announce you're
+checking indexes.
 
-- **Service configs** — `{CONFIGS_DIR}/` (see next section). Registry
-  at `{CONFIGS_INDEX}`. One subfolder per service the user has set up
-  through any chat — reusable across all chats.
+Writing to indexes — format rules (follow exactly)
+---------------------------------------------------
+When YOU create or update entries in these indexes, follow these
+formats strictly. Sloppy entries = other agents can't find them.
+
+**long-term-memory.md** — one entry per saved chat:
+```
+### <topic — 3-8 keyword-rich words>
+- **Triggers**: <comma-separated keywords, names, error messages>
+- **Skill**: <ONE sentence, imperative form, ≤25 words>
+- **Session**: <session-id>
+- **Path**: <absolute path to the per-chat MEMORY.md>
+```
+No filler. No "Path: (inline)". No system-state snapshots. Every
+entry must have all four fields. Triggers must be grep-friendly —
+exact names, error strings, tool names, not vague descriptions.
+
+**knowledge/index.md** — auto-generated, but the FILES you write to
+`{KNOWLEDGE_DIR}/` must start with the `# Knowledge:` header (see
+"Saving knowledge" section above). Filename: `<topic-slug>.md` for
+ad-hoc saves, `<sid[:8]>.md` for save-flow knowledge dumps.
+
+**configs/index.md** — auto-generated from subfolders. Each config
+folder MUST have `config.json` + `README.md`. The README must say:
+what service, when set up, what credentials are stored, how to use.
+
+**skills/index.md** — auto-generated from subfolders. Each skill
+folder MUST have an entry file (SKILL.md or README.md) with a
+one-paragraph summary at the top.
+
+Golden rule: write entries that a DIFFERENT agent, with ZERO context
+from your chat, can find via keyword grep and act on immediately.
+
+Per-chat notes
+--------------
+Each chat has a NOTES.md in its working directory. The user can edit
+notes manually via the Notes panel, or ask you to write:
+
+  "write this to notes", "add to notes", "note this down"
+
+When asked, emit a marker on its own line at the end of your reply:
+
+    |NOTE| <the markdown text to append> |
+
+The bridge appends the text to the chat's NOTES.md and broadcasts
+`notes_updated` so the panel auto-refreshes if open. Use this for
+meeting notes, reminders, checklists, decisions, or anything the
+user wants persisted to this chat.
+
+Aggressive note-taking & knowledge sharing
+-------------------------------------------
+You are an AGGRESSIVE note-taker. As you work, proactively capture:
+
+1. **Per-chat notes** (NOTES.md via |NOTE| markers):
+   - Gotchas, edge cases, surprising behavior
+   - Commands that worked (and ones that didn't)
+   - Decisions made and why — especially trade-offs
+   - Environment quirks, version-specific issues
+   - Error messages and their fixes
+   Don't wait to be asked. If you hit something worth remembering,
+   |NOTE| it immediately while it's fresh.
+
+2. **Knowledge files** (for cross-chat reuse):
+   If you discover something that would help OTHER chats / agents —
+   a reusable pattern, a proven approach, a reference architecture,
+   a debugging technique — write it as a knowledge file and emit
+   `|KNOWLEDGE| <abs path> |`. ALWAYS use absolute paths in the
+   file content — other agents reading it won't share your cwd.
+
+3. **When to go global vs local**:
+   - **Local (NOTES.md)**: task-specific gotchas, this-chat-only
+     context, in-progress observations, raw dumps
+   - **Global (knowledge/)**: proven patterns, reusable solutions,
+     reference configs, debugging guides — anything another agent
+     starting fresh would benefit from
+
+Do this in parallel with your main work — never block the user's
+task to write notes. Stream your answer AND capture knowledge
+simultaneously.
+
+Cross-chat interaction
+----------------------
+The user may say "@c2 do X" or "tell @c2 about Y". When they
+reference another chat with @<chatId>:
+
+1. Read the index at `{SESS_DIR / 'index.json'}` to resolve the chatId
+2. Read that session's JSON for recent context
+3. To send a message to another chat, use the cc-talk.py CLI:
+   `{Path(__file__).resolve().parent.parent / 'tools' / 'cc-talk.py'}` send <sid|chatId> "message"
+4. Report the result back to the user
 
 Setting up integrations (the configs flow)
 ------------------------------------------
@@ -1768,28 +1849,37 @@ async def new_session(cwd_override: str | None = None,
       system-prompt blob that tells claude to silently adopt them.
     """
     sid = str(uuid.uuid4())
-    if cwd_override:
-        cwd = Path(cwd_override).expanduser().resolve()
-        cwd.mkdir(parents=True, exist_ok=True)
-    else:
-        stamp_fs = time.strftime('%Y-%m-%d-%H-%M-%S')
-        cwd = CWD_ROOT / stamp_fs
-        cwd.mkdir(parents=True, exist_ok=True)
 
+    # Resolve the persona first so we have a name for chatId derivation
+    # and so the cwd folder can be named after the chatId (c1, a1, c2...).
     sys_prompt = None
     persona_meta = None
     persona_model = None
+    p = None
     # Auto-create-on-empty path doesn't pass a persona; fall back to the
-    # saved default so the user lands inside Aurora (the orchestrator)
-    # instead of a personality-less generic chat.
+    # saved default.
     if not persona_id:
         persona_id = (load_personas() or {}).get('default') or None
     if persona_id:
         p = persona_full(persona_id)
         if p:
-            sys_prompt = materialise_persona_files(p, cwd)
             persona_meta = {'id': p.get('id'), 'name': p.get('name')}
             persona_model = p.get('model') or None
+
+    # Compute chatId BEFORE the cwd so the folder uses the user-friendly
+    # name. Falls back to the timestamp form if cwd_override is set.
+    chat_id = next_chat_id(persona_meta.get('name') if persona_meta else None)
+
+    if cwd_override:
+        cwd = Path(cwd_override).expanduser().resolve()
+        cwd.mkdir(parents=True, exist_ok=True)
+    else:
+        cwd = CWD_ROOT / chat_id
+        cwd.mkdir(parents=True, exist_ok=True)
+
+    # Now that the cwd exists, drop PERSONA.md / INSTRUCTIONS.md into it.
+    if p:
+        sys_prompt = materialise_persona_files(p, cwd)
 
     # Effective model: explicit override > persona's preferred > server default.
     effective_model = model_override or persona_model
@@ -1802,10 +1892,10 @@ async def new_session(cwd_override: str | None = None,
         'favorite': False,
         'cwd': str(cwd),
         'messages': [],
-        # Short user-facing id derived from the persona's first
-        # letter. Lets the user refer to chats with `@c1`, `@c2`,
-        # etc. — claude looks them up via the live index.
-        'chatId': next_chat_id(persona_meta.get('name') if persona_meta else None),
+        # Short user-facing id (`c1`, `c2`, `a1` for Aurora) — also used
+        # as the cwd folder name. Lets the user refer to chats with
+        # `@c1`, `@c2`, etc.
+        'chatId': chat_id,
         # User-defined project / theme tag (2-10 chars). Used for
         # filtering the chat list, header search, etc. Defaults to
         # 'general'; the user can rename it from the header.
@@ -2438,22 +2528,44 @@ async def set_session_tag(sid: str, tag: str):
     await broadcast({'type': 'sessions', 'sessions': list_sessions_brief()})
 
 
-async def fork_session(source_id: str, last_n: int = 200):
-    """Create a brand-new claude session that inherits the last N messages
-    from `source_id`. The full message log is preloaded into the new
-    session AND into a `--append-system-prompt` for claude so it has the
-    context when the user sends their next message."""
+async def fork_session(source_id: str, last_n: int = 200,
+                       up_to_msg_id: str | None = None):
+    """Create a brand-new claude session that inherits messages from
+    `source_id`. By default takes the last `last_n` messages; if
+    `up_to_msg_id` is provided, slices messages up to AND including
+    that one (the user clicked Fork on a specific assistant reply).
+
+    The full message log is preloaded into the new session AND into a
+    `--append-system-prompt` for claude so it has the context when
+    the user sends their next message."""
     src = load_session(source_id)
     if src is None:
         await broadcast({'type': 'error', 'message': f'fork: unknown source {source_id}'})
         return
 
+    src_persona = (src.get('persona') or {})
+    chat_id = next_chat_id(src_persona.get('name'))
+
     sid = str(uuid.uuid4())
-    stamp_fs = time.strftime('%Y-%m-%d-%H-%M-%S')
-    cwd = CWD_ROOT / stamp_fs
+    cwd = CWD_ROOT / chat_id
     cwd.mkdir(parents=True, exist_ok=True)
 
-    src_msgs = (src.get('messages') or [])[-last_n:]
+    all_msgs = src.get('messages') or []
+    if up_to_msg_id:
+        # Fork at a specific message — keep everything up to (and
+        # including) that message, drop anything after.
+        cut = None
+        for i, m in enumerate(all_msgs):
+            if m.get('id') == up_to_msg_id:
+                cut = i + 1
+                break
+        if cut is None:
+            await broadcast({'type': 'error',
+                             'message': f'fork: msg id {up_to_msg_id} not found in {source_id}'})
+            return
+        src_msgs = all_msgs[:cut]
+    else:
+        src_msgs = all_msgs[-last_n:]
     base_title = (src.get('title') or 'New chat').replace(' - fork', '').strip()
     fork_title = f'{base_title} - fork'
 
@@ -2467,7 +2579,6 @@ async def fork_session(source_id: str, last_n: int = 200):
         'their UI; do not repeat or summarize them.'
     )
 
-    src_persona = (src.get('persona') or {})
     sess = {
         'id': sid,
         'title': fork_title,
@@ -2480,7 +2591,7 @@ async def fork_session(source_id: str, last_n: int = 200):
         'messages': src_msgs,
         'systemPrompt': sys_blob,
         # Forks inherit the original's persona prefix for chat-id.
-        'chatId': next_chat_id(src_persona.get('name')),
+        'chatId': chat_id,
         # Forks inherit the parent's tag — same project / theme.
         'tag': src.get('tag') or 'general',
     }
@@ -2625,6 +2736,45 @@ def search_messages(query: str, role: str = 'all', path_filter: str = '',
                 break
         if len(results) >= limit * 4:
             break
+
+    # Also search per-chat NOTES.md files. Each match yields a
+    # synthetic result with role='notes' so the UI can render a
+    # distinct badge + click to open the notes panel.
+    if q and (role == 'all' or role == 'notes'):
+        for sess_brief in load_index().get('sessions', []):
+            sid = sess_brief.get('id')
+            if not sid: continue
+            if persona_filter:
+                sp = (sess_brief.get('persona') or {}).get('id') or ''
+                if sp != persona_filter:
+                    continue
+            if tag_filter:
+                st = (sess_brief.get('tag') or 'general').lower()
+                if st != tag_filter:
+                    continue
+            sess = load_session(sid)
+            if not sess: continue
+            cwd = sess.get('cwd') or ''
+            if path_filter and path_filter.lower() not in cwd.lower():
+                continue
+            notes_path = Path(cwd) / 'NOTES.md' if cwd else None
+            if notes_path and notes_path.exists():
+                try:
+                    ntext = notes_path.read_text(encoding='utf-8')
+                    pos = ntext.lower().find(q)
+                    if pos >= 0:
+                        results.append({
+                            'sessionId':    sid,
+                            'sessionTitle': sess.get('title') or 'Untitled',
+                            'sessionCwd':   cwd,
+                            'msgId':        '__notes__',
+                            'role':         'notes',
+                            'ts':           notes_path.stat().st_mtime,
+                            'snippet':      _build_snippet(ntext, pos, len(q)),
+                            'fullLength':   len(ntext),
+                        })
+                except Exception:
+                    pass
 
     rev = (sort != 'asc')
     results.sort(key=lambda r: r.get('ts') or 0, reverse=rev)
@@ -3182,11 +3332,13 @@ async def save_progress_silent(sid: str):
     # action-form heuristics so a stateless future-claude (no context
     # from this session) can grep the index, hit the right entry, and
     # answer the user without re-deriving everything.
+    knowledge_path = KNOWLEDGE_DIR / f'{sid[:8]}.md'
+
     prompt = f"""[INTERNAL — silent turn, NO chat output.]
 
-FAST. Issue BOTH Write tool calls in a SINGLE assistant message —
+FAST. Issue ALL THREE Write tool calls in a SINGLE assistant message —
 in PARALLEL, not sequentially. No narration, no thinking out loud,
-no preamble. Just the two Write blocks, in one message.
+no preamble. Just the three Write blocks, in one message.
 
 WRITE 1 — overwrite the per-chat memory at:
     {md_path}
@@ -3262,7 +3414,47 @@ block to the bottom:
 The `**Session**:` line is REQUIRED — that's how the bridge finds
 and refreshes this entry on the next save.
 
-After both Writes land in your single message, STOP. No chat text.
+WRITE 3 — overwrite the knowledge file at:
+    {knowledge_path}
+
+This is a fresh write each time (overwrites any previous version).
+A distilled, reusable knowledge document from this chat. NOT a
+summary — a reference someone else can read cold and act on.
+150-500 words. ALWAYS use ABSOLUTE paths for every file, directory,
+repo, URL, or resource referenced — never relative paths, never ~.
+Start with the standard knowledge header so the index can pick it up:
+
+```markdown
+# Knowledge: <human-readable title>
+
+- **What it covers**: one tight sentence describing the topic.
+- **Created**: {time.strftime('%Y-%m-%d')}
+- **From chat**: {sess.get('chatId') or sid[:8]}
+- **Tags**: comma-separated keywords for retrieval
+
+---
+
+> **TL;DR** — 1-2 sentence takeaway.
+
+## What worked
+- Concrete steps, commands, patterns that succeeded.
+
+## What didn't work / gotchas
+- Pitfalls encountered, wrong approaches tried, why they failed.
+- Edge cases, version-specific quirks, config traps.
+
+## Key decisions & trade-offs
+- Choices made and why. What was ruled out.
+
+## References
+- File paths, URLs, docs, tools used.
+```
+
+Skip any section that has nothing. Be specific — names, paths,
+versions, exact error messages. This file will be indexed in the
+knowledge library for cross-chat reuse.
+
+After all three Writes land in your single message, STOP. No chat text.
 """
 
     # Flip the silent-turn flag BEFORE writing the prompt so the
@@ -3431,6 +3623,18 @@ async def claude_reader(w: Worker):
                                      'mdPath':     meta.get('mdPath'),
                                      'memoryPath': meta.get('memoryPath'),
                                      'sessions':   list_sessions_brief()})
+                    # WRITE 3 dropped a fresh knowledge file under
+                    # KNOWLEDGE_DIR. Re-index so it shows up in the
+                    # registry + UI immediately.
+                    try:
+                        n = build_knowledge_index()
+                        await broadcast({'type': 'knowledge_refreshed',
+                                         'count': n,
+                                         'index': str(KNOWLEDGE_INDEX),
+                                         'dir':   str(KNOWLEDGE_DIR),
+                                         'knowledge': list_knowledge_brief()})
+                    except Exception as e:
+                        log(f'  save: knowledge index rebuild failed: {e}')
                     continue
                 if w.current and w.current.get('text'):
                     msg = {'role': 'assistant',
@@ -3519,6 +3723,25 @@ async def claude_reader(w: Worker):
                         cleaned, knowledge_paths = \
                             extract_knowledge_markers(cleaned)
                         knowledge_changed = bool(knowledge_paths)
+                        # Note markers: claude wants to append a line /
+                        # paragraph to the chat's NOTES.md. We append +
+                        # broadcast so the notes panel auto-refreshes
+                        # if it's open.
+                        cleaned, note_texts = \
+                            extract_note_markers(cleaned)
+                        if note_texts:
+                            sess_cwd = Path(sess_after.get('cwd') or DEFAULT_CWD)
+                            notes_path = sess_cwd / 'NOTES.md'
+                            try:
+                                existing = notes_path.read_text(encoding='utf-8') if notes_path.exists() else ''
+                                appended = '\n\n'.join(note_texts)
+                                notes_path.write_text(
+                                    (existing.rstrip() + '\n\n' + appended).strip() + '\n',
+                                    encoding='utf-8')
+                                await broadcast({'type': 'notes_updated',
+                                                 'sessionId': sid})
+                            except Exception as e:
+                                log(f'note marker write failed: {e}')
                         # Routine-view markers: chat wrote an HTML
                         # visualization for a routine. Persist the
                         # path on the routine record.
@@ -3832,6 +4055,26 @@ async def send_to_session(sid: str, text: str, attachments: list[dict],
                          'message': f'send failed: {e}'})
 
 
+# ───────────────────  File explorer (runtime/) ─────────────────
+# Lets the UI's file explorer panel browse + edit anything under
+# CWD_ROOT. Every path the user supplies gets resolved + checked
+# against the root so .., symlinks, or absolute paths can't escape.
+def _fs_safe(raw: str) -> Path | None:
+    """Resolve a user-provided path, ensuring it stays under CWD_ROOT.
+    Returns None if the path escapes (via .., symlinks, etc.).
+    Empty/missing input → CWD_ROOT itself."""
+    if not raw:
+        return CWD_ROOT
+    try:
+        p = Path(raw).resolve()
+        root = CWD_ROOT.resolve()
+        if p == root or root in p.parents:
+            return p
+        return None
+    except Exception:
+        return None
+
+
 # ───────────────────  HTTP static + uploads  ───────────────────
 def _safe_join(root: Path, rel: str) -> Path | None:
     """Resolve `rel` under `root`, refusing any path that escapes `root`."""
@@ -4048,10 +4291,57 @@ async def handle_client(websocket):
             elif cmd == 'set_tag':
                 sid = msg.get('id'); tag = msg.get('tag')
                 if sid: await set_session_tag(sid, tag)
+            elif cmd == 'star_msg':
+                # Toggle/set starred=true|false on a single message
+                # inside a session. Persists in the session JSON.
+                sid = msg.get('sessionId') or state.active_id
+                mid = msg.get('msgId')
+                val = bool(msg.get('value'))
+                if sid and mid:
+                    sess = load_session(sid)
+                    if sess:
+                        for m in sess.get('messages', []):
+                            if m.get('id') == mid:
+                                m['starred'] = val
+                                break
+                        save_session(sess)
+                        await broadcast({'type': 'msg_starred',
+                                         'sessionId': sid, 'msgId': mid,
+                                         'value': val})
+            elif cmd == 'notes_get':
+                # Read <cwd>/NOTES.md for the chat — empty string if missing.
+                sid = msg.get('sessionId') or state.active_id
+                if sid:
+                    sess = load_session(sid)
+                    cwd = Path(sess.get('cwd') or DEFAULT_CWD) if sess else Path(DEFAULT_CWD)
+                    notes_path = cwd / 'NOTES.md'
+                    content = ''
+                    if notes_path.exists():
+                        try: content = notes_path.read_text(encoding='utf-8')
+                        except Exception: pass
+                    await websocket.send(json.dumps({
+                        'type': 'notes', 'sessionId': sid,
+                        'content': content, 'path': str(notes_path)}))
+            elif cmd == 'notes_save':
+                # Overwrite <cwd>/NOTES.md with content from the panel.
+                sid = msg.get('sessionId') or state.active_id
+                content = msg.get('content') or ''
+                if sid:
+                    sess = load_session(sid)
+                    cwd = Path(sess.get('cwd') or DEFAULT_CWD) if sess else Path(DEFAULT_CWD)
+                    notes_path = cwd / 'NOTES.md'
+                    try:
+                        notes_path.write_text(content, encoding='utf-8')
+                        await websocket.send(json.dumps({
+                            'type': 'notes_saved', 'sessionId': sid}))
+                    except Exception as e:
+                        await websocket.send(json.dumps({
+                            'type': 'error', 'message': f'notes save failed: {e}'}))
             elif cmd == 'fork':
                 sid = msg.get('id') or state.active_id
                 last_n = int(msg.get('lastN') or 200)
-                if sid: await fork_session(sid, last_n)
+                up_to = msg.get('upToMsgId') or None
+                if sid: await fork_session(sid, last_n, up_to_msg_id=up_to)
             elif cmd == 'sessions':
                 await websocket.send(json.dumps({
                     'type': 'sessions', 'sessions': list_sessions_brief()}))
@@ -4197,6 +4487,113 @@ async def handle_client(websocket):
                                      'id': snap_id, **res})
                     await broadcast({'type': 'snapshots',
                                      'snapshots': snapshot_list()})
+            # ── File explorer (browse + edit anything under CWD_ROOT) ──
+            elif cmd == 'fs_list':
+                fs_path = _fs_safe(msg.get('path') or '')
+                if fs_path is None:
+                    await websocket.send(json.dumps(
+                        {'type':'error','message':'path outside allowed root'}))
+                elif not fs_path.is_dir():
+                    await websocket.send(json.dumps(
+                        {'type':'fs_listing','path':str(fs_path),'entries':[],
+                         'error':'not a directory'}))
+                else:
+                    entries = []
+                    try:
+                        for child in sorted(fs_path.iterdir()):
+                            if child.name.startswith('.'): continue
+                            st = child.stat()
+                            entries.append({
+                                'name': child.name,
+                                'type': 'dir' if child.is_dir() else 'file',
+                                'size': st.st_size if child.is_file() else 0,
+                                'mtime': st.st_mtime,
+                            })
+                    except Exception as e:
+                        log(f'fs_list error: {e}')
+                    await websocket.send(json.dumps(
+                        {'type':'fs_listing','path':str(fs_path),
+                         'entries':entries}))
+            elif cmd == 'fs_read':
+                fs_path = _fs_safe(msg.get('path') or '')
+                if fs_path is None:
+                    await websocket.send(json.dumps(
+                        {'type':'error','message':'path outside allowed root'}))
+                elif not fs_path.is_file():
+                    await websocket.send(json.dumps(
+                        {'type':'fs_content','path':str(fs_path),
+                         'content':'','error':'not a file'}))
+                else:
+                    try:
+                        content = fs_path.read_text(encoding='utf-8',
+                                                     errors='replace')
+                        mime = mimetypes.guess_type(str(fs_path))[0] or 'text/plain'
+                        await websocket.send(json.dumps(
+                            {'type':'fs_content','path':str(fs_path),
+                             'content':content,'mimeType':mime}))
+                    except Exception as e:
+                        await websocket.send(json.dumps(
+                            {'type':'fs_content','path':str(fs_path),
+                             'content':'','error':str(e)}))
+            elif cmd == 'fs_write':
+                fs_path = _fs_safe(msg.get('path') or '')
+                content = msg.get('content') or ''
+                if fs_path is None:
+                    await websocket.send(json.dumps(
+                        {'type':'error','message':'path outside allowed root'}))
+                else:
+                    try:
+                        fs_path.parent.mkdir(parents=True, exist_ok=True)
+                        fs_path.write_text(content, encoding='utf-8')
+                        await websocket.send(json.dumps(
+                            {'type':'fs_written','path':str(fs_path)}))
+                    except Exception as e:
+                        await websocket.send(json.dumps(
+                            {'type':'error','message':f'write failed: {e}'}))
+            elif cmd == 'fs_mkdir':
+                fs_path = _fs_safe(msg.get('path') or '')
+                if fs_path is None:
+                    await websocket.send(json.dumps(
+                        {'type':'error','message':'path outside allowed root'}))
+                else:
+                    try:
+                        fs_path.mkdir(parents=True, exist_ok=True)
+                        await websocket.send(json.dumps(
+                            {'type':'fs_created','path':str(fs_path)}))
+                    except Exception as e:
+                        await websocket.send(json.dumps(
+                            {'type':'error','message':f'mkdir failed: {e}'}))
+            elif cmd == 'fs_delete':
+                fs_path = _fs_safe(msg.get('path') or '')
+                if fs_path is None:
+                    await websocket.send(json.dumps(
+                        {'type':'error','message':'path outside allowed root'}))
+                else:
+                    try:
+                        if fs_path.is_dir():
+                            shutil.rmtree(fs_path)
+                        else:
+                            fs_path.unlink()
+                        await websocket.send(json.dumps(
+                            {'type':'fs_deleted','path':str(fs_path)}))
+                    except Exception as e:
+                        await websocket.send(json.dumps(
+                            {'type':'error','message':f'delete failed: {e}'}))
+            elif cmd == 'fs_rename':
+                old = _fs_safe(msg.get('oldPath') or '')
+                new = _fs_safe(msg.get('newPath') or '')
+                if old is None or new is None:
+                    await websocket.send(json.dumps(
+                        {'type':'error','message':'path outside allowed root'}))
+                else:
+                    try:
+                        old.rename(new)
+                        await websocket.send(json.dumps(
+                            {'type':'fs_renamed','oldPath':str(old),
+                             'newPath':str(new)}))
+                    except Exception as e:
+                        await websocket.send(json.dumps(
+                            {'type':'error','message':f'rename failed: {e}'}))
             elif cmd == 'state':
                 await websocket.send(json.dumps(state_snapshot()))
             elif cmd == 'stop':
@@ -4460,6 +4857,10 @@ _ROUTINE_VIEW_RE      = re.compile(
 # scans whatever folders are present.
 _CONFIG_MARKER_RE     = re.compile(
     r'\|\s*CONFIG\s*\|\s*([^|\n]+?)\s*\|\s*([^|\n]+?)\s*\|')
+# `|NOTE| <text> |` — chat wants to append a line / paragraph to the
+# per-chat NOTES.md. Bridge appends + broadcasts `notes_updated` so
+# the notes panel refreshes if it's open.
+_NOTE_MARKER_RE       = re.compile(r'\|\s*NOTE\s*\|\s*(.+?)\s*\|')
 
 
 def extract_markers(text: str) -> tuple[str, list[str], list[str]]:
@@ -4543,6 +4944,19 @@ def extract_config_markers(text: str) -> tuple[str, list[dict]]:
         return ''
     cleaned = _CONFIG_MARKER_RE.sub(_fn, text)
     return cleaned, out
+
+
+def extract_note_markers(text: str) -> tuple[str, list[str]]:
+    """Pull `|NOTE| <text> |` markers. Returns (cleaned, [note_texts])."""
+    if not text or '|' not in text:
+        return text, []
+    notes: list[str] = []
+    def _fn(m):
+        t = (m.group(1) or '').strip()
+        if t: notes.append(t)
+        return ''
+    cleaned = _NOTE_MARKER_RE.sub(_fn, text)
+    return cleaned, notes
 
 
 def extract_send_markers(text: str) -> tuple[str, list[str]]:

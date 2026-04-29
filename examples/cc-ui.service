@@ -21,7 +21,7 @@ WorkingDirectory=%h/claude-code-ui
 
 Environment=CC_SERVER_PORT=8765
 Environment=CC_CLAUDE_BIN=%h/.local/bin/claude
-Environment=CC_MODEL_DEFAULT=claude-sonnet-4-5
+Environment=CC_MODEL_DEFAULT=claude-opus-4-6[1m]
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 
 Restart=always

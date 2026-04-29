@@ -167,7 +167,11 @@
 
   .session-item{display:flex;align-items:center;gap:6px;padding:8px 8px 8px 10px;border-radius:8px;
     cursor:pointer;color:var(--fg-dim);transition:background .12s, color .12s;
-    margin-bottom:2px;position:relative}
+    margin-bottom:2px;position:relative;
+    /* `<a>` defaults: kill underline + inherited link color so the
+       row looks identical to the previous <div> rendering, while
+       keeping right-click "Open link in new tab" working. */
+    text-decoration:none}
   .session-item:hover{background:rgba(255,255,255,.04);color:var(--fg)}
   .session-item.active{background:rgba(255,255,255,.06);color:var(--fg)}
   .session-item.active::before{content:"";position:absolute;left:-2px;top:8px;bottom:8px;
@@ -670,6 +674,15 @@
   .bubble pre{background:#0a0a0e;border:1px solid var(--border);padding:10px 12px;
     border-radius:8px;overflow-x:auto;margin:.35em 0;font-size:13px;line-height:1.45}
   .bubble pre code{background:none;border:none;padding:0;color:var(--fg)}
+  .bubble pre{position:relative}
+  .bubble pre .code-copy-btn{position:absolute;top:6px;right:6px;
+    background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);
+    color:var(--fg-faint);border-radius:5px;padding:3px 8px;font-size:11px;
+    cursor:pointer;opacity:0;transition:opacity 150ms;font-family:inherit;
+    z-index:2;line-height:1.3}
+  .bubble pre:hover .code-copy-btn{opacity:1}
+  .bubble pre .code-copy-btn:hover{background:rgba(255,255,255,.15);color:var(--fg)}
+  .bubble pre .code-copy-btn.copied{color:var(--accent);border-color:var(--accent)}
   /* tables */
   .bubble table{border-collapse:collapse;margin:.4em 0;font-size:13.5px;
     display:block;overflow-x:auto;max-width:100%;
@@ -759,9 +772,9 @@
   /* First-message hint sits next to the dots and fades out once any
      assistant reply lands. Only shown on the very first turn of a
      fresh chat. Kept compact so it doesn't push the layout. */
-  .typing .typing-hint{align-self:center;font-size:11.5px;color:var(--fg-faint);
-    line-height:1.45;font-style:italic;
-    border-left:2px solid var(--border-soft);padding:0 0 0 10px;margin-left:2px}
+  .typing .typing-hint{align-self:center;font-size:14px;
+    color:var(--fg);line-height:1.45;font-style:italic;
+    border-left:3px solid var(--accent);padding:4px 0 4px 12px;margin-left:4px}
   .typing .typing-hint[hidden]{display:none}
   @keyframes bounce{0%,80%,100%{transform:translateY(0);opacity:.4}40%{transform:translateY(-5px);opacity:1}}
 
@@ -784,6 +797,13 @@
   .msg-actions button:hover{color:var(--fg);background:rgba(255,255,255,.06);border-color:#3a3a44}
   .msg-actions button.flash{color:#34d076;border-color:#34d076}
   .msg-actions button svg{width:10.5px;height:10.5px}
+  /* Star toggle — dimmer than other actions until starred, then
+     filled with the accent color. Stays visible alongside the rest
+     of the action row on hover. */
+  .msg-actions .star-btn{opacity:.5;padding:0 6px}
+  .msg-actions .star-btn:hover{opacity:1}
+  .msg-actions .star-btn.starred{opacity:1;color:var(--accent);border-color:var(--accent)}
+  .msg-actions .star-btn.starred svg{fill:var(--accent);stroke:var(--accent)}
 
   /* expand/collapse for very long user messages */
   .bubble.collapsed{max-height:14em;overflow:hidden;position:relative}
@@ -1619,6 +1639,15 @@
           <polyline points="12 7 12 12 15 14"/>
         </svg>
         <span class="routines-count" id="routinesCount" hidden>0</span>
+      </button>
+      <button class="header-action" id="starFilterBtn" type="button"
+              title="Show only starred messages (toggle)"
+              aria-label="Filter to starred messages">
+        <!-- star outline; .active fills via CSS -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+        </svg>
       </button>
       <button class="header-action" id="snapshotsBtn" type="button"
               title="Snapshots — save / restore bridge state"
@@ -2504,7 +2533,12 @@
     const c = chats.get(s.id);
     const isUnread = !!(c && c.unread);
     const isLive   = !!(c && (c.busy || c.current));
-    const item = document.createElement('div');
+    // <a> instead of <div> so right-click "Open link in new tab"
+    // gives a working URL — left-click is intercepted via
+    // preventDefault to keep the WebSocket-based switch behavior.
+    const item = document.createElement('a');
+    const tag = s.chatId || (s.id || '').slice(0, 8);
+    item.href = '#chat=' + tag;
     item.className = 'session-item'
       + (s.id === activeId ? ' active' : '')
       + (isUnread          ? ' unread' : '')
@@ -2583,6 +2617,11 @@
     item.onclick = ev => {
       if (ev.target.closest('button.act')) return;
       if (!title.readOnly) return;     // mid-rename — don't switch
+      // Suppress the <a href="#chat="> default — we use WS switch
+      // instead of a real navigation. Right-click / cmd-click still
+      // get the native "Open in new tab" affordance because we leave
+      // the href intact.
+      ev.preventDefault();
       if (s.id === activeId) { closeDrawer(); return; }
       send({type:'switch', id: s.id});
       closeDrawer();
@@ -3047,6 +3086,7 @@
   // SVG icons for message-level actions
   const ICON_COPY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
   const ICON_FORK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="3" r="2.5"/><circle cx="6" cy="21" r="2.5"/><circle cx="18" cy="9" r="2.5"/><path d="M6 5.5v13"/><path d="M18 11.5c0 4-7 5.5-7 9.5"/></svg>';
+  const ICON_STAR = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>';
 
   async function copyText(text, btn){
     try {
@@ -3064,6 +3104,21 @@
     const bar = document.createElement('div');
     bar.className = 'msg-actions';
 
+    // Star toggle — bookmarks individual messages so the user can
+    // filter the chat to "only the important stuff" with the star
+    // filter button in the header. Server persists in session JSON.
+    const starBtn = document.createElement('button');
+    starBtn.type = 'button';
+    starBtn.className = 'star-btn' + (msg.starred ? ' starred' : '');
+    starBtn.title = msg.starred ? 'Unstar' : 'Star';
+    starBtn.innerHTML = ICON_STAR;
+    starBtn.dataset.msgId = msg.id || '';
+    starBtn.onclick = () => {
+      const val = !starBtn.classList.contains('starred');
+      send({type:'star_msg', sessionId: activeId, msgId: msg.id, value: val});
+    };
+    bar.appendChild(starBtn);
+
     const copyBtn = document.createElement('button');
     copyBtn.type = 'button';
     copyBtn.title = 'Copy message';
@@ -3071,21 +3126,22 @@
     copyBtn.onclick = () => copyText(bubble.dataset.raw || msg.text || '', copyBtn);
     bar.appendChild(copyBtn);
 
-    // Fork is only on the LAST assistant message — not user, not historical bot.
-    // We mark it with class .has-fork and update which row owns it on every
-    // new assistant_end / state load.
+    // Fork is on EVERY assistant message — not just the last one.
+    // The new chat inherits messages up to and including this one,
+    // so users can branch from any earlier reply. The button stays
+    // hidden by default and reveals on hover (msg-actions:hover CSS).
     if (msg.role === 'assistant'){
       const forkBtn = document.createElement('button');
       forkBtn.type = 'button';
-      forkBtn.title = 'Fork — start a new chat with these messages as context';
+      forkBtn.title = 'Fork — start a new chat with messages up to here as context';
       forkBtn.innerHTML = ICON_FORK + '<span>Fork</span>';
       forkBtn.onclick = async () => {
         const ok = await confirmAction({
           title: 'Fork this chat?',
-          body:  'The new chat will start with the last 200 messages as context.',
+          body:  'The new chat will inherit every message up to and including this one.',
           confirmText: 'Fork',
         });
-        if (ok) send({type: 'fork', id: activeId, lastN: 200});
+        if (ok) send({type: 'fork', id: activeId, upToMsgId: msg.id});
       };
       bar.appendChild(forkBtn);
     }
@@ -3093,16 +3149,16 @@
   }
 
   function refreshLastBotForkButton(){
-    // Show fork only on the visually-last bot message
+    // Keep the LAST bot row's actions always-visible (so the user
+    // sees Copy / Fork without having to hover); older rows reveal
+    // their actions on hover. We no longer hide the fork button on
+    // earlier rows — fork-from-any-message is a feature.
     const bots = [...messagesEl.querySelectorAll('.msg.bot')];
     bots.forEach((el, i) => {
       const bar = el.querySelector('.msg-actions');
       if (!bar) return;
-      // Last-of-class gets the fork button left visible; older ones hide it.
       const isLast = i === bots.length - 1;
-      bar.classList.toggle('always', isLast);   // always visible on last
-      const forkBtn = bar.querySelector('button[title^="Fork"]');
-      if (forkBtn) forkBtn.style.display = isLast ? '' : 'none';
+      bar.classList.toggle('always', isLast);
     });
   }
 
@@ -3191,36 +3247,96 @@
     return { wrap, bubble };
   }
 
+  // Inject a "Copy" button into every <pre> code block under `root`
+  // that doesn't already have one. Idempotent.
+  function injectCodeCopyButtons(root){
+    if (!root) return;
+    root.querySelectorAll('pre').forEach(pre => {
+      if (pre.querySelector('.code-copy-btn')) return;
+      const btn = document.createElement('button');
+      btn.className = 'code-copy-btn';
+      btn.type = 'button';
+      btn.textContent = 'Copy';
+      btn.onclick = e => {
+        e.stopPropagation();
+        const code = pre.querySelector('code');
+        const text = (code || pre).textContent;
+        if (!navigator.clipboard) return;
+        navigator.clipboard.writeText(text).then(() => {
+          btn.textContent = '✓ Copied';
+          btn.classList.add('copied');
+          setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
+        });
+      };
+      pre.appendChild(btn);
+    });
+  }
+
+  // Star-filter mode: when on, renderAllMessages renders only msgs
+  // with `m.starred === true` so the user can scan the chat's
+  // bookmarked moments.
+  let starFilterActive = false;
+
   function renderAllMessages(){
     clearMessages();
     const c = activeChat();
-    const msgs = c ? c.messages : [];
+    const allMsgs = c ? c.messages : [];
+    const msgs = starFilterActive ? allMsgs.filter(m => m.starred) : allMsgs;
     // Toggle the ChatGPT-style centered landing whenever the focused
     // chat has nothing in it. The body class beefs up the composer +
     // centers the welcome card vertically.
-    document.body.classList.toggle('empty-chat', !msgs.length);
-    if (!msgs.length){
+    document.body.classList.toggle('empty-chat', !allMsgs.length);
+    if (!allMsgs.length){
       emptyPane();
       return;
     }
+    if (starFilterActive && !msgs.length){
+      const e = document.createElement('div');
+      e.className = 'empty-list';
+      e.style.padding = '20px';
+      e.style.textAlign = 'center';
+      e.style.color = 'var(--fg-faint)';
+      e.textContent = 'No starred messages in this chat. Click the star on any message to bookmark it.';
+      messagesEl.appendChild(e);
+      return;
+    }
     for (const m of msgs) renderMessage(m);
-    // If the focused chat has an in-progress assistant stream, paint
-    // the buffered text via the rAF typewriter — adaptive cps will
-    // catch up to the live tail in ~2s while the user sees the
-    // typewriter effect, then incremental deltas stream at baseline.
+    injectCodeCopyButtons(messagesEl);
+    // If the focused chat has an in-progress assistant stream we want
+    // visible typewriter continuity — but ALSO want the user to see
+    // the existing reply immediately when they switch back, not wait
+    // for hundreds of chars to drain. So: pre-render everything
+    // except the last RESUME_TAIL chars into the frozen <div>, then
+    // let the rAF drainer animate only the small tail.
+    const RESUME_TAIL = 200;
     if (c && c.current && c.current.id){
       startStream(c.current.id);
       if (c.current.text){
-        // Single appendDelta with the whole buffered tail; the rAF
-        // drainer handles the cadence.
-        appendDelta(c.current.id, c.current.text);
+        const full = c.current.text;
+        if (streamingBubble) streamingBubble.dataset.raw = full;
+        if (full.length > RESUME_TAIL){
+          let freezeAt = findSafeFreezeIdx(full, full.length - RESUME_TAIL);
+          // Fallback: no safe paragraph break in the early prefix —
+          // hard-cap at full.length - RESUME_TAIL so we still show
+          // the bulk of the reply instantly.
+          if (freezeAt <= 0) freezeAt = Math.max(0, full.length - RESUME_TAIL);
+          if (freezeAt > 0 && _streamFrozenEl){
+            _streamFrozenEl.insertAdjacentHTML('beforeend', md(full.slice(0, freezeAt)));
+            _streamFrozenLen = freezeAt;
+          }
+          _streamRevealedLen = freezeAt;
+        }
+        // Kick the rAF drainer; it'll animate the tail.
+        ensureStreamRaf();
       }
       // Show "thinking" dots if claude is mid-tool-use (no text yet
       // but more is coming) — provides a continuity cue.
       if (c.busy) setStatus('thinking…','busy');
     } else if (c && c.busy){
-      // Worker is busy but hasn't emitted any text yet — show dots.
+      // Worker is busy but hasn't emitted any text yet — show dots
+      // AND the rotating verb cycle in the header.
       showTyping(true);
+      setStatus('thinking…','busy');
     }
   }
 
@@ -3454,6 +3570,7 @@
         }
       }
       refreshLastBotForkButton();
+      injectCodeCopyButtons(streamingBubble);
     }
     streamingId = null; streamingBubble = null;
     _streamFrozenEl = _streamLiveEl = _streamCursorEl = null;
@@ -3809,7 +3926,36 @@
     refreshHeaderTitle();
     refreshSaveButton();
     applySavingUI();    // show/hide saving overlay based on new active chat
+    // Update URL hash so each chat is bookmarkable / shareable.
+    // Uses chatId (`c1`, `a1`...) when available, else 8-char sid.
+    const s = id ? sessions.find(x => x.id === id) : null;
+    const tag = s ? (s.chatId || (id || '').slice(0, 8)) : '';
+    const target = tag ? '#chat=' + tag : location.pathname;
+    if (location.hash !== '#chat=' + tag){
+      try { history.replaceState(null, '', target); } catch(e) {}
+    }
   }
+
+  // Resolve current location.hash to a session id, if any.
+  function resolveHashChat(){
+    const h = location.hash || '';
+    const m = h.match(/^#chat=(.+)$/);
+    if (!m) return null;
+    const needle = decodeURIComponent(m[1]).toLowerCase();
+    for (const s of sessions){
+      if ((s.chatId || '').toLowerCase() === needle) return s.id;
+      if (s.id.startsWith(needle)) return s.id;
+    }
+    return null;
+  }
+  // Browser back/forward → switch to the chat in the new hash.
+  window.addEventListener('popstate', () => {
+    const want = resolveHashChat();
+    if (want && want !== activeId) send({type:'switch', id: want});
+  });
+  // One-shot flag: only consume the hash once on initial load so
+  // subsequent state events don't keep forcing the user back.
+  let _hashHandled = false;
 
   function setOnline(on){
     online = on;
@@ -3891,13 +4037,48 @@
         // in-flight flag once the server has populated `sessions`.
         if (sessions.length === 0 && !newActive && !autoCreatePending){
           autoCreatePending = true;
-          send({type:'new'});
+          // First-load on a fresh install: spawn Aurora (the
+          // orchestrator) so the user lands inside the persona who
+          // delegates work to specialists, not a generic Claudy chat.
+          // The server falls back to whichever persona id is set as
+          // default if 'aurora' isn't present.
+          send({type:'new', persona:'aurora'});
         } else if (sessions.length > 0){
           autoCreatePending = false;
+          // First state event with sessions present — honour any
+          // #chat=<chatId> hash the user pasted into the address bar.
+          if (!_hashHandled){
+            _hashHandled = true;
+            const want = resolveHashChat();
+            if (want && want !== activeId) send({type:'switch', id: want});
+          }
         }
         break;
       }
       case 'sessions': sessions = m.sessions || []; renderSessions(); refreshHeaderTitle(); refreshSaveButton(); break;
+      case 'msg_starred': {
+        // Server confirmed a star toggle. Update the in-memory chat
+        // buffer + the visible button without re-rendering the whole
+        // message list (preserves scroll position + stream state).
+        const ssid = m.sessionId, mid = m.msgId, val = !!m.value;
+        if (ssid && mid){
+          const cc = getChat(ssid);
+          if (cc && cc.messages){
+            for (const x of cc.messages){
+              if (x.id === mid){ x.starred = val; break; }
+            }
+          }
+          if (ssid === activeId){
+            const btn = messagesEl.querySelector(`.star-btn[data-msg-id="${CSS.escape(mid)}"]`);
+            if (btn){
+              btn.classList.toggle('starred', val);
+              btn.title = val ? 'Unstar' : 'Star';
+            }
+            if (starFilterActive) renderAllMessages();
+          }
+        }
+        break;
+      }
       case 'user': {
         const msg = m.msg;
         if (!msg) break;
@@ -5439,6 +5620,12 @@
     applyBracketToggleUI();
     // When toggling ON, hidden bubbles need to be un-hidden via re-render.
     // When toggling OFF, the next render will skip them.
+    renderAllMessages();
+  });
+  // Star-filter toggle — show only starred messages in the active chat.
+  document.getElementById('starFilterBtn')?.addEventListener('click', () => {
+    starFilterActive = !starFilterActive;
+    document.getElementById('starFilterBtn').classList.toggle('active', starFilterActive);
     renderAllMessages();
   });
   document.getElementById('snapshotsBtn')?.addEventListener('click', openSnapshotsPanel);
