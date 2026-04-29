@@ -242,6 +242,66 @@
   .setting-select option{
     background:var(--bg-2);color:var(--fg);
   }
+
+  /* ─── Custom rich dropdown ─── built by enrichSelect() in JS,
+     replaces the native <select> open menu (which browsers limit how
+     much we can style) with a fully themed listbox. The underlying
+     <select> stays in the DOM for `change` events / form semantics
+     but is hidden via display:none. */
+  .rs-wrap{position:relative;display:inline-block;flex:1 1 auto;min-width:0;
+    vertical-align:top}
+  .rs-wrap.wide{display:block;width:100%;flex:1 1 100%}
+  /* Tighter trigger inside the sidebar's persona filter row — both
+     filter dropdowns live in the narrow sidebar so the original
+     .pf-select had flex:1 / smaller padding. The rich version mirrors
+     that. */
+  .persona-filter-row .rs-wrap{flex:1 1 0;min-width:0}
+  .persona-filter-row .rs-btn{padding:4px 26px 4px 8px;font-size:12px;
+    background-size:10px 10px;background-position:right 8px center}
+  .rs-btn{
+    width:100%;text-align:left;cursor:pointer;
+    background-color:var(--bg-3);color:var(--fg);
+    font:inherit;font-size:13px;line-height:1.4;
+    border:1px solid var(--border);border-radius:8px;
+    padding:8px 32px 8px 10px;outline:none;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'><path d='M2.5 4.5l3.5 3.5 3.5-3.5' fill='none' stroke='%239b9ba3' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+    background-repeat:no-repeat;background-position:right 10px center;
+    background-size:12px 12px;
+    transition:border-color .12s,background-color .12s,box-shadow .12s;
+  }
+  .rs-btn:hover{border-color:var(--accent);
+    background-color:rgba(255,255,255,.04)}
+  .rs-wrap.open .rs-btn,.rs-btn:focus-visible{
+    border-color:var(--accent);
+    background-color:rgba(255,255,255,.06);
+    box-shadow:0 0 0 3px rgba(245,158,11,.18);
+  }
+  .rs-btn .rs-btn-cap{display:block;font-size:11px;color:var(--fg-faint);
+    margin-top:2px;font-weight:400;line-height:1.3}
+  .rs-pop{
+    position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:80;
+    background:var(--bg-2);border:1px solid var(--border);border-radius:10px;
+    box-shadow:0 14px 40px rgba(0,0,0,.45);
+    max-height:280px;overflow-y:auto;padding:4px 0;
+    animation:rs-pop-in .14s ease-out;
+  }
+  @keyframes rs-pop-in{from{opacity:0;transform:translateY(-4px)}
+                       to{opacity:1;transform:translateY(0)}}
+  .rs-item{
+    padding:8px 12px;cursor:pointer;color:var(--fg);
+    font-size:13px;line-height:1.4;
+    display:flex;align-items:flex-start;gap:8px;flex-direction:column;
+  }
+  .rs-item .rs-item-title{font-weight:500;display:block}
+  .rs-item .rs-item-cap{font-size:11.5px;color:var(--fg-faint);
+    line-height:1.35;margin-top:2px}
+  .rs-item:hover{background:rgba(255,255,255,.05)}
+  .rs-item.active{background:rgba(255,255,255,.08)}
+  .rs-item.selected{background:rgba(245,158,11,.12);color:var(--accent)}
+  .rs-item.selected .rs-item-cap{color:rgba(245,158,11,.7)}
+  .rs-item.disabled{color:var(--fg-faint);cursor:not-allowed;opacity:.6}
+
   /* Rich text input — same treatment as the rich select. Matches
      focus glow + corner radius so the tag-edit input doesn't look
      out of place next to the buttons in the modal. */
@@ -1203,17 +1263,25 @@
   .setting-label{display:block;font-size:11px;color:var(--fg-dim);font-weight:600;
     text-transform:uppercase;letter-spacing:.06em;margin:10px 0 4px}
   .setting-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-  .setting-input,.setting-select{
+  /* Inputs in settings panels — same theme tokens as .rich-select so
+     text fields and dropdowns sit next to each other without visual
+     drift. .setting-select itself is fully covered by the global
+     .rich-select rule above; we don't duplicate the chevron / appearance
+     bits here. */
+  .setting-input{
     background:var(--bg-3);border:1px solid var(--border);color:var(--fg);
     border-radius:8px;padding:8px 10px;font:inherit;font-size:13px;outline:none;
     min-width:0;flex:1 1 220px;
     transition:border-color .15s}
-  .setting-input.wide,.setting-select.wide{width:100%;flex:1 1 100%}
-  .setting-input:focus,.setting-select:focus{border-color:var(--accent)}
-  .setting-select{cursor:pointer;appearance:none;
-    background-image:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%239b9ba3" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>');
-    background-repeat:no-repeat;background-position:right 8px center;background-size:14px;
-    padding-right:30px}
+  .setting-input.wide{width:100%;flex:1 1 100%}
+  .setting-input:focus{border-color:var(--accent)}
+  /* Width / sizing for the rich select inside settings rows. The
+     appearance/chevron/colors are inherited from the top-level rule. */
+  .setting-select{
+    min-width:0;flex:1 1 220px;font-size:13px;padding:8px 32px 8px 10px;
+    background-color:var(--bg-3);
+  }
+  .setting-select.wide{width:100%;flex:1 1 100%}
 
   /* Modal primitive (used by new-session popup + summary-done dialog). */
   .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.55);
@@ -2381,20 +2449,225 @@
   function hideBanner(){banner.classList.remove('on');}
 
   function showTyping(on){
-    typingEl.classList.toggle('on', !!on);
+    // Belt + braces: explicitly add/remove .on rather than relying on
+    // toggle()'s second arg (some browsers behave unexpectedly when the
+    // class is already in the desired state).
+    if (on) typingEl.classList.add('on');
+    else    typingEl.classList.remove('on');
     // First-message hint: only on a chat that has at most ONE message
     // so far (the user's question — no assistant reply yet). Once the
     // first reply lands, the message count grows and we hide it. Hint
-    // also vanishes when typing turns off.
+    // also vanishes when typing turns off — and we belt-and-brace it
+    // by ALSO setting display:none inline so the [hidden] attribute
+    // sticks even if some other CSS rule wins specificity.
     const hint = document.getElementById('typingHint');
     if (hint){
       const c = activeChat();
       const count = (c && c.messages) ? c.messages.length : 0;
       const hasAssistantReply = !!(c && c.messages && c.messages.some(m => m.role === 'assistant'));
       const showHint = !!on && count <= 1 && !hasAssistantReply;
-      hint.hidden = !showHint;
+      if (showHint){
+        hint.hidden = false;
+        hint.style.display = '';
+      } else {
+        hint.hidden = true;
+        hint.style.display = 'none';
+      }
     }
     if (on) followIfPinned();
+  }
+
+  // ─── Rich dropdown component ─── enrichSelect(<select>) hides the
+  // native dropdown and renders a custom listbox with full theme
+  // control, including the OPEN state (which browsers don't let us
+  // restyle on native <select>). The hidden <select> still emits
+  // `change` events so existing handlers don't need to change.
+  //
+  // Optional per-option captions: include a `data-cap` attribute on
+  // <option> and the trigger + popup will render a sub-line.
+  function enrichSelect(sel){
+    if (!sel || sel.dataset.rsEnriched) return;
+    sel.dataset.rsEnriched = '1';
+    const wide = sel.classList.contains('wide');
+    const wrap = document.createElement('div');
+    wrap.className = 'rs-wrap' + (wide ? ' wide' : '');
+    sel.parentNode.insertBefore(wrap, sel);
+    wrap.appendChild(sel);
+    sel.style.display = 'none';
+    sel.tabIndex = -1;
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'rs-btn';
+    btn.setAttribute('aria-haspopup','listbox');
+    btn.setAttribute('aria-expanded','false');
+    wrap.appendChild(btn);
+
+    const pop = document.createElement('div');
+    pop.className = 'rs-pop';
+    pop.setAttribute('role','listbox');
+    pop.hidden = true;
+    wrap.appendChild(pop);
+
+    function buildItems(){
+      pop.innerHTML = '';
+      [...sel.options].forEach((opt) => {
+        const item = document.createElement('div');
+        item.className = 'rs-item';
+        item.setAttribute('role','option');
+        item.dataset.value = opt.value;
+        if (opt.disabled) item.classList.add('disabled');
+        const t = document.createElement('span');
+        t.className = 'rs-item-title';
+        t.textContent = opt.textContent || opt.value || '';
+        item.appendChild(t);
+        const cap = opt.dataset && opt.dataset.cap;
+        if (cap){
+          const c = document.createElement('span');
+          c.className = 'rs-item-cap';
+          c.textContent = cap;
+          item.appendChild(c);
+        }
+        item.addEventListener('click', () => {
+          if (opt.disabled) return;
+          if (sel.value !== opt.value){
+            sel.value = opt.value;
+            sel.dispatchEvent(new Event('change', { bubbles:true }));
+          }
+          updateBtn();
+          markSelected();
+          close();
+          btn.focus();
+        });
+        item.addEventListener('mouseenter', () => {
+          [...pop.querySelectorAll('.rs-item.active')].forEach(x => x.classList.remove('active'));
+          item.classList.add('active');
+        });
+        pop.appendChild(item);
+      });
+      markSelected();
+    }
+    function markSelected(){
+      [...pop.querySelectorAll('.rs-item')].forEach(it => {
+        it.classList.toggle('selected', it.dataset.value === sel.value);
+      });
+    }
+    function updateBtn(){
+      // Clear children, render only the option text (no cap on the
+      // trigger — the cap is helpful in the popup list, but on the
+      // closed trigger it just makes the row look bloated).
+      btn.innerHTML = '';
+      const cur = sel.options[sel.selectedIndex];
+      const t = document.createElement('span');
+      t.className = 'rs-btn-title';
+      t.textContent = cur ? (cur.textContent || cur.value || '') :
+                            (sel.getAttribute('placeholder') || '— select —');
+      btn.appendChild(t);
+    }
+    function open(){
+      buildItems();
+      updateBtn();
+      pop.hidden = false;
+      wrap.classList.add('open');
+      btn.setAttribute('aria-expanded','true');
+      // Highlight currently selected so arrow keys start from there.
+      const selected = pop.querySelector('.rs-item.selected');
+      if (selected) selected.classList.add('active');
+      document.addEventListener('mousedown', onDocDown, true);
+      document.addEventListener('keydown', onKey, true);
+      // Scroll selected into view inside popup.
+      if (selected){
+        const top = selected.offsetTop;
+        const bot = top + selected.offsetHeight;
+        if (top < pop.scrollTop || bot > pop.scrollTop + pop.clientHeight){
+          pop.scrollTop = Math.max(0, top - 8);
+        }
+      }
+    }
+    function close(){
+      pop.hidden = true;
+      wrap.classList.remove('open');
+      btn.setAttribute('aria-expanded','false');
+      document.removeEventListener('mousedown', onDocDown, true);
+      document.removeEventListener('keydown', onKey, true);
+    }
+    function onDocDown(ev){
+      if (!wrap.contains(ev.target)) close();
+    }
+    function onKey(ev){
+      if (ev.key === 'Escape'){ ev.preventDefault(); close(); btn.focus(); return; }
+      const items = [...pop.querySelectorAll('.rs-item:not(.disabled)')];
+      if (!items.length) return;
+      let cur = items.findIndex(it => it.classList.contains('active'));
+      if (cur < 0) cur = items.findIndex(it => it.classList.contains('selected'));
+      if (ev.key === 'ArrowDown'){
+        ev.preventDefault();
+        cur = (cur + 1) % items.length;
+      } else if (ev.key === 'ArrowUp'){
+        ev.preventDefault();
+        cur = (cur - 1 + items.length) % items.length;
+      } else if (ev.key === 'Enter' || ev.key === ' '){
+        ev.preventDefault();
+        if (cur >= 0) items[cur].click();
+        return;
+      } else if (ev.key === 'Home'){
+        ev.preventDefault(); cur = 0;
+      } else if (ev.key === 'End'){
+        ev.preventDefault(); cur = items.length - 1;
+      } else {
+        return;
+      }
+      items.forEach(it => it.classList.remove('active'));
+      items[cur].classList.add('active');
+      items[cur].scrollIntoView({block:'nearest'});
+    }
+
+    btn.addEventListener('click', () => {
+      if (pop.hidden) open();
+      else close();
+    });
+    btn.addEventListener('keydown', (ev) => {
+      // Open on ArrowDown/Up/Enter/Space when popup is closed.
+      if (pop.hidden && (ev.key === 'ArrowDown' || ev.key === 'ArrowUp'
+                        || ev.key === 'Enter' || ev.key === ' ')){
+        ev.preventDefault();
+        open();
+      }
+    });
+
+    // External code that mutates the <select> (populating options
+    // dynamically, .value=...) doesn't always fire `change`. We
+    // intercept the .value setter so any programmatic write repaints
+    // the trigger button instantly, AND watch the options list with
+    // a MutationObserver so post-init populations (fillModelSelect,
+    // refreshPersonasUI, etc.) flow through the same path.
+    sel.addEventListener('change', () => {
+      updateBtn();
+      if (!pop.hidden) markSelected();
+    });
+    const protoDesc = Object.getOwnPropertyDescriptor(
+        HTMLSelectElement.prototype, 'value');
+    if (protoDesc && protoDesc.get && protoDesc.set){
+      Object.defineProperty(sel, 'value', {
+        configurable:true,
+        get(){ return protoDesc.get.call(this); },
+        set(v){
+          protoDesc.set.call(this, v);
+          updateBtn();
+          if (!pop.hidden) markSelected();
+        },
+      });
+    }
+    const mo = new MutationObserver(() => {
+      if (!pop.hidden) buildItems();
+      updateBtn();
+    });
+    mo.observe(sel, { childList:true, subtree:true,
+                       attributes:true, attributeFilter:['value','selected'] });
+
+    // Initial paint.
+    updateBtn();
+    return { rebuild: buildItems, refresh: updateBtn };
   }
 
   // ─── scroll behaviour ───
@@ -2680,7 +2953,14 @@
             body:  'The new chat will start with the last 200 messages as context.',
             confirmText: 'Fork',
           });
-          if (ok) send({type:'fork', id: sess.id, lastN: 200});
+          if (ok){
+            // Tell the spawning handler to swing THIS tab to whichever
+            // sid the server announces next. Same pattern as the new
+            // session button — without it the fork is created but our
+            // tab stays on the source chat.
+            _pendingNewSession = true;
+            send({type:'fork', id: sess.id, lastN: 200});
+          }
         });
     sep();
     opt('Delete chat', TRASH_ICON, true,
@@ -3149,7 +3429,12 @@
           body:  'The new chat will inherit every message up to and including this one.',
           confirmText: 'Fork',
         });
-        if (ok) send({type: 'fork', id: activeId, upToMsgId: msg.id});
+        if (ok){
+          // Same as the sidebar fork: claim the next spawning sid for
+          // THIS tab so the user lands on the forked chat.
+          _pendingNewSession = true;
+          send({type: 'fork', id: activeId, upToMsgId: msg.id});
+        }
       };
       bar.appendChild(forkBtn);
     }
@@ -3287,6 +3572,12 @@
 
   function renderAllMessages(){
     clearMessages();
+    // Reset the typing indicator + first-reply hint at the START of
+    // every render. Specific branches below re-enable showTyping(true)
+    // when the chat is busy with no current text. Without this reset,
+    // switching from a busy chat to any other chat would leave the
+    // hint stuck on screen forever.
+    showTyping(false);
     const c = activeChat();
     const allMsgs = c ? c.messages : [];
     const msgs = starFilterActive ? allMsgs.filter(m => m.starred) : allMsgs;
@@ -3983,6 +4274,11 @@
   // sticky to its own chat regardless of what other tabs / clients
   // are doing.
   let _initialActiveSet = false;
+  // One-shot: when THIS tab clicks "+ New session", we want our
+  // local active to swing to the new sid as soon as the server
+  // broadcasts `spawning`. Other tabs leave the flag false and
+  // therefore stay sticky to their own chat.
+  let _pendingNewSession = false;
   // Snapshot the URL hash BEFORE anything else can run — `setActive`
   // overwrites location.hash on every state event, so we'd lose the
   // user's intended target the moment the first state lands. This
@@ -3997,6 +4293,10 @@
     const b = isBusy();
     setStatus(b ? 'thinking…' : (on ? 'online' : 'disconnected'),
               b ? 'busy' : (on ? 'live' : 'warn'));
+    // If the worker is idle, kill the typing dots + first-reply hint
+    // unconditionally. The header status reverting to 'online' should
+    // always be paired with the typing indicator going away.
+    if (!b) showTyping(false);
     autosize();
   }
 
@@ -4216,6 +4516,12 @@
         c.current = null;
         if (focused){
           endStream(m.id);
+          // Safety net: once the assistant has produced a full reply,
+          // the first-reply hint is no longer relevant. Some flows
+          // (esp. tool-heavy turns where assistant_start was missed
+          // for the focused chat) leave the hint stuck — kill it
+          // here too. Cheap call, idempotent.
+          showTyping(false);
         }
         break;
       }
@@ -4318,8 +4624,27 @@
       case 'search_results': onSearchResults(m); break;
       case 'search_detail':  onSearchDetail(m);  break;
       case 'spawning':
-        // Only show the "starting…" overlay if this is the chat we're
-        // focused on. Background spawns happen invisibly.
+        // If THIS tab clicked "+ New session", swing our local active
+        // to the new sid. The server also broadcasts to every other
+        // tab — they leave _pendingNewSession=false and stay sticky.
+        if (_pendingNewSession && sid){
+          _pendingNewSession = false;
+          setActive(sid);
+          // Empty the message list immediately; renderAllMessages
+          // will paint the welcome pane until the first reply
+          // arrives via assistant_start/delta.
+          const c = getChat(sid);
+          if (c){
+            c.messages = c.messages || [];
+            c.busy = false;
+            c.current = null;
+          }
+          renderAllMessages();
+          showSpawning(true, m.title || 'starting…');
+          break;
+        }
+        // Other tabs / background spawns: only show the "starting…"
+        // overlay if this is the chat we're focused on.
         if (!sid || focused) showSpawning(true, m.title || 'starting…');
         break;
       case 'summarizing':       // legacy alias for save_started
@@ -4956,6 +5281,10 @@
     // Model is no longer a popup field — the server picks it from the
     // selected persona's `model`, falling back to the server default.
     setLastCwd(cwd);    // remember for next time, even if blank
+    // Mark this tab as the one that asked for a new session so we
+    // can swing our local active to it when the server's `spawning`
+    // event arrives. Other tabs (state-event sticky) won't follow.
+    _pendingNewSession = true;
     if (send(payload)) closeNewSession();
   });
   // Browse → server-side native folder picker (macOS Finder via osascript,
@@ -5041,6 +5370,10 @@
           if (p.disabledReason) o.title = p.disabledReason;
         }
         o.textContent = label;
+        // Pass the capability blurb into the rich dropdown via data-cap.
+        // The custom listbox renders it as a sub-line under each item.
+        const cap = PERSONA_CAPABILITIES[p.id];
+        if (cap) o.dataset.cap = cap;
         sel.appendChild(o);
       }
       // Pick: keep current if still available + enabled, else fall back
@@ -6285,6 +6618,25 @@
     el.classList.add('search-target');
     setTimeout(() => el.classList.remove('search-target'), 2600);
   }
+
+  // Replace native <select> dropdowns with the rich custom listbox.
+  // Done at script tail so all selects are present in the DOM. The
+  // hidden <select> stays in place — it still emits `change` events
+  // and `.value` setters/getters work, so existing handlers don't
+  // need to change. Dynamic option populations (fillModelSelect,
+  // sidebar filters, etc.) propagate via the MutationObserver inside
+  // enrichSelect.
+  [
+    'newSessionPersona',
+    'personaModel',
+    'searchPersonaSelect',
+    'searchTagSelect',
+    'personaFilterSelect',
+    'tagFilterSelect',
+  ].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) enrichSelect(el);
+  });
 
   connect();
 })();
