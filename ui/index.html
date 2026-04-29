@@ -1753,26 +1753,31 @@
     color:var(--fg-faint);font-size:14px;line-height:1.55}
   .exp-empty .exp-empty-hint{margin-top:6px;font-size:12px;color:var(--fg-faint)}
 
-  .exp-editor{flex:0 0 38vw;max-width:640px;min-width:300px;display:flex;
-    flex-direction:column;border-left:1px solid var(--border);background:var(--bg-2);
-    overflow:hidden}
+  /* Editor pane uses a 2-row grid (toolbar / body) so the body row gets
+     a fully-resolved height in pixels — flex:1 was getting confused
+     when the textarea + the (hidden) image both lived inside a flex
+     column, leaving the textarea sized to its intrinsic rows attribute.
+     Grid avoids that ambiguity. */
+  .exp-editor{flex:0 0 38vw;max-width:640px;min-width:300px;
+    display:grid;grid-template-rows:auto 1fr;
+    border-left:1px solid var(--border);background:var(--bg-2);
+    overflow:hidden;height:100%}
   .exp-editor[hidden]{display:none}
   .exp-editor-toolbar{display:flex;gap:6px;padding:8px 12px;
-    border-bottom:1px solid var(--border);align-items:center;flex-shrink:0}
+    border-bottom:1px solid var(--border);align-items:center}
   .exp-editor-toolbar .filepath{font-size:11.5px;color:var(--fg-faint);
     font-family:"SF Mono",Menlo,monospace;overflow:hidden;text-overflow:ellipsis;
     white-space:nowrap;flex:1;min-width:0}
-  .exp-textarea{flex:1 1 0;min-height:0;width:100%;
+  /* Body row — holds either the textarea OR the image preview,
+     stacked via position:absolute so they don't fight for space. */
+  .exp-editor-body{position:relative;min-height:0;overflow:hidden}
+  .exp-textarea{position:absolute;inset:0;width:100%;height:100%;
     background:transparent;color:var(--fg);border:none;resize:none;
     padding:12px 14px;font-family:"SF Mono",Menlo,Monaco,Consolas,monospace;
     font-size:13px;line-height:1.55;outline:none;overflow:auto;tab-size:2;
     box-sizing:border-box}
   .exp-textarea[hidden]{display:none}
-  /* Image preview lives in the same flex column. Has to honour the
-     [hidden] attribute (the UA rule loses to the class rule), otherwise
-     the empty image element still takes up height and leaves a blank
-     bottom half of the editor pane. */
-  .exp-image{display:block;margin:auto;flex:1 1 auto;min-height:0;
+  .exp-image{position:absolute;inset:0;margin:auto;display:block;
     max-width:100%;max-height:100%;padding:12px;object-fit:contain}
   .exp-image[hidden]{display:none}
 
@@ -1796,36 +1801,62 @@
   }
 
   /* ─── Native shell terminal ─── runs in the artifact side panel.
-     Uses xterm.js loaded from CDN. Wraps the terminal in a flex column
-     so the toolbar sits above and xterm fills the rest. */
-  .term-panel{display:flex;flex-direction:column;height:100%;width:100%;
-    background:#0b0b0e;color:var(--fg)}
+     Uses xterm.js loaded from CDN. Grid layout (toolbar / cwd / body)
+     so the body row gets a real pixel height — flex got confused when
+     the cwd row wrapped to two lines, leaving xterm 0px tall. */
+  .term-panel{display:grid;grid-template-rows:auto auto 1fr;
+    height:100%;width:100%;background:#0b0b0e;color:var(--fg);
+    overflow:hidden}
   .term-toolbar{display:flex;align-items:center;gap:6px;padding:7px 12px;
-    border-bottom:1px solid var(--border);background:var(--bg-2);flex-shrink:0}
-  .term-toolbar .term-cwd{flex:1;font-family:"SF Mono",Menlo,monospace;
-    font-size:11.5px;color:var(--fg-faint);overflow:hidden;
-    text-overflow:ellipsis;white-space:nowrap;min-width:0}
+    border-bottom:1px solid var(--border-soft, var(--border));
+    background:var(--bg-2);min-width:0}
   .term-toolbar .term-pid{font-size:10.5px;color:var(--fg-faint);
-    font-family:"SF Mono",Menlo,monospace;flex:0 0 auto}
+    font-family:"SF Mono",Menlo,monospace;flex:1;min-width:0;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .term-toolbar button{background:rgba(255,255,255,.04);
     border:1px solid var(--border);color:var(--fg-dim);
     border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer;
-    line-height:1.2;font-family:inherit;transition:background .12s,color .12s}
+    line-height:1.2;font-family:inherit;transition:background .12s,color .12s;
+    flex:0 0 auto}
   .term-toolbar button:hover{background:rgba(255,255,255,.09);color:var(--fg)}
   .term-toolbar button.danger:hover{background:#e2515126;color:#ff8888;
     border-color:#e25151aa}
-  .term-host{flex:1 1 0;min-height:0;width:100%;
-    padding:6px 4px 6px 8px;overflow:hidden;background:#0b0b0e}
+  /* CWD bar — own row, so the full path is always readable. Long paths
+     get a horizontal scroll instead of an ellipsis. */
+  .term-cwdbar{padding:5px 12px;background:var(--bg-2);
+    border-bottom:1px solid var(--border);
+    font-family:"SF Mono",Menlo,monospace;font-size:11.5px;
+    color:var(--fg-dim);overflow-x:auto;overflow-y:hidden;
+    white-space:nowrap;line-height:1.4;min-width:0}
+  .term-cwdbar .cwd-icon{color:var(--accent);margin-right:6px;
+    font-size:10px;letter-spacing:.05em;text-transform:uppercase;
+    font-family:inherit}
+  /* Click-anywhere-on-host = focus xterm. The host has a transparent
+     background so the xterm canvas paints through. */
+  .term-host{position:relative;min-height:0;width:100%;height:100%;
+    padding:6px 4px 6px 8px;overflow:hidden;background:#0b0b0e;
+    box-sizing:border-box;cursor:text}
   /* xterm reset — the CDN CSS leaves a default white text-selection
      that clashes with our theme; tighten it up. */
   .term-host .xterm-viewport{background:transparent !important}
   .term-host .xterm{padding:0;height:100%}
-  .term-empty{flex:1;display:grid;place-items:center;color:var(--fg-faint);
+  .term-empty{display:grid;place-items:center;color:var(--fg-faint);
     font-size:13px;padding:20px;text-align:center;line-height:1.5}
   .term-empty button{margin-top:14px;background:var(--accent);color:#000;
     border:none;border-radius:8px;padding:8px 14px;font-size:13px;
     cursor:pointer;font-weight:500}
   .term-empty button:hover{filter:brightness(1.06)}
+  /* "waiting for server" overlay shown until term_opened arrives so
+     the user knows the panel is alive (not just blank). */
+  .term-waiting{position:absolute;inset:0;display:grid;place-items:center;
+    background:rgba(11,11,14,.75);color:var(--fg-faint);
+    font-size:12.5px;padding:18px;text-align:center;line-height:1.55;
+    pointer-events:none;z-index:5}
+  .term-waiting.error{color:#ff9595;background:rgba(11,11,14,.85);
+    pointer-events:auto}
+  .term-waiting kbd{background:var(--bg-3);border:1px solid var(--border);
+    border-radius:4px;padding:1px 5px;font-size:11px;
+    font-family:"SF Mono",Menlo,monospace}
 
 </style>
 </head>
@@ -2261,9 +2292,11 @@
                 aria-label="Close editor">✕</button>
         <button class="exp-tool primary" id="expSave" title="Save (⌘S)">Save</button>
       </div>
-      <textarea class="exp-textarea" id="expTextarea"
-                placeholder="Pick a text file to edit, or double-click an image to preview." spellcheck="false"></textarea>
-      <img class="exp-image" id="expImage" alt="" hidden>
+      <div class="exp-editor-body">
+        <textarea class="exp-textarea" id="expTextarea"
+                  placeholder="Pick a text file to edit, or double-click an image to preview." spellcheck="false"></textarea>
+        <img class="exp-image" id="expImage" alt="" hidden>
+      </div>
     </aside>
   </div>
   <!-- Right-click menu, single instance reused on every right-click. -->
@@ -5066,12 +5099,20 @@
         if (m.termId !== termId) break;   // a stale response we don't track
         termPid = m.pid;
         termCwd = m.cwd;
-        const cwdEl = document.getElementById('termCwdLabel');
-        const pidEl = document.getElementById('termPidLabel');
-        if (cwdEl){
+        // Stop the "Connecting to shell…" countdown and hide the
+        // overlay — we have a live shell now.
+        if (_termWaitingTimer){ clearTimeout(_termWaitingTimer); _termWaitingTimer = null; }
+        const wait = document.getElementById('termWaiting');
+        if (wait) wait.remove();
+        const cwdPath = document.getElementById('termCwdPath');
+        const pidEl   = document.getElementById('termPidLabel');
+        if (cwdPath){
+          // Show the FULL path (the cwd row scrolls horizontally). Also
+          // surface the home-relative form as the title for tooltip.
           const home = (m.cwd || '').match(/^\/Users\/[^/]+|^\/home\/[^/]+/);
-          cwdEl.textContent = home ? (m.cwd.replace(home[0], '~')) : m.cwd;
-          cwdEl.title = m.cwd;
+          const short = home ? m.cwd.replace(home[0], '~') : m.cwd;
+          cwdPath.textContent = m.cwd || '~';
+          cwdPath.title = short || m.cwd;
         }
         if (pidEl) pidEl.textContent = 'pid ' + m.pid + ' · ' + (m.shell || 'shell');
         // Drain any output that arrived before xterm finished mounting.
@@ -5079,6 +5120,9 @@
           termInstance.write(_termOutputBuf);
           _termOutputBuf = '';
         }
+        // Make sure xterm is focused so the very first keystroke goes
+        // through. setTimeout gives the panel a frame to settle.
+        setTimeout(() => { try { termInstance && termInstance.focus(); } catch(e) {} }, 30);
         // One more fit pass now that we know the shell is alive — handles
         // the case where the panel grew between open + opened.
         _termRequestResize();
@@ -5086,6 +5130,10 @@
       }
       case 'term_output': {
         if (m.termId !== termId) break;
+        // First output also confirms shell is alive — kill the overlay.
+        const wait = document.getElementById('termWaiting');
+        if (wait) wait.remove();
+        if (_termWaitingTimer){ clearTimeout(_termWaitingTimer); _termWaitingTimer = null; }
         if (termInstance) termInstance.write(m.data || '');
         else _termOutputBuf += (m.data || '');
         break;
@@ -8007,6 +8055,7 @@
   let _termOutputBuf = '';        // buffer output that arrives before xterm is mounted
   let termPid = null;
   let termCwd = null;
+  let _termWaitingTimer = null;   // friendly "server probably needs restart" hint
 
   function _termRequestResize(){
     if (!termInstance || !termFitAddon || !termId) return;
@@ -8048,15 +8097,32 @@
     artBodyEl.innerHTML =
       '<div class="term-panel">'
       + '<div class="term-toolbar">'
-        + '<span class="term-cwd" id="termCwdLabel">— starting shell —</span>'
-        + '<span class="term-pid" id="termPidLabel"></span>'
+        + '<span class="term-pid" id="termPidLabel">— starting shell —</span>'
         + '<button id="termRestartBtn" title="Restart the shell">Restart</button>'
         + '<button id="termCloseBtn" class="danger" title="Close terminal">Close</button>'
       + '</div>'
-      + '<div class="term-host" id="termHost"></div>'
+      // CWD on its own row so the full path is visible even when long
+      // (horizontally scrollable rather than ellipsis-truncated).
+      + '<div class="term-cwdbar" id="termCwdLabel">'
+        + '<span class="cwd-icon">cwd</span><span id="termCwdPath">~</span>'
+      + '</div>'
+      + '<div class="term-host" id="termHost">'
+        + '<div class="term-waiting" id="termWaiting">'
+          + 'Connecting to shell…<br>'
+          + '<small>If this stays here for more than a few seconds, the server '
+          + 'probably needs a restart to pick up the new terminal handler.</small>'
+        + '</div>'
+      + '</div>'
       + '</div>';
     document.getElementById('termRestartBtn').onclick = restartTerminal;
     document.getElementById('termCloseBtn').onclick   = closeTermPanel;
+    // Click anywhere on the host area focuses xterm. Useful if the
+    // user clicked the artifact panel title bar / scroll area and
+    // lost focus — typing should "just work" the moment they click
+    // back on the terminal.
+    document.getElementById('termHost').addEventListener('mousedown', () => {
+      try { termInstance && termInstance.focus(); } catch(e) {}
+    });
 
     // Build the xterm Terminal once and reuse across opens.
     if (!termInstance){
@@ -8121,12 +8187,33 @@
       const seedCwd = (sess && sess.cwd) || '';
       send({type:'term_open', termId, cols: termInstance.cols,
             rows: termInstance.rows, cwd: seedCwd});
+      // If the server's term_opened event doesn't show up within a
+      // few seconds, the most likely culprit is an old server that
+      // pre-dates the term_* handlers — surface that to the user
+      // instead of leaving the panel mysteriously silent.
+      if (_termWaitingTimer) clearTimeout(_termWaitingTimer);
+      _termWaitingTimer = setTimeout(() => {
+        const wait = document.getElementById('termWaiting');
+        if (!wait) return;
+        wait.classList.add('error');
+        wait.innerHTML =
+          '<div>'
+          + '<div style="font-weight:600;color:#ff8888;margin-bottom:8px">'
+          + 'No response from the server.</div>'
+          + 'The terminal needs an updated <code>cc-server.py</code> with the '
+          + 'PTY handler.<br>Restart the server, then click <kbd>Restart</kbd> '
+          + 'in the toolbar above.'
+          + '</div>';
+      }, 4000);
     } else {
       // Reusing a session — drain any buffered output.
       if (_termOutputBuf){
         termInstance.write(_termOutputBuf);
         _termOutputBuf = '';
       }
+      // Hide the waiting overlay if it leaked from a prior init.
+      const w = document.getElementById('termWaiting');
+      if (w) w.remove();
       _termRequestResize();
     }
   }
@@ -8134,6 +8221,7 @@
   function closeTermPanel(){
     if (!termOpen) return;
     termOpen = false;
+    if (_termWaitingTimer){ clearTimeout(_termWaitingTimer); _termWaitingTimer = null; }
     document.getElementById('termBtn')?.classList.remove('active');
     document.getElementById('app').classList.remove('artifact-open');
     document.body.classList.remove('artifact-on');
@@ -8147,6 +8235,7 @@
   }
 
   function restartTerminal(){
+    if (_termWaitingTimer){ clearTimeout(_termWaitingTimer); _termWaitingTimer = null; }
     if (termId){
       send({type:'term_close', termId});
     }
@@ -8156,6 +8245,15 @@
     termId = null;
     termPid = null;
     termCwd = null;
+    // Re-show the waiting overlay so the user sees that we're trying again.
+    const host = document.getElementById('termHost');
+    if (host && !document.getElementById('termWaiting')){
+      const wait = document.createElement('div');
+      wait.id = 'termWaiting';
+      wait.className = 'term-waiting';
+      wait.innerHTML = 'Restarting shell…';
+      host.appendChild(wait);
+    }
     setTimeout(() => {
       if (!termOpen) return;
       termId = (crypto && crypto.randomUUID) ? crypto.randomUUID()
@@ -8164,6 +8262,18 @@
       const seedCwd = (sess && sess.cwd) || '';
       send({type:'term_open', termId,
             cols: termInstance.cols, rows: termInstance.rows, cwd: seedCwd});
+      _termWaitingTimer = setTimeout(() => {
+        const wait = document.getElementById('termWaiting');
+        if (!wait) return;
+        wait.classList.add('error');
+        wait.innerHTML =
+          '<div>'
+          + '<div style="font-weight:600;color:#ff8888;margin-bottom:8px">'
+          + 'No response from the server.</div>'
+          + 'Restart <code>cc-server.py</code>, then click <kbd>Restart</kbd> '
+          + 'again.'
+          + '</div>';
+      }, 4000);
     }, 120);
   }
 
