@@ -2615,14 +2615,22 @@
     item.appendChild(titleBlock); item.appendChild(actions);
 
     item.onclick = ev => {
+      // Modifier-click (Cmd/Ctrl/Shift) or middle-click → let the
+      // browser handle "open in new tab/window" natively. We must
+      // NOT preventDefault here AND must NOT WebSocket-switch the
+      // current tab; both behaviors would leak across tabs.
+      if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey || ev.button !== 0) return;
       if (ev.target.closest('button.act')) return;
       if (!title.readOnly) return;     // mid-rename — don't switch
-      // Suppress the <a href="#chat="> default — we use WS switch
-      // instead of a real navigation. Right-click / cmd-click still
-      // get the native "Open in new tab" affordance because we leave
-      // the href intact.
+      // Plain left-click: suppress the <a href="#chat="> default —
+      // we use WS switch instead of a real navigation. Also flip
+      // local active immediately (tab-sticky model: state broadcasts
+      // from the server no longer drive our active, so we must do
+      // it here).
       ev.preventDefault();
       if (s.id === activeId) { closeDrawer(); return; }
+      setActive(s.id);
+      renderAllMessages();
       send({type:'switch', id: s.id});
       closeDrawer();
     };
@@ -3936,26 +3944,53 @@
     }
   }
 
-  // Resolve current location.hash to a session id, if any.
-  function resolveHashChat(){
-    const h = location.hash || '';
-    const m = h.match(/^#chat=(.+)$/);
-    if (!m) return null;
-    const needle = decodeURIComponent(m[1]).toLowerCase();
+  // Resolve a chatId/sid-prefix to a full sid against the current
+  // sessions list. `needle` defaults to whatever's in location.hash;
+  // callers can pass an explicit value (we capture the original hash
+  // at script-init below — `setActive` overwrites location.hash on
+  // the first state event, so by the time we'd read it back it's
+  // already been clobbered to whichever chat the server reports as
+  // active. The snapshot survives that overwrite).
+  function resolveHashChat(needle){
+    if (needle == null){
+      const h = location.hash || '';
+      const m = h.match(/^#chat=(.+)$/);
+      if (!m) return null;
+      needle = decodeURIComponent(m[1]).toLowerCase();
+    }
+    needle = (needle || '').toLowerCase();
+    if (!needle) return null;
     for (const s of sessions){
       if ((s.chatId || '').toLowerCase() === needle) return s.id;
       if (s.id.startsWith(needle)) return s.id;
     }
     return null;
   }
-  // Browser back/forward → switch to the chat in the new hash.
+  // Browser back/forward → switch this tab only.
   window.addEventListener('popstate', () => {
     const want = resolveHashChat();
-    if (want && want !== activeId) send({type:'switch', id: want});
+    if (want && want !== activeId){
+      setActive(want);
+      renderAllMessages();
+      send({type:'switch', id: want});
+    }
   });
   // One-shot flag: only consume the hash once on initial load so
   // subsequent state events don't keep forcing the user back.
   let _hashHandled = false;
+  // True after we've picked our LOCAL active for this tab. Subsequent
+  // state events from the server don't override it — each tab is
+  // sticky to its own chat regardless of what other tabs / clients
+  // are doing.
+  let _initialActiveSet = false;
+  // Snapshot the URL hash BEFORE anything else can run — `setActive`
+  // overwrites location.hash on every state event, so we'd lose the
+  // user's intended target the moment the first state lands. This
+  // value is consumed once in the state-handler's first-load branch.
+  const _initialHashChat = (() => {
+    const m = (location.hash || '').match(/^#chat=(.+)$/);
+    return m ? decodeURIComponent(m[1]).toLowerCase() : null;
+  })();
 
   function setOnline(on){
     online = on;
@@ -3991,10 +4026,14 @@
           refreshRoutinesUI();
         }
         cwd  = m.cwd || cwd;
-        const newActive = m.activeId;
-        const c = getChat(newActive) || {messages: [], busy: false, current: null, unread: false, turnHadAssistant: false};
-        // Server is authoritative for the active chat's persisted log.
-        c.messages = m.messages || [];
+        const reportedActive = m.activeId;
+        // Cache the messages of whichever session the server reports
+        // as active. We keep this even if it isn't OUR tab's active —
+        // it's useful when the user later switches their tab there.
+        if (reportedActive){
+          const sc = getChat(reportedActive);
+          sc.messages = m.messages || [];
+        }
         // Sync each running worker's busy + current into our per-chat
         // buffers so background streams resume cleanly when we switch.
         const workers = m.workers || {};
@@ -4014,45 +4053,74 @@
           }
         }
         showSpawning(false);
+        renderSessions();
+        refreshSaveButton();
 
-        const sessForCwd = sessions.find(s => s.id === newActive);
+        if (!_initialActiveSet){
+          // FIRST state event for this tab — pick our local active.
+          // URL hash wins over server's reportedActive so right-click
+          // → "Open in new tab" lands on the right chat.
+          _initialActiveSet = true;
+          let target = reportedActive;
+          if (_initialHashChat){
+            const want = resolveHashChat(_initialHashChat);
+            if (want) target = want;
+          }
+          _hashHandled = true;
+          if (target){
+            const ac = getChat(target);
+            if (ac && ac.unread){ ac.unread = false; }
+            setActive(target);
+            renderAllMessages();
+            // If our chosen target differs from the server's active,
+            // ask the server to load it. Other tabs' state handler
+            // is sticky — they won't follow this broadcast.
+            if (target !== reportedActive){
+              send({type:'switch', id: target});
+            }
+          }
+          showTyping(false);
+          setOnline(true);
+          hideBanner();
+          focusComposer();
+          // Empty-shell shortcut: zero chats AND no active id → ask
+          // the server for a default new chat so the user can start
+          // typing immediately.
+          if (sessions.length === 0 && !reportedActive && !autoCreatePending){
+            autoCreatePending = true;
+            // First-load on a fresh install: Aurora (orchestrator).
+            send({type:'new', persona:'aurora'});
+          } else if (sessions.length > 0){
+            autoCreatePending = false;
+          }
+        } else {
+          // SUBSEQUENT state event — do NOT follow the server's
+          // reportedActive. Each tab is sticky to its own chat. This
+          // is what stops one tab's switch from yanking every other
+          // tab to the same chat.
+          //
+          // We DO refresh the message list for OUR active if its
+          // buffer just got an update — most commonly the case where
+          // we just sent {type:'switch'} for our local active and
+          // the server is now broadcasting that session's full log.
+          setOnline(true);
+          hideBanner();
+          if (reportedActive === activeId){
+            renderAllMessages();
+          }
+          if (sessions.length === 0 && !reportedActive && !autoCreatePending){
+            autoCreatePending = true;
+            send({type:'new', persona:'aurora'});
+          } else if (sessions.length > 0){
+            autoCreatePending = false;
+          }
+        }
+
+        // cwd label always reflects OUR tab's active, not server's.
+        const sessForCwd = sessions.find(s => s.id === activeId);
         const showCwd = (sessForCwd && sessForCwd.cwd) || cwd;
         cwdLabel.textContent = showCwd.replace(/^\/Users\/[^/]+/, '~') || '~';
         cwdLabel.title = 'Working directory: ' + showCwd;
-        // Switching focus → clear the unread indicator for the chat we
-        // just brought to the front.
-        if (newActive){
-          const ac = getChat(newActive);
-          if (ac && ac.unread){ ac.unread = false; }
-        }
-        setActive(newActive);
-        renderAllMessages();         // also restores in-progress stream
-        showTyping(false);
-        setOnline(true);
-        hideBanner();
-        focusComposer();
-        // Empty-shell shortcut: zero chats AND no active id → ask the
-        // server for a default new chat so the user can start typing
-        // immediately (no separate "New chat" click). Reset the
-        // in-flight flag once the server has populated `sessions`.
-        if (sessions.length === 0 && !newActive && !autoCreatePending){
-          autoCreatePending = true;
-          // First-load on a fresh install: spawn Aurora (the
-          // orchestrator) so the user lands inside the persona who
-          // delegates work to specialists, not a generic Claudy chat.
-          // The server falls back to whichever persona id is set as
-          // default if 'aurora' isn't present.
-          send({type:'new', persona:'aurora'});
-        } else if (sessions.length > 0){
-          autoCreatePending = false;
-          // First state event with sessions present — honour any
-          // #chat=<chatId> hash the user pasted into the address bar.
-          if (!_hashHandled){
-            _hashHandled = true;
-            const want = resolveHashChat();
-            if (want && want !== activeId) send({type:'switch', id: want});
-          }
-        }
         break;
       }
       case 'sessions': sessions = m.sessions || []; renderSessions(); refreshHeaderTitle(); refreshSaveButton(); break;
