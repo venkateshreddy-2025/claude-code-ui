@@ -66,14 +66,19 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import fcntl
 import json
 import mimetypes
 import os
+import pty
 import re
+import select
 import signal
 import shutil
+import struct
 import subprocess
 import sys
+import termios
 import time
 import urllib.error
 import urllib.parse
@@ -4075,6 +4080,166 @@ def _fs_safe(raw: str) -> Path | None:
         return None
 
 
+# ───────────────────  Native OS terminal (PTY)  ───────────────────
+# Each browser tab can open one or more shell sessions on demand.
+# These run the user's $SHELL (zsh/bash/...) under a real PTY — they
+# are NOT the claude worker. Used for "open a terminal" affordance in
+# the side panel so the user can run arbitrary commands.
+#
+# Lifecycle:
+#   client → {term_open, cols, rows, cwd?}     creates pty + forks shell
+#   server → {term_opened, termId, pid}
+#   server ↔ {term_input,data}/{term_output,data}  bidi i/o
+#   client → {term_resize, cols, rows}        TIOCSWINSZ
+#   client → {term_close}                     kill shell
+#   server → {term_closed, exitCode}          shell exited (any reason)
+#
+# We bind sessions per-websocket so a tab disconnect kills its shells.
+class TermSession:
+    # ws → { termId: TermSession }
+    _per_ws: dict = {}
+
+    def __init__(self, ws, term_id, master_fd, pid, shell):
+        self.ws         = ws
+        self.term_id    = term_id
+        self.master_fd  = master_fd
+        self.pid        = pid
+        self.shell      = shell
+        self.closed     = False
+        self._read_buf  = b''
+        self._loop      = asyncio.get_event_loop()
+        self._loop.add_reader(master_fd, self._on_readable)
+
+    # ── factory ──
+    @classmethod
+    async def spawn(cls, ws, term_id, cols, rows, cwd):
+        # Walk-back to a working shell. /bin/sh is a final fallback.
+        shell = (os.environ.get('SHELL') or '/bin/zsh')
+        if not Path(shell).is_file():
+            for cand in ('/bin/zsh', '/bin/bash', '/bin/sh'):
+                if Path(cand).is_file():
+                    shell = cand
+                    break
+        # pty.fork() handles fork + exec setup. Returns (pid, master_fd).
+        pid, master_fd = pty.fork()
+        if pid == 0:
+            # ── child ──
+            try:
+                os.chdir(cwd)
+            except Exception:
+                pass
+            # Friendly env for interactive shells (colors, bracketed
+            # paste, prompt).
+            env = os.environ.copy()
+            env['TERM'] = env.get('TERM', 'xterm-256color')
+            env['COLORTERM'] = 'truecolor'
+            env['LANG']  = env.get('LANG', 'en_US.UTF-8')
+            env['LC_ALL'] = env.get('LC_ALL', 'en_US.UTF-8')
+            # Login-style invocation so the user's rc files run.
+            try:
+                os.execvpe(shell, [shell, '-l'], env)
+            except Exception:
+                os._exit(127)
+        # ── parent ──
+        # Make master non-blocking so reads never stall the event loop.
+        flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
+        fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+        sess = cls(ws, term_id, master_fd, pid, shell)
+        sess.resize(cols, rows)
+        cls._per_ws.setdefault(ws, {})[term_id] = sess
+        return sess
+
+    @classmethod
+    def lookup(cls, ws, term_id):
+        return cls._per_ws.get(ws, {}).get(term_id)
+
+    @classmethod
+    def kill_all_for(cls, ws):
+        """Called when a websocket disconnects — clean up every shell
+        owned by that tab so they don't leak as orphan processes."""
+        for sess in list(cls._per_ws.get(ws, {}).values()):
+            sess.kill()
+        cls._per_ws.pop(ws, None)
+
+    # ── ops ──
+    def write(self, data):
+        if self.closed: return
+        if not data: return
+        try:
+            os.write(self.master_fd, data.encode('utf-8', errors='replace'))
+        except OSError:
+            self._teardown(reason='write failed')
+
+    def resize(self, cols, rows):
+        if self.closed: return
+        try:
+            packed = struct.pack('HHHH', rows, cols, 0, 0)
+            fcntl.ioctl(self.master_fd, termios.TIOCSWINSZ, packed)
+        except OSError as e:
+            log(f'term resize failed: {e}')
+
+    def kill(self):
+        if self.closed: return
+        try:
+            os.kill(self.pid, signal.SIGHUP)
+        except ProcessLookupError:
+            pass
+        self._teardown(reason='killed')
+
+    # ── read loop ──
+    def _on_readable(self):
+        if self.closed: return
+        try:
+            chunk = os.read(self.master_fd, 4096)
+        except BlockingIOError:
+            return
+        except OSError:
+            self._teardown(reason='eof')
+            return
+        if not chunk:
+            self._teardown(reason='eof')
+            return
+        # The shell may emit non-utf-8 bytes; replace silently rather
+        # than dropping the message.
+        data = chunk.decode('utf-8', errors='replace')
+        try:
+            asyncio.create_task(self.ws.send(json.dumps({
+                'type':'term_output', 'termId': self.term_id, 'data': data,
+            })))
+        except Exception as e:
+            log(f'term send failed: {e}')
+
+    def _teardown(self, reason=''):
+        if self.closed: return
+        self.closed = True
+        try:
+            self._loop.remove_reader(self.master_fd)
+        except Exception:
+            pass
+        # Reap if still around so we get a real exit code.
+        exit_code = None
+        try:
+            wpid, status = os.waitpid(self.pid, os.WNOHANG)
+            if wpid:
+                exit_code = (os.WEXITSTATUS(status)
+                             if os.WIFEXITED(status) else None)
+        except ChildProcessError:
+            pass
+        try: os.close(self.master_fd)
+        except Exception: pass
+        # Notify the client (best-effort — ws may already be closed).
+        try:
+            asyncio.create_task(self.ws.send(json.dumps({
+                'type':'term_closed', 'termId': self.term_id,
+                'exitCode': exit_code, 'reason': reason,
+            })))
+        except Exception:
+            pass
+        # Drop from registry.
+        per = self._per_ws.get(self.ws, {})
+        per.pop(self.term_id, None)
+
+
 # ───────────────────  HTTP static + uploads  ───────────────────
 def _safe_join(root: Path, rel: str) -> Path | None:
     """Resolve `rel` under `root`, refusing any path that escapes `root`."""
@@ -4594,6 +4759,56 @@ async def handle_client(websocket):
                     except Exception as e:
                         await websocket.send(json.dumps(
                             {'type':'error','message':f'rename failed: {e}'}))
+            # ── Native shell terminal (PTY-backed, NOT claude) ──
+            # The user wants a real OS terminal in the side panel —
+            # totally separate from the claude worker. Each WS client
+            # gets a private dict of TermSession objects keyed by termId.
+            elif cmd == 'term_open':
+                term_id = msg.get('termId') or str(uuid.uuid4())
+                cols = int(msg.get('cols') or 80)
+                rows = int(msg.get('rows') or 24)
+                req_cwd = msg.get('cwd') or ''
+                # Resolve cwd: explicit > active session's cwd > $HOME.
+                start_cwd = None
+                if req_cwd:
+                    p = Path(req_cwd).expanduser()
+                    if p.is_dir(): start_cwd = str(p.resolve())
+                if not start_cwd and state.active_id:
+                    sess = load_session(state.active_id)
+                    if sess and sess.get('cwd'):
+                        sp = Path(sess['cwd'])
+                        if sp.is_dir(): start_cwd = str(sp)
+                if not start_cwd:
+                    start_cwd = str(Path.home())
+                try:
+                    sess = await TermSession.spawn(
+                        websocket, term_id, cols, rows, start_cwd)
+                    await websocket.send(json.dumps({
+                        'type': 'term_opened', 'termId': term_id,
+                        'pid': sess.pid, 'cwd': start_cwd,
+                        'shell': sess.shell,
+                    }))
+                except Exception as e:
+                    log(f'term_open failed: {e}')
+                    await websocket.send(json.dumps({
+                        'type': 'error',
+                        'message': f'terminal open failed: {e}'}))
+            elif cmd == 'term_input':
+                term_id = msg.get('termId') or ''
+                data = msg.get('data') or ''
+                sess = TermSession.lookup(websocket, term_id)
+                if sess:
+                    sess.write(data)
+            elif cmd == 'term_resize':
+                term_id = msg.get('termId') or ''
+                sess = TermSession.lookup(websocket, term_id)
+                if sess:
+                    sess.resize(int(msg.get('cols') or 80),
+                                int(msg.get('rows') or 24))
+            elif cmd == 'term_close':
+                term_id = msg.get('termId') or ''
+                sess = TermSession.lookup(websocket, term_id)
+                if sess: sess.kill()
             elif cmd == 'state':
                 await websocket.send(json.dumps(state_snapshot()))
             elif cmd == 'stop':
@@ -4608,6 +4823,10 @@ async def handle_client(websocket):
         log('client error:', e)
     finally:
         state.clients.discard(websocket)
+        # Kill any PTY sessions owned by this tab so we don't leak
+        # orphan shells when a browser tab closes / reloads.
+        try: TermSession.kill_all_for(websocket)
+        except Exception as e: log(f'term cleanup failed: {e}')
         log(f'client disconnected (remaining: {len(state.clients)})')
 
 

@@ -25,6 +25,13 @@
      so it's available when the inline app script below runs and renders the
      initial chat history. ~50 KB, served from a CDN with a 1-week cache. -->
 <script src="https://cdn.jsdelivr.net/npm/marked@13.0.3/marked.min.js"></script>
+<!-- xterm.js — backs the in-app native shell (terminal panel). Pulled
+     from jsdelivr so we don't need a bundler; FitAddon makes the
+     terminal grow to the container and emit cols/rows for the PTY. -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.9.0/lib/xterm-addon-web-links.min.js"></script>
 <style>
   /* ───── reset + tokens ───── */
   *,*::before,*::after{box-sizing:border-box}
@@ -1755,10 +1762,19 @@
   .exp-editor-toolbar .filepath{font-size:11.5px;color:var(--fg-faint);
     font-family:"SF Mono",Menlo,monospace;overflow:hidden;text-overflow:ellipsis;
     white-space:nowrap;flex:1;min-width:0}
-  .exp-textarea{flex:1;background:transparent;color:var(--fg);border:none;resize:none;
+  .exp-textarea{flex:1 1 0;min-height:0;width:100%;
+    background:transparent;color:var(--fg);border:none;resize:none;
     padding:12px 14px;font-family:"SF Mono",Menlo,Monaco,Consolas,monospace;
-    font-size:13px;line-height:1.55;outline:none;overflow:auto;tab-size:2}
-  .exp-image{display:block;margin:auto;max-width:100%;max-height:100%;padding:12px}
+    font-size:13px;line-height:1.55;outline:none;overflow:auto;tab-size:2;
+    box-sizing:border-box}
+  .exp-textarea[hidden]{display:none}
+  /* Image preview lives in the same flex column. Has to honour the
+     [hidden] attribute (the UA rule loses to the class rule), otherwise
+     the empty image element still takes up height and leaves a blank
+     bottom half of the editor pane. */
+  .exp-image{display:block;margin:auto;flex:1 1 auto;min-height:0;
+    max-width:100%;max-height:100%;padding:12px;object-fit:contain}
+  .exp-image[hidden]{display:none}
 
   /* Right-click context menu — single floating element, position is set
      in JS based on click coordinates. */
@@ -1778,6 +1794,39 @@
       border-top:1px solid var(--border)}
     .exp-body{flex-direction:column}
   }
+
+  /* ─── Native shell terminal ─── runs in the artifact side panel.
+     Uses xterm.js loaded from CDN. Wraps the terminal in a flex column
+     so the toolbar sits above and xterm fills the rest. */
+  .term-panel{display:flex;flex-direction:column;height:100%;width:100%;
+    background:#0b0b0e;color:var(--fg)}
+  .term-toolbar{display:flex;align-items:center;gap:6px;padding:7px 12px;
+    border-bottom:1px solid var(--border);background:var(--bg-2);flex-shrink:0}
+  .term-toolbar .term-cwd{flex:1;font-family:"SF Mono",Menlo,monospace;
+    font-size:11.5px;color:var(--fg-faint);overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap;min-width:0}
+  .term-toolbar .term-pid{font-size:10.5px;color:var(--fg-faint);
+    font-family:"SF Mono",Menlo,monospace;flex:0 0 auto}
+  .term-toolbar button{background:rgba(255,255,255,.04);
+    border:1px solid var(--border);color:var(--fg-dim);
+    border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer;
+    line-height:1.2;font-family:inherit;transition:background .12s,color .12s}
+  .term-toolbar button:hover{background:rgba(255,255,255,.09);color:var(--fg)}
+  .term-toolbar button.danger:hover{background:#e2515126;color:#ff8888;
+    border-color:#e25151aa}
+  .term-host{flex:1 1 0;min-height:0;width:100%;
+    padding:6px 4px 6px 8px;overflow:hidden;background:#0b0b0e}
+  /* xterm reset — the CDN CSS leaves a default white text-selection
+     that clashes with our theme; tighten it up. */
+  .term-host .xterm-viewport{background:transparent !important}
+  .term-host .xterm{padding:0;height:100%}
+  .term-empty{flex:1;display:grid;place-items:center;color:var(--fg-faint);
+    font-size:13px;padding:20px;text-align:center;line-height:1.5}
+  .term-empty button{margin-top:14px;background:var(--accent);color:#000;
+    border:none;border-radius:8px;padding:8px 14px;font-size:13px;
+    cursor:pointer;font-weight:500}
+  .term-empty button:hover{filter:brightness(1.06)}
+
 </style>
 </head>
 <body>
@@ -1900,6 +1949,17 @@
           <line x1="16" y1="13" x2="8" y2="13"/>
           <line x1="16" y1="17" x2="8" y2="17"/>
           <polyline points="10 9 9 9 8 9"/>
+        </svg>
+      </button>
+      <button class="header-action" id="termBtn" type="button"
+              title="Open native shell — runs your $SHELL, not claude"
+              aria-label="Open terminal">
+        <!-- Classic prompt glyph: ">_" inside a window -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="4" width="18" height="16" rx="2"/>
+          <polyline points="7 10 10 12 7 14"/>
+          <line x1="12" y1="15" x2="17" y2="15"/>
         </svg>
       </button>
       <button class="header-action" id="snapshotsBtn" type="button"
@@ -4197,6 +4257,11 @@
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape'){
       if (lightbox.classList.contains('on')) { closeLightbox(); return; }
+      // While the terminal is focused, Esc is a real key (vim, less,
+      // anything that uses ESC for mode-switching) — let xterm receive
+      // it instead of yanking the panel closed.
+      const host = document.getElementById('termHost');
+      if (host && host.contains(document.activeElement)) return;
       if (document.body.classList.contains('artifact-on')) { closeArtifact(); return; }
     }
   });
@@ -4324,6 +4389,14 @@
 
   function openArtifact(art){
     if (!art || !art.url) return;
+    // The artifact panel is shared with the notes editor + terminal.
+    // Folding those before painting an artifact keeps state coherent
+    // (otherwise notesOpen / termOpen stay true while the artifact
+    // sits in the same container, and the toolbar buttons keep
+    // their `.active` highlight). try/catch guards the TDZ window
+    // before the notes/term modules are initialised.
+    try { if (notesOpen) closeNotesPanel(); } catch (e) {}
+    try { if (termOpen)  closeTermPanel();  } catch (e) {}
     // Dedup by URL — if it's already in the stack just activate it.
     const existing = artifactStack.find(x => x.url === art.url);
     if (existing){
@@ -4340,6 +4413,13 @@
   }
 
   function closeArtifact(){
+    // The artifact panel is shared with the notes editor (and any
+    // future side-panel-hosted views like the terminal). Route to the
+    // mode-specific cleanup so toolbar highlight + per-mode state get
+    // reset, otherwise the notes / terminal button stays "active"
+    // even though the panel is gone.
+    try { if (notesOpen) { closeNotesPanel(); return; } } catch (e) {}
+    try { if (termOpen)  { closeTermPanel();  return; } } catch (e) {}
     document.body.classList.remove('artifact-on');
     document.getElementById('app').classList.remove('artifact-open');
     if (artPanel) artPanel.setAttribute('aria-hidden', 'true');
@@ -4981,6 +5061,48 @@
         }
         break;
       }
+      // ─── native shell terminal ───
+      case 'term_opened': {
+        if (m.termId !== termId) break;   // a stale response we don't track
+        termPid = m.pid;
+        termCwd = m.cwd;
+        const cwdEl = document.getElementById('termCwdLabel');
+        const pidEl = document.getElementById('termPidLabel');
+        if (cwdEl){
+          const home = (m.cwd || '').match(/^\/Users\/[^/]+|^\/home\/[^/]+/);
+          cwdEl.textContent = home ? (m.cwd.replace(home[0], '~')) : m.cwd;
+          cwdEl.title = m.cwd;
+        }
+        if (pidEl) pidEl.textContent = 'pid ' + m.pid + ' · ' + (m.shell || 'shell');
+        // Drain any output that arrived before xterm finished mounting.
+        if (termInstance && _termOutputBuf){
+          termInstance.write(_termOutputBuf);
+          _termOutputBuf = '';
+        }
+        // One more fit pass now that we know the shell is alive — handles
+        // the case where the panel grew between open + opened.
+        _termRequestResize();
+        break;
+      }
+      case 'term_output': {
+        if (m.termId !== termId) break;
+        if (termInstance) termInstance.write(m.data || '');
+        else _termOutputBuf += (m.data || '');
+        break;
+      }
+      case 'term_closed': {
+        if (m.termId !== termId) break;
+        if (termInstance){
+          const code = (m.exitCode == null) ? '?' : m.exitCode;
+          termInstance.write('\r\n\x1b[2m[shell exited (' + code + ')'
+            + (m.reason ? ' — ' + m.reason : '')
+            + ' · click Restart to spawn a new one]\x1b[0m\r\n');
+        }
+        // Don't auto-close the panel — user may want to read the last
+        // output. They can hit Restart or Close.
+        break;
+      }
+
       case 'fs_written':
       case 'fs_created':
       case 'fs_deleted':
@@ -7121,6 +7243,10 @@
       setTimeout(hideBanner, 2500);
       return;
     }
+    // The artifact panel hosts at most one mode at a time. If the
+    // terminal is currently in there, fold it away first so its state
+    // doesn't pretend to be live while the notes UI is on top.
+    try { if (termOpen) closeTermPanel(); } catch(e) {}
     notesSessionId = activeId;
     notesOpen = true;
     notesPreviewMode = false;
@@ -7864,6 +7990,185 @@
       e.preventDefault();
       expSaveOpenFile();
     }
+  });
+
+  // ─────────────────────────────────────────────────────────────────
+  //  Native shell terminal (NOT claude — runs your $SHELL via PTY)
+  // ─────────────────────────────────────────────────────────────────
+  // The terminal lives in the artifact panel as a separate "mode".
+  // xterm.js is loaded via CDN at the top of the document; we lazy-init
+  // the actual Terminal object the first time the user opens the panel
+  // (so the cost is paid only when needed).
+  let termOpen = false;
+  let termId = null;
+  let termInstance = null;        // xterm.js Terminal
+  let termFitAddon = null;
+  let termResizeObs = null;
+  let _termOutputBuf = '';        // buffer output that arrives before xterm is mounted
+  let termPid = null;
+  let termCwd = null;
+
+  function _termRequestResize(){
+    if (!termInstance || !termFitAddon || !termId) return;
+    try {
+      termFitAddon.fit();
+      const cols = termInstance.cols, rows = termInstance.rows;
+      send({type:'term_resize', termId, cols, rows});
+    } catch(e) { /* xterm not yet sized */ }
+  }
+
+  function openTerminalPanel(){
+    // Bail with a friendly hint if xterm.js failed to load (offline / CDN block).
+    if (typeof Terminal === 'undefined'){
+      showBanner('Terminal library failed to load — check your network.');
+      setTimeout(hideBanner, 3500);
+      return;
+    }
+    // If already open, just bring it to front.
+    if (termOpen){
+      const app = document.getElementById('app');
+      app.classList.add('artifact-open');
+      document.body.classList.add('artifact-on');
+      artPanel.setAttribute('aria-hidden', 'false');
+      setTimeout(_termRequestResize, 30);
+      return;
+    }
+    // Same single-mode rule as openNotesPanel — if notes are showing
+    // in the panel, fold them first.
+    try { if (notesOpen) closeNotesPanel(); } catch(e) {}
+    termOpen = true;
+    document.getElementById('termBtn').classList.add('active');
+    const app = document.getElementById('app');
+    app.classList.add('artifact-open');
+    document.body.classList.add('artifact-on');
+    artPanel.setAttribute('aria-hidden', 'false');
+    artTitleEl.textContent = 'Terminal';
+    artMetaEl.textContent  = '';
+    if (artTabsEl){ artTabsEl.innerHTML = ''; artTabsEl.style.display = 'none'; }
+    artBodyEl.innerHTML =
+      '<div class="term-panel">'
+      + '<div class="term-toolbar">'
+        + '<span class="term-cwd" id="termCwdLabel">— starting shell —</span>'
+        + '<span class="term-pid" id="termPidLabel"></span>'
+        + '<button id="termRestartBtn" title="Restart the shell">Restart</button>'
+        + '<button id="termCloseBtn" class="danger" title="Close terminal">Close</button>'
+      + '</div>'
+      + '<div class="term-host" id="termHost"></div>'
+      + '</div>';
+    document.getElementById('termRestartBtn').onclick = restartTerminal;
+    document.getElementById('termCloseBtn').onclick   = closeTermPanel;
+
+    // Build the xterm Terminal once and reuse across opens.
+    if (!termInstance){
+      termInstance = new Terminal({
+        fontFamily: '"SF Mono","JetBrains Mono",Menlo,Monaco,Consolas,monospace',
+        fontSize: 13, lineHeight: 1.2, cursorBlink: true,
+        scrollback: 5000, allowProposedApi: true,
+        theme: {
+          background: '#0b0b0e',
+          foreground: '#e6e6ea',
+          cursor: '#f59e0b',
+          cursorAccent: '#0b0b0e',
+          selectionBackground: 'rgba(245,158,11,0.32)',
+          black: '#1c1c20',  red: '#ff6b6b',
+          green: '#7ed99b',  yellow: '#f5a524',
+          blue: '#5c9eff',   magenta: '#ff8ad6',
+          cyan: '#7cd1ff',   white: '#d8d8de',
+          brightBlack: '#5d5d66',  brightRed: '#ff8888',
+          brightGreen: '#a3e9b6',  brightYellow: '#f7c168',
+          brightBlue: '#85b4ff',   brightMagenta: '#ffacdf',
+          brightCyan: '#a4dcff',   brightWhite: '#ffffff',
+        },
+      });
+      try {
+        // FitAddon auto-sizes the term to its container.
+        termFitAddon = new FitAddon.FitAddon();
+        termInstance.loadAddon(termFitAddon);
+      } catch(e) { console.warn('FitAddon load failed:', e); }
+      try {
+        termInstance.loadAddon(new WebLinksAddon.WebLinksAddon((ev, uri) => {
+          // Open links in a new browser tab on click.
+          window.open(uri, '_blank', 'noopener');
+        }));
+      } catch(e) { /* web-links optional */ }
+      // Send keystrokes upstream.
+      termInstance.onData(data => {
+        if (termId) send({type:'term_input', termId, data});
+      });
+      termInstance.onResize(({cols, rows}) => {
+        if (termId) send({type:'term_resize', termId, cols, rows});
+      });
+    }
+    const host = document.getElementById('termHost');
+    termInstance.open(host);
+    setTimeout(() => {
+      try { termFitAddon && termFitAddon.fit(); } catch(e) {}
+      termInstance.focus();
+    }, 30);
+    // Re-fit on panel resize (the artifact panel is draggable).
+    if (!termResizeObs){
+      termResizeObs = new ResizeObserver(() => _termRequestResize());
+    }
+    try { termResizeObs.observe(host); } catch(e) {}
+    // Open a new shell session if we don't have one. (If we already
+    // have a termId from a prior open in the same tab session, we reuse
+    // it — useful when toggling the panel.)
+    if (!termId){
+      termId = (crypto && crypto.randomUUID) ? crypto.randomUUID()
+              : 'term-' + Math.random().toString(36).slice(2);
+      // Seed cwd: prefer the active chat's cwd, else server picks $HOME.
+      const sess = sessions.find(s => s.id === activeId);
+      const seedCwd = (sess && sess.cwd) || '';
+      send({type:'term_open', termId, cols: termInstance.cols,
+            rows: termInstance.rows, cwd: seedCwd});
+    } else {
+      // Reusing a session — drain any buffered output.
+      if (_termOutputBuf){
+        termInstance.write(_termOutputBuf);
+        _termOutputBuf = '';
+      }
+      _termRequestResize();
+    }
+  }
+
+  function closeTermPanel(){
+    if (!termOpen) return;
+    termOpen = false;
+    document.getElementById('termBtn')?.classList.remove('active');
+    document.getElementById('app').classList.remove('artifact-open');
+    document.body.classList.remove('artifact-on');
+    artPanel.setAttribute('aria-hidden', 'true');
+    artTitleEl.textContent = 'Artifact';
+    artBodyEl.innerHTML = '';
+    // Stop the resize observer (it's bound to the host element which
+    // we just blew away) but keep the xterm Terminal so re-opening is
+    // instant — its scrollback survives.
+    if (termResizeObs){ try { termResizeObs.disconnect(); } catch(e) {} }
+  }
+
+  function restartTerminal(){
+    if (termId){
+      send({type:'term_close', termId});
+    }
+    if (termInstance){
+      termInstance.write('\r\n\x1b[33m[restarting shell...]\x1b[0m\r\n');
+    }
+    termId = null;
+    termPid = null;
+    termCwd = null;
+    setTimeout(() => {
+      if (!termOpen) return;
+      termId = (crypto && crypto.randomUUID) ? crypto.randomUUID()
+              : 'term-' + Math.random().toString(36).slice(2);
+      const sess = sessions.find(s => s.id === activeId);
+      const seedCwd = (sess && sess.cwd) || '';
+      send({type:'term_open', termId,
+            cols: termInstance.cols, rows: termInstance.rows, cwd: seedCwd});
+    }, 120);
+  }
+
+  document.getElementById('termBtn')?.addEventListener('click', () => {
+    if (termOpen) closeTermPanel(); else openTerminalPanel();
   });
 
   // Replace native <select> dropdowns with the rich custom listbox.
