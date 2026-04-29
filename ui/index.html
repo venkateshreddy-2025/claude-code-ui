@@ -1616,6 +1616,168 @@
   /* mobile drawer overlay */
   .drawer-bg{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:25;display:none}
   .drawer-bg.on{display:block;animation:fadein .15s}
+
+  /* ─── Notes panel ─── reuses #artifactPanel as a host. The notes
+     editor lives inside #artBody when artBodyMode === 'notes'. */
+  .notes-editor{display:flex;flex-direction:column;height:100%;gap:0}
+  .notes-toolbar{display:flex;gap:6px;padding:8px 12px;border-bottom:1px solid var(--border);
+    align-items:center;flex-shrink:0;flex-wrap:wrap;background:var(--bg-2)}
+  .notes-toolbar button{background:rgba(255,255,255,.04);border:1px solid var(--border);
+    color:var(--fg-dim);border-radius:6px;padding:5px 11px;font-size:12px;cursor:pointer;
+    line-height:1.2;font-family:inherit;transition:background .12s,color .12s,border-color .12s}
+  .notes-toolbar button:hover{background:rgba(255,255,255,.09);color:var(--fg)}
+  .notes-toolbar button.primary{background:var(--accent);color:#000;border-color:var(--accent);
+    font-weight:500}
+  .notes-toolbar button.primary:hover{filter:brightness(1.06)}
+  .notes-toolbar .spacer{flex:1}
+  .notes-toolbar .fmt{padding:4px 8px;min-width:30px;text-align:center;font-size:12px}
+  .notes-toolbar .tb-sep{width:1px;height:20px;background:var(--border);
+    margin:0 3px;flex-shrink:0}
+  .notes-textarea{flex:1;background:transparent;color:var(--fg);border:none;resize:none;
+    padding:14px 16px;font-family:"SF Mono",Menlo,Monaco,Consolas,monospace;
+    font-size:13px;line-height:1.6;outline:none;overflow-y:auto;min-height:0}
+  .notes-preview{flex:1;overflow-y:auto;padding:14px 18px;color:var(--fg);
+    font-size:14px;line-height:1.6;min-height:0}
+  .notes-preview h1,.notes-preview h2,.notes-preview h3{
+    color:var(--accent);margin:18px 0 8px;letter-spacing:-.005em}
+  .notes-preview a{color:var(--accent)}
+  .notes-preview code{background:var(--code-bg);border:1px solid var(--border);
+    padding:1px 5px;border-radius:4px;font-size:12.5px;
+    font-family:"SF Mono",Menlo,monospace}
+  .notes-preview pre{background:var(--code-bg);border:1px solid var(--border);
+    padding:10px 12px;border-radius:8px;overflow-x:auto;font-size:13px}
+  .notes-preview ul,.notes-preview ol{padding-left:22px}
+  .notes-preview hr{border:0;border-top:1px solid var(--border);margin:14px 0}
+  .notes-saved-flash{color:var(--accent);font-size:12px;
+    animation:notes-fade 1.6s ease forwards;margin-left:6px;font-weight:500}
+  @keyframes notes-fade{0%{opacity:0;transform:translateY(-2px)}
+                        15%{opacity:1;transform:translateY(0)}
+                        70%{opacity:1}100%{opacity:0}}
+
+  /* ─── File explorer ─── full-screen overlay, OS-style icon grid. */
+  #explorerSheet{position:fixed;inset:0;z-index:58;background:var(--bg);
+    display:none;flex-direction:column;animation:fadein .12s}
+  #explorerSheet.on{display:flex}
+  .exp-header{display:flex;align-items:center;gap:6px;padding:10px 14px;
+    border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg-2)}
+  .exp-header h3{margin:0 8px 0 4px;font-size:14px;font-weight:600;color:var(--fg);
+    flex:0 0 auto;letter-spacing:.01em}
+  .exp-header-icon{width:18px;height:18px;color:var(--accent);flex:0 0 18px}
+  .exp-header .exp-spacer{flex:1}
+  .exp-tool{flex:0 0 auto;border:1px solid transparent;background:transparent;
+    color:var(--fg-dim);border-radius:6px;cursor:pointer;
+    height:30px;min-width:30px;padding:0 9px;display:inline-flex;align-items:center;
+    justify-content:center;gap:5px;font-size:12.5px;font-family:inherit;
+    transition:background .12s,color .12s,border-color .12s}
+  .exp-tool svg{width:15px;height:15px;flex:0 0 15px}
+  .exp-tool:hover{background:rgba(255,255,255,.06);color:var(--fg)}
+  .exp-tool:disabled{opacity:.35;cursor:not-allowed;pointer-events:none}
+  .exp-tool.primary{background:var(--accent);color:#000;font-weight:500;
+    border-color:var(--accent)}
+  .exp-tool.primary:hover{filter:brightness(1.06);background:var(--accent)}
+  .exp-tool-close:hover{background:#e2515126;color:#ff8888}
+
+  .exp-breadcrumb{display:flex;align-items:center;gap:0;padding:8px 16px;
+    font-size:12.5px;color:var(--fg-dim);border-bottom:1px solid var(--border);
+    flex-shrink:0;flex-wrap:wrap;background:var(--bg-2);min-height:34px;
+    overflow-x:auto}
+  .exp-breadcrumb .crumb{cursor:pointer;padding:3px 8px;border-radius:5px;
+    transition:background .1s,color .1s;white-space:nowrap;color:var(--fg-dim);
+    font-weight:500}
+  .exp-breadcrumb .crumb:hover{background:rgba(255,255,255,.06);color:var(--fg)}
+  .exp-breadcrumb .crumb.current{color:var(--fg);background:rgba(255,255,255,.04)}
+  .exp-breadcrumb .crumb-sep{color:var(--fg-faint);user-select:none;font-weight:400;
+    margin:0 1px}
+
+  .exp-body{display:flex;flex:1;overflow:hidden;min-height:0}
+  .exp-grid{flex:1;overflow-y:auto;padding:14px 18px;display:grid;
+    grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;
+    align-content:start}
+  /* List-view variant — rows of icon + name + size + mtime. Toggled by
+     `expViewMode === 'list'` adding .exp-list to the grid. */
+  .exp-grid.exp-list{display:block;padding:6px 0}
+  .exp-entry{display:flex;flex-direction:column;align-items:center;
+    gap:6px;padding:10px 6px;border-radius:8px;cursor:pointer;
+    transition:background .1s,transform .08s;
+    user-select:none;text-align:center;border:1px solid transparent}
+  .exp-entry:hover{background:rgba(255,255,255,.05)}
+  .exp-entry.active{background:rgba(245,158,11,.10);border-color:rgba(245,158,11,.35)}
+  .exp-entry.active .exp-name{color:var(--accent)}
+  .exp-entry .exp-icon{width:48px;height:48px;display:grid;place-items:center;
+    flex:0 0 48px;color:var(--accent);position:relative}
+  .exp-entry .exp-icon svg{width:46px;height:46px}
+  .exp-entry.is-image .exp-icon{width:54px;height:54px;flex:0 0 54px}
+  .exp-entry.is-image .exp-thumb{width:54px;height:54px;border-radius:8px;
+    object-fit:cover;border:1px solid var(--border);background:var(--bg-3)}
+  .exp-entry .exp-name{font-size:12.5px;color:var(--fg);line-height:1.3;
+    word-break:break-word;max-width:100%;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+    overflow:hidden;font-weight:500}
+  .exp-entry .exp-meta{font-size:10.5px;color:var(--fg-faint);line-height:1.2}
+  /* List view rows */
+  .exp-grid.exp-list .exp-entry{flex-direction:row;align-items:center;
+    text-align:left;padding:6px 14px;border-radius:0;gap:10px;
+    border:none;border-bottom:1px solid var(--border-soft, var(--border))}
+  .exp-grid.exp-list .exp-entry .exp-icon{width:24px;height:24px;flex:0 0 24px}
+  .exp-grid.exp-list .exp-entry .exp-icon svg{width:22px;height:22px}
+  .exp-grid.exp-list .exp-entry.is-image .exp-icon,
+  .exp-grid.exp-list .exp-entry.is-image .exp-thumb{width:24px;height:24px;
+    flex:0 0 24px}
+  .exp-grid.exp-list .exp-entry .exp-name{font-size:13px;flex:1;
+    -webkit-line-clamp:1;line-clamp:1;white-space:nowrap;text-overflow:ellipsis;
+    display:block;overflow:hidden}
+  .exp-grid.exp-list .exp-entry .exp-meta{flex:0 0 auto;font-size:11.5px}
+  .exp-grid.exp-list .exp-entry.active{border-color:transparent;
+    background:rgba(245,158,11,.08)}
+  /* Per-extension accent colours so the icon grid reads like Finder.
+     `data-kind` is set in JS based on extension. */
+  .exp-entry[data-kind="folder"] .exp-icon{color:#5c9eff}
+  .exp-entry[data-kind="md"]     .exp-icon{color:#7cd1ff}
+  .exp-entry[data-kind="json"]   .exp-icon{color:#f0a96b}
+  .exp-entry[data-kind="code"]   .exp-icon{color:#a47ef0}
+  .exp-entry[data-kind="text"]   .exp-icon{color:#a3a3ad}
+  .exp-entry[data-kind="image"]  .exp-icon{color:#ff8a8a}
+  .exp-entry[data-kind="audio"]  .exp-icon{color:#80d49b}
+  .exp-entry[data-kind="video"]  .exp-icon{color:#ff9bd0}
+  .exp-entry[data-kind="archive"] .exp-icon{color:#d4a35a}
+  .exp-entry[data-kind="binary"] .exp-icon{color:var(--fg-faint)}
+
+  .exp-empty{grid-column:1/-1;text-align:center;padding:60px 20px;
+    color:var(--fg-faint);font-size:14px;line-height:1.55}
+  .exp-empty .exp-empty-hint{margin-top:6px;font-size:12px;color:var(--fg-faint)}
+
+  .exp-editor{flex:0 0 38vw;max-width:640px;min-width:300px;display:flex;
+    flex-direction:column;border-left:1px solid var(--border);background:var(--bg-2);
+    overflow:hidden}
+  .exp-editor[hidden]{display:none}
+  .exp-editor-toolbar{display:flex;gap:6px;padding:8px 12px;
+    border-bottom:1px solid var(--border);align-items:center;flex-shrink:0}
+  .exp-editor-toolbar .filepath{font-size:11.5px;color:var(--fg-faint);
+    font-family:"SF Mono",Menlo,monospace;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap;flex:1;min-width:0}
+  .exp-textarea{flex:1;background:transparent;color:var(--fg);border:none;resize:none;
+    padding:12px 14px;font-family:"SF Mono",Menlo,Monaco,Consolas,monospace;
+    font-size:13px;line-height:1.55;outline:none;overflow:auto;tab-size:2}
+  .exp-image{display:block;margin:auto;max-width:100%;max-height:100%;padding:12px}
+
+  /* Right-click context menu — single floating element, position is set
+     in JS based on click coordinates. */
+  .exp-ctxmenu{position:fixed;z-index:90;min-width:170px;
+    background:var(--bg-2);border:1px solid var(--border);border-radius:8px;
+    box-shadow:0 14px 40px rgba(0,0,0,.45);padding:4px 0;
+    animation:rs-pop-in .12s ease-out;overflow:hidden}
+  .exp-ctxmenu .ctx-item{padding:7px 14px;cursor:pointer;font-size:13px;
+    color:var(--fg);display:flex;align-items:center;gap:10px;white-space:nowrap}
+  .exp-ctxmenu .ctx-item:hover{background:rgba(255,255,255,.06)}
+  .exp-ctxmenu .ctx-item.danger{color:#ff8888}
+  .exp-ctxmenu .ctx-item.danger:hover{background:#e2515122}
+  .exp-ctxmenu .ctx-sep{height:1px;background:var(--border);margin:4px 0}
+
+  @media(max-width:780px){
+    .exp-editor{flex:0 0 100%;max-width:100%;border-left:none;
+      border-top:1px solid var(--border)}
+    .exp-body{flex-direction:column}
+  }
 </style>
 </head>
 <body>
@@ -1651,6 +1813,16 @@
     <div class="side-resize" id="sideResize" title="Drag to resize"></div>
     <div class="side-bottom">
       <span class="cwd" id="cwdLabel" title="Working directory for new chats">~</span>
+      <button class="icon-btn" id="explorerBtn"
+              title="Browse runtime files (knowledge, skills, configs, chat folders)"
+              aria-label="Open file explorer">
+        <!-- Folder-stack glyph — distinguishes the explorer from the
+             single-file artifact panel. -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+        </svg>
+      </button>
       <button class="icon-btn" id="settingsBtn" title="Theme + settings" aria-label="Settings">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
           stroke-linecap="round" stroke-linejoin="round">
@@ -1715,6 +1887,19 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
              stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+        </svg>
+      </button>
+      <button class="header-action" id="notesBtn" type="button"
+              title="Per-chat notes — claude can write here via |NOTE| marker"
+              aria-label="Open chat notes">
+        <!-- Notepad with lines glyph -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+          <line x1="16" y1="13" x2="8" y2="13"/>
+          <line x1="16" y1="17" x2="8" y2="17"/>
+          <polyline points="10 9 9 9 8 9"/>
         </svg>
       </button>
       <button class="header-action" id="snapshotsBtn" type="button"
@@ -1931,6 +2116,98 @@
   </div>
   <img id="lightboxImg" alt="">
   <div class="lb-meta" id="lightboxMeta"></div>
+</div>
+
+<!-- File explorer (full-screen overlay).
+     Icons are svg-based and per-extension so the panel feels like a
+     native browser/Finder rather than the bare emoji tree from the
+     reference impl. Right-click on any entry opens a context menu
+     (Rename, Duplicate, Delete). Double-click opens a folder or file. -->
+<div id="explorerSheet" aria-hidden="true">
+  <div class="exp-header">
+    <svg class="exp-header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+    </svg>
+    <h3>File Explorer</h3>
+    <button class="exp-tool" id="expBack" title="Back" aria-label="Back">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="15 18 9 12 15 6"/>
+      </svg>
+    </button>
+    <button class="exp-tool" id="expForward" title="Forward" aria-label="Forward">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="9 6 15 12 9 18"/>
+      </svg>
+    </button>
+    <button class="exp-tool" id="expUp" title="Up one folder" aria-label="Up">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="18 15 12 9 6 15"/>
+      </svg>
+    </button>
+    <button class="exp-tool" id="expRefresh" title="Refresh" aria-label="Refresh">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="23 4 23 10 17 10"/>
+        <path d="M20.49 15A9 9 0 1 1 18 5.27L23 10"/>
+      </svg>
+    </button>
+    <span class="exp-spacer"></span>
+    <button class="exp-tool" id="expViewToggle"
+            title="Switch between grid and list view" aria-label="Toggle view">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round">
+        <line x1="3" y1="6" x2="21" y2="6"/>
+        <line x1="3" y1="12" x2="21" y2="12"/>
+        <line x1="3" y1="18" x2="21" y2="18"/>
+      </svg>
+    </button>
+    <button class="exp-tool" id="expNewFile" title="New file (⌘N)" aria-label="New file">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <polyline points="14 2 14 8 20 8"/>
+        <line x1="12" y1="14" x2="12" y2="18"/>
+        <line x1="10" y1="16" x2="14" y2="16"/>
+      </svg>
+    </button>
+    <button class="exp-tool" id="expNewDir" title="New folder (⇧⌘N)" aria-label="New folder">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round">
+        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+        <line x1="12" y1="11" x2="12" y2="17"/>
+        <line x1="9" y1="14" x2="15" y2="14"/>
+      </svg>
+    </button>
+    <button class="exp-tool exp-tool-close" id="expClose" title="Close (Esc)" aria-label="Close">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round">
+        <line x1="18" y1="6" x2="6" y2="18"/>
+        <line x1="6" y1="6" x2="18" y2="18"/>
+      </svg>
+    </button>
+  </div>
+  <div class="exp-breadcrumb" id="expBreadcrumb"></div>
+  <div class="exp-body">
+    <div class="exp-grid" id="expTree"></div>
+    <aside class="exp-editor" id="expEditorPane" hidden>
+      <div class="exp-editor-toolbar">
+        <span class="filepath" id="expFilePath"></span>
+        <span class="exp-spacer"></span>
+        <button class="exp-tool" id="expEditorClose" title="Close editor"
+                aria-label="Close editor">✕</button>
+        <button class="exp-tool primary" id="expSave" title="Save (⌘S)">Save</button>
+      </div>
+      <textarea class="exp-textarea" id="expTextarea"
+                placeholder="Pick a text file to edit, or double-click an image to preview." spellcheck="false"></textarea>
+      <img class="exp-image" id="expImage" alt="" hidden>
+    </aside>
+  </div>
+  <!-- Right-click menu, single instance reused on every right-click. -->
+  <div class="exp-ctxmenu" id="expCtxMenu" hidden></div>
 </div>
 
 <!-- Search overlay (full-screen SERP across all chats) -->
@@ -4233,6 +4510,21 @@
     if (location.hash !== '#chat=' + tag){
       try { history.replaceState(null, '', target); } catch(e) {}
     }
+    // Notes panel is per-chat. If it's open and the user just switched
+    // chats, repoint it at the new chat's NOTES.md without forcing a
+    // full close+reopen (auto-save first to protect any unsaved edits).
+    // Wrapped in try/catch because notes-state vars are declared later
+    // in the script — referencing them before init via TDZ would throw.
+    try {
+      if (notesOpen && id && id !== notesSessionId){
+        if (notesDirty){ try { saveNotes(true); } catch(e) {} }
+        notesSessionId = id;
+        notesDirty = false;
+        const ta = document.getElementById('notesTextarea');
+        if (ta) ta.value = '';
+        send({type:'notes_get', sessionId: id});
+      }
+    } catch(e) { /* notes module not yet initialised */ }
   }
 
   // Resolve a chatId/sid-prefix to a full sid against the current
@@ -4623,6 +4915,101 @@
       }
       case 'search_results': onSearchResults(m); break;
       case 'search_detail':  onSearchDetail(m);  break;
+
+      // ─── per-chat notes ───
+      case 'notes': {
+        // Server response to notes_get. Only paint if the panel is
+        // open and the response matches the chat we asked about (the
+        // user might have switched chats while the read was in flight).
+        const ta = document.getElementById('notesTextarea');
+        if (ta && notesOpen && m.sessionId === notesSessionId){
+          ta.value = m.content || '';
+          notesDirty = false;
+          // Refresh preview if we're currently in preview mode.
+          if (notesPreviewMode){
+            const prev = document.getElementById('notesPreview');
+            if (prev){
+              prev.innerHTML = md(ta.value || '_(empty)_');
+              try { injectCodeCopyButtons(prev); } catch(e) {}
+            }
+          }
+        }
+        break;
+      }
+      case 'notes_updated': {
+        // Claude appended via |NOTE| marker. Auto-refresh if open AND
+        // the user hasn't been editing — never clobber unsaved work.
+        if (notesOpen && m.sessionId === notesSessionId && !notesDirty){
+          send({type:'notes_get', sessionId: notesSessionId});
+        }
+        break;
+      }
+
+      // ─── file explorer ───
+      case 'fs_listing': {
+        const sheet = document.getElementById('explorerSheet');
+        if (!sheet || !sheet.classList.contains('on')) break;
+        // First listing reveals the root path (server-canonical CWD_ROOT).
+        if (!expRootPath) expRootPath = m.path;
+        if (!expCurrentPath || expCurrentPath === ''){
+          expCurrentPath = m.path;
+        }
+        // If the listing is for a folder we're not currently showing
+        // (race with rapid clicks), ignore.
+        if (m.path !== expCurrentPath) break;
+        expCurrentEntries = m.entries || [];
+        expRenderBreadcrumb();
+        expRenderTree();
+        expUpdateNavButtons();
+        if (m.error) showBanner('fs_list: ' + m.error);
+        break;
+      }
+      case 'fs_content': {
+        // Three callers reach here:
+        //   1) Normal "open file in editor" — populate textarea.
+        //   2) Duplicate flow — write content to the duplicate path.
+        if (_expDuplicatePending && m.path === _expDuplicatePending.source){
+          const target = _expDuplicatePending.target;
+          _expDuplicatePending = null;
+          send({type:'fs_write', path: target, content: m.content || ''});
+          _expRefreshAfter = expCurrentPath;
+          break;
+        }
+        const ta = document.getElementById('expTextarea');
+        if (ta && expOpenFile === m.path){
+          ta.value = m.error ? ('// error: ' + m.error) : (m.content || '');
+        }
+        break;
+      }
+      case 'fs_written':
+      case 'fs_created':
+      case 'fs_deleted':
+      case 'fs_renamed': {
+        // Any mutation under our current folder → refresh the listing.
+        const sheet = document.getElementById('explorerSheet');
+        if (!sheet || !sheet.classList.contains('on')) break;
+        // After a delete the editor pane may now be pointing at a file
+        // that no longer exists.
+        if (m.type === 'fs_deleted' && expOpenFile === m.path){
+          expOpenFile = null;
+          expOpenFileEntry = null;
+          document.getElementById('expEditorPane').hidden = true;
+          document.getElementById('expFilePath').textContent = '';
+          document.getElementById('expTextarea').value = '';
+        }
+        if (m.type === 'fs_renamed' && expOpenFile === m.oldPath){
+          expOpenFile = m.newPath;
+          const newName = (m.newPath || '').split('/').pop();
+          document.getElementById('expFilePath').textContent = newName || '';
+          if (expOpenFileEntry) expOpenFileEntry.name = newName;
+        }
+        // _expRefreshAfter remembers which folder to relist (set by the
+        // create flows so the new entry shows immediately).
+        const target = _expRefreshAfter || expCurrentPath;
+        _expRefreshAfter = null;
+        send({type:'fs_list', path: target});
+        break;
+      }
       case 'spawning':
         // If THIS tab clicked "+ New session", swing our local active
         // to the new sid. The server also broadcasts to every other
@@ -6618,6 +7005,866 @@
     el.classList.add('search-target');
     setTimeout(() => el.classList.remove('search-target'), 2600);
   }
+
+  // ─────────────────────────────────────────────────────────────────
+  //  Per-chat notes panel
+  // ─────────────────────────────────────────────────────────────────
+  // Notes live in `<cwd>/NOTES.md`. The notes panel reuses the existing
+  // artifact side panel (#artifactPanel) — we just paint different
+  // contents into #artBody. The server `notes_get` / `notes_save` /
+  // `notes_updated` WS messages are wired in the main message router.
+  let notesOpen = false;
+  let notesDirty = false;
+  let notesSessionId = null;
+  let notesFullscreen = false;
+  let notesPreviewMode = false;
+
+  function applyNotesFormat(ta, fmt){
+    if (!ta) return;
+    const s = ta.selectionStart, e = ta.selectionEnd;
+    const val = ta.value;
+    const sel = val.slice(s, e);
+    const before = val.slice(0, s), after = val.slice(e);
+    const lineStart = before.lastIndexOf('\n') + 1;
+    const atLineStart = s === lineStart;
+    let ins = '', cursor = -1;
+
+    // Multi-line list selection — prefix every line.
+    if ((fmt === 'ul' || fmt === 'ol') && sel.includes('\n')){
+      const lines = sel.split('\n');
+      ins = lines.map((ln, i) => {
+        const trimmed = ln.replace(/^(\d+\.\s|-\s)/, '');
+        return fmt === 'ol' ? `${i+1}. ${trimmed}` : `- ${trimmed}`;
+      }).join('\n');
+      ta.value = before + ins + after;
+      ta.selectionStart = s; ta.selectionEnd = s + ins.length;
+      ta.focus(); notesDirty = true; return;
+    }
+
+    switch (fmt){
+      case 'h1':  ins = (atLineStart ? '' : '\n') + '# '   + (sel || 'Heading'); break;
+      case 'h2':  ins = (atLineStart ? '' : '\n') + '## '  + (sel || 'Heading'); break;
+      case 'h3':  ins = (atLineStart ? '' : '\n') + '### ' + (sel || 'Heading'); break;
+      case 'bold':   ins = '**' + (sel || 'bold text') + '**'; break;
+      case 'italic': ins = '_'  + (sel || 'italic text') + '_'; break;
+      case 'code':
+        if (sel.includes('\n')) ins = '```\n' + (sel || 'code') + '\n```';
+        else ins = '`' + (sel || 'code') + '`';
+        break;
+      case 'ul':  ins = (atLineStart ? '' : '\n') + '- '  + (sel || ''); cursor = s + (atLineStart ? 2 : 3); break;
+      case 'ol':  ins = (atLineStart ? '' : '\n') + '1. ' + (sel || ''); cursor = s + (atLineStart ? 3 : 4); break;
+      case 'link': ins = '[' + (sel || 'text') + '](url)'; break;
+      case 'hr':  ins = (atLineStart ? '' : '\n') + '---\n'; break;
+      default: return;
+    }
+    ta.value = before + ins + after;
+    ta.selectionStart = ta.selectionEnd = cursor >= 0 ? cursor : s + ins.length;
+    ta.focus();
+    notesDirty = true;
+  }
+
+  // Auto-continue list markers on Enter, exit list on double-Enter.
+  function setupNotesKeyHandler(ta){
+    ta.addEventListener('keydown', ev => {
+      if (ev.key !== 'Enter' || ev.shiftKey || ev.metaKey || ev.ctrlKey) return;
+      const val = ta.value;
+      const pos = ta.selectionStart;
+      const lineStart = val.lastIndexOf('\n', pos - 1) + 1;
+      const currentLine = val.slice(lineStart, pos);
+
+      const bulletMatch = currentLine.match(/^(\s*)([-*])\s(.*)$/);
+      const numMatch    = currentLine.match(/^(\s*)(\d+)\.\s(.*)$/);
+
+      if (bulletMatch){
+        const [, indent, marker, content] = bulletMatch;
+        if (!content.trim()){
+          // Empty list item — exit the list.
+          ev.preventDefault();
+          ta.value = val.slice(0, lineStart) + '\n' + val.slice(pos);
+          ta.selectionStart = ta.selectionEnd = lineStart + 1;
+          notesDirty = true; return;
+        }
+        ev.preventDefault();
+        const ins = '\n' + indent + marker + ' ';
+        ta.value = val.slice(0, pos) + ins + val.slice(pos);
+        ta.selectionStart = ta.selectionEnd = pos + ins.length;
+        notesDirty = true; return;
+      }
+      if (numMatch){
+        const [, indent, num, content] = numMatch;
+        if (!content.trim()){
+          ev.preventDefault();
+          ta.value = val.slice(0, lineStart) + '\n' + val.slice(pos);
+          ta.selectionStart = ta.selectionEnd = lineStart + 1;
+          notesDirty = true; return;
+        }
+        ev.preventDefault();
+        const next = parseInt(num, 10) + 1;
+        const ins = '\n' + indent + next + '. ';
+        ta.value = val.slice(0, pos) + ins + val.slice(pos);
+        ta.selectionStart = ta.selectionEnd = pos + ins.length;
+        notesDirty = true; return;
+      }
+    });
+    // Cmd/Ctrl-S → save without switching focus.
+    ta.addEventListener('keydown', ev => {
+      if ((ev.metaKey || ev.ctrlKey) && (ev.key === 's' || ev.key === 'S')){
+        ev.preventDefault();
+        saveNotes();
+      }
+    });
+  }
+
+  function openNotesPanel(){
+    if (!activeId){
+      showBanner('Open a chat first — notes are per-chat.');
+      setTimeout(hideBanner, 2500);
+      return;
+    }
+    notesSessionId = activeId;
+    notesOpen = true;
+    notesPreviewMode = false;
+    document.getElementById('notesBtn').classList.add('active');
+    const app = document.getElementById('app');
+    app.classList.add('artifact-open');
+    document.body.classList.add('artifact-on');
+    artPanel.setAttribute('aria-hidden', 'false');
+    artTitleEl.textContent = 'Notes';
+    artMetaEl.textContent  = '';
+    if (artTabsEl) { artTabsEl.innerHTML = ''; artTabsEl.style.display = 'none'; }
+    artBodyEl.innerHTML =
+      '<div class="notes-editor">'
+      + '<div class="notes-toolbar">'
+        + '<button class="primary" id="notesSaveBtn" title="Save (⌘S)">Save</button>'
+        + '<button id="notesCancelBtn" title="Close panel">Close</button>'
+        + '<span class="tb-sep"></span>'
+        + '<button class="fmt" data-fmt="h1" title="Heading 1">H1</button>'
+        + '<button class="fmt" data-fmt="h2" title="Heading 2">H2</button>'
+        + '<button class="fmt" data-fmt="h3" title="Heading 3">H3</button>'
+        + '<span class="tb-sep"></span>'
+        + '<button class="fmt" data-fmt="bold" title="Bold"><b>B</b></button>'
+        + '<button class="fmt" data-fmt="italic" title="Italic"><i>I</i></button>'
+        + '<button class="fmt" data-fmt="code" title="Code">&lt;/&gt;</button>'
+        + '<span class="tb-sep"></span>'
+        + '<button class="fmt" data-fmt="ul" title="Bullet list">• List</button>'
+        + '<button class="fmt" data-fmt="ol" title="Numbered list">1. List</button>'
+        + '<button class="fmt" data-fmt="link" title="Link">🔗</button>'
+        + '<button class="fmt" data-fmt="hr" title="Horizontal rule">―</button>'
+        + '<span class="spacer"></span>'
+        + '<button id="notesViewToggle" title="Toggle markdown preview">Preview</button>'
+        + '<button id="notesFullscreen" title="Expand panel to full width">⤢ Wide</button>'
+      + '</div>'
+      + '<textarea class="notes-textarea" id="notesTextarea" spellcheck="false"'
+        + ' placeholder="Write your notes here. Markdown supported. Claude can also append via |NOTE| markers."></textarea>'
+      + '<div class="notes-preview" id="notesPreview" hidden></div>'
+      + '</div>';
+    send({type:'notes_get', sessionId: activeId});
+    document.getElementById('notesSaveBtn').onclick   = saveNotes;
+    document.getElementById('notesCancelBtn').onclick = closeNotesPanel;
+    document.getElementById('notesViewToggle').onclick = toggleNotesPreview;
+    document.getElementById('notesFullscreen').onclick = toggleNotesFullscreen;
+    const ta = document.getElementById('notesTextarea');
+    ta.oninput = () => { notesDirty = true; };
+    setupNotesKeyHandler(ta);
+    artBodyEl.querySelectorAll('.notes-toolbar .fmt').forEach(btn => {
+      btn.onclick = () => applyNotesFormat(ta, btn.dataset.fmt);
+    });
+    setTimeout(() => ta.focus(), 60);
+  }
+
+  function closeNotesPanel(){
+    if (!notesOpen) return;
+    if (notesDirty){
+      // Auto-save on close so the user never loses notes — don't gate
+      // on a confirm dialog (notes is meant to be a low-friction pad).
+      saveNotes(/*silent*/true);
+    }
+    notesOpen = false;
+    notesDirty = false;
+    notesSessionId = null;
+    notesPreviewMode = false;
+    document.getElementById('notesBtn').classList.remove('active');
+    if (notesFullscreen){
+      document.getElementById('app').style.removeProperty('--art-w');
+      notesFullscreen = false;
+    }
+    document.getElementById('app').classList.remove('artifact-open');
+    document.body.classList.remove('artifact-on');
+    artPanel.setAttribute('aria-hidden', 'true');
+    artTitleEl.textContent = 'Artifact';
+    artBodyEl.innerHTML = '';
+  }
+
+  function saveNotes(silent){
+    const ta = document.getElementById('notesTextarea');
+    if (!ta || !notesSessionId) return;
+    send({type:'notes_save', sessionId: notesSessionId, content: ta.value});
+    notesDirty = false;
+    if (silent) return;
+    const toolbar = ta.closest('.notes-editor')?.querySelector('.notes-toolbar');
+    if (!toolbar) return;
+    // Drop any prior flash so we don't stack them.
+    toolbar.querySelectorAll('.notes-saved-flash').forEach(x => x.remove());
+    const flash = document.createElement('span');
+    flash.className = 'notes-saved-flash';
+    flash.textContent = '✓ Saved';
+    toolbar.appendChild(flash);
+    setTimeout(() => flash.remove(), 1700);
+  }
+
+  function toggleNotesPreview(){
+    const ta = document.getElementById('notesTextarea');
+    const prev = document.getElementById('notesPreview');
+    const btn = document.getElementById('notesViewToggle');
+    if (!ta || !prev) return;
+    notesPreviewMode = prev.hidden;  // if currently hidden, we're entering preview
+    if (notesPreviewMode){
+      prev.innerHTML = md(ta.value || '_(empty)_');
+      try { injectCodeCopyButtons(prev); } catch(e) {}
+      prev.hidden = false;
+      ta.hidden = true;
+      btn.textContent = 'Edit';
+    } else {
+      prev.hidden = true;
+      ta.hidden = false;
+      btn.textContent = 'Preview';
+      setTimeout(() => ta.focus(), 30);
+    }
+  }
+
+  function toggleNotesFullscreen(){
+    notesFullscreen = !notesFullscreen;
+    const app = document.getElementById('app');
+    const btn = document.getElementById('notesFullscreen');
+    if (notesFullscreen){
+      app.style.setProperty('--art-w', '100vw');
+      if (btn) btn.textContent = '⤡ Collapse';
+    } else {
+      app.style.removeProperty('--art-w');
+      if (btn) btn.textContent = '⤢ Wide';
+    }
+  }
+
+  document.getElementById('notesBtn')?.addEventListener('click', () => {
+    if (notesOpen) closeNotesPanel(); else openNotesPanel();
+  });
+
+  // ─────────────────────────────────────────────────────────────────
+  //  File explorer
+  // ─────────────────────────────────────────────────────────────────
+  // Browses everything under CWD_ROOT (runtime/). Server enforces the
+  // sandbox via _fs_safe; the UI just renders what comes back from
+  // fs_listing / fs_content. Icons are per-extension SVGs (Finder vibe)
+  // and right-click opens a Rename / Duplicate / Delete menu.
+  let expRootPath = null;        // absolute fs path of CWD_ROOT (learned on first listing)
+  let expCurrentPath = '';        // absolute fs path of the folder we're showing
+  let expCurrentEntries = [];     // last fs_listing payload for the current folder
+  let expOpenFile = null;         // absolute path of the file in the editor pane
+  let expOpenFileEntry = null;    // {name,type,size,mtime} of the open file
+  let expHistoryBack = [];        // back/forward navigation stack
+  let expHistoryFwd  = [];
+  let expViewMode = (() => {
+    try { return localStorage.getItem('cc.expView') || 'grid'; } catch(e) { return 'grid'; }
+  })();
+
+  function escHtml(s){
+    return String(s).replace(/[&<>"]/g, c => (
+      {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  }
+  function fmtFileSize(n){
+    if (!n) return '';
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    if (n < 1024 * 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' MB';
+    return (n / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+  }
+  function fmtMtime(ts){
+    if (!ts) return '';
+    const d = new Date(ts * 1000);
+    const today = new Date();
+    if (d.toDateString() === today.toDateString()){
+      return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    }
+    return d.toLocaleDateString(undefined,
+      { month: 'short', day: 'numeric',
+        year: d.getFullYear() === today.getFullYear() ? undefined : 'numeric' });
+  }
+  // Per-extension classification → drives icon kind + accent colour.
+  const EXT_KIND = {
+    md: 'md', mdx: 'md', markdown: 'md', txt: 'text', log: 'text', rst: 'text',
+    json: 'json', yaml: 'json', yml: 'json', toml: 'json', xml: 'json',
+    js: 'code', mjs: 'code', cjs: 'code', ts: 'code', tsx: 'code', jsx: 'code',
+    py: 'code', rb: 'code', go: 'code', rs: 'code', java: 'code', kt: 'code',
+    c: 'code', cpp: 'code', h: 'code', hpp: 'code', sh: 'code', bash: 'code',
+    zsh: 'code', sql: 'code', html: 'code', css: 'code', scss: 'code', php: 'code',
+    png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: 'image',
+    svg: 'image', bmp: 'image', avif: 'image', ico: 'image', heic: 'image',
+    mp3: 'audio', wav: 'audio', m4a: 'audio', ogg: 'audio', flac: 'audio',
+    aac: 'audio', opus: 'audio',
+    mp4: 'video', mov: 'video', mkv: 'video', webm: 'video', avi: 'video',
+    zip: 'archive', tar: 'archive', gz: 'archive', tgz: 'archive', bz2: 'archive',
+    '7z': 'archive', rar: 'archive', xz: 'archive',
+  };
+  function fileKind(name){
+    const m = (name || '').toLowerCase().match(/\.([a-z0-9]+)$/);
+    if (!m) return 'text';
+    return EXT_KIND[m[1]] || 'binary';
+  }
+  // Inline SVG factory for each kind. Returns innerHTML for the icon
+  // wrapper. Folder uses a separate svg with "open" hint.
+  function iconSvg(kind, name){
+    if (kind === 'folder'){
+      return '<svg viewBox="0 0 48 48" fill="currentColor" stroke="none">'
+        + '<path d="M6 12a3 3 0 0 1 3-3h10l3 4h17a3 3 0 0 1 3 3v18a3 3 0 0 1-3 3H9a3 3 0 0 1-3-3z" opacity=".22"/>'
+        + '<path d="M6 12a3 3 0 0 1 3-3h10l3 4h17a3 3 0 0 1 3 3v3H6z"/>'
+        + '<path d="M6 16h36v18a3 3 0 0 1-3 3H9a3 3 0 0 1-3-3z" opacity=".7"/>'
+        + '</svg>';
+    }
+    // File-shape base (rounded rect with folded corner) + per-kind glyph.
+    const base =
+      '<path d="M11 5h17l9 9v27a3 3 0 0 1-3 3H11a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3z"'
+      + ' fill="currentColor" opacity=".18"/>'
+      + '<path d="M28 5v9h9" fill="none" stroke="currentColor" stroke-width="2"'
+      + ' stroke-linejoin="round"/>';
+    const glyphs = {
+      md:    '<path d="M14 32V20l5 8 5-8v12M28 22v10M28 32l3-3M28 32l-3-3"'
+              + ' fill="none" stroke="currentColor" stroke-width="2"'
+              + ' stroke-linecap="round" stroke-linejoin="round"/>',
+      json:  '<path d="M19 23c-2 0-3 1-3 3v3c0 2-1 3-3 3M19 35c-2 0-3-1-3-3v-3c0-2-1-3-3-3'
+              + 'M29 23c2 0 3 1 3 3v3c0 2 1 3 3 3M29 35c2 0 3-1 3-3v-3c0-2 1-3 3-3"'
+              + ' fill="none" stroke="currentColor" stroke-width="2"'
+              + ' stroke-linecap="round" stroke-linejoin="round"/>',
+      code:  '<path d="M19 24l-5 5 5 5M29 24l5 5-5 5M26 22l-4 14"'
+              + ' fill="none" stroke="currentColor" stroke-width="2"'
+              + ' stroke-linecap="round" stroke-linejoin="round"/>',
+      text:  '<line x1="14" y1="22" x2="34" y2="22"/>'
+              + '<line x1="14" y1="27" x2="34" y2="27"/>'
+              + '<line x1="14" y1="32" x2="28" y2="32"/>',
+      image: '<rect x="13" y="22" width="22" height="14" rx="2" fill="none"/>'
+              + '<circle cx="19" cy="27" r="2"/>'
+              + '<path d="M14 34l6-6 5 5 4-3 5 5" fill="none"/>',
+      audio: '<circle cx="18" cy="33" r="3"/><circle cx="30" cy="31" r="3"/>'
+              + '<path d="M21 33V20l12-3v14" fill="none"/>',
+      video: '<rect x="13" y="22" width="22" height="14" rx="2" fill="none"/>'
+              + '<polygon points="22,26 22,32 28,29" fill="currentColor"/>',
+      archive:'<rect x="20" y="20" width="8" height="20" rx="1" fill="none"/>'
+              + '<line x1="24" y1="20" x2="24" y2="40"/>',
+      binary:'<line x1="14" y1="22" x2="34" y2="22"/>'
+              + '<line x1="14" y1="27" x2="34" y2="27"/>'
+              + '<line x1="14" y1="32" x2="28" y2="32"/>',
+    };
+    const stroke = (kind === 'text' || kind === 'binary')
+        ? ' stroke="currentColor" stroke-width="2" stroke-linecap="round"'
+        : '';
+    return '<svg viewBox="0 0 48 48"' + stroke + '>'
+      + base + (glyphs[kind] || glyphs.text) + '</svg>';
+  }
+  function isImageEntry(entry){
+    return entry && entry.type === 'file' && fileKind(entry.name) === 'image';
+  }
+
+  function openExplorer(){
+    document.getElementById('explorerSheet').classList.add('on');
+    document.getElementById('explorerSheet').setAttribute('aria-hidden','false');
+    expHistoryBack = [];
+    expHistoryFwd = [];
+    expCurrentPath = '';
+    expOpenFile = null;
+    expOpenFileEntry = null;
+    document.getElementById('expEditorPane').hidden = true;
+    document.getElementById('expFilePath').textContent = '';
+    document.getElementById('expTextarea').value = '';
+    document.getElementById('expImage').hidden = true;
+    document.getElementById('expImage').removeAttribute('src');
+    document.getElementById('expTextarea').hidden = false;
+    expApplyViewMode();
+    expUpdateNavButtons();
+    send({type:'fs_list', path:''});
+  }
+  function closeExplorer(){
+    expHideCtxMenu();
+    document.getElementById('explorerSheet').classList.remove('on');
+    document.getElementById('explorerSheet').setAttribute('aria-hidden','true');
+  }
+  function expNavigate(path, {pushHistory = true} = {}){
+    if (pushHistory && expCurrentPath !== null && expCurrentPath !== undefined
+        && path !== expCurrentPath){
+      expHistoryBack.push(expCurrentPath);
+      if (expHistoryBack.length > 50) expHistoryBack.shift();
+      expHistoryFwd = [];
+    }
+    expCurrentPath = path || '';
+    expOpenFile = null;
+    expOpenFileEntry = null;
+    document.getElementById('expEditorPane').hidden = true;
+    document.getElementById('expFilePath').textContent = '';
+    document.getElementById('expTextarea').value = '';
+    document.getElementById('expImage').hidden = true;
+    document.getElementById('expImage').removeAttribute('src');
+    document.getElementById('expTextarea').hidden = false;
+    expUpdateNavButtons();
+    send({type:'fs_list', path: expCurrentPath});
+  }
+  function expGoBack(){
+    if (!expHistoryBack.length) return;
+    const prev = expHistoryBack.pop();
+    expHistoryFwd.push(expCurrentPath);
+    expNavigate(prev, {pushHistory: false});
+  }
+  function expGoForward(){
+    if (!expHistoryFwd.length) return;
+    const next = expHistoryFwd.pop();
+    expHistoryBack.push(expCurrentPath);
+    expNavigate(next, {pushHistory: false});
+  }
+  function expGoUp(){
+    if (!expCurrentPath || !expRootPath) return;
+    if (expCurrentPath === expRootPath) return;
+    const parent = expCurrentPath.replace(/\/[^/]+\/?$/, '');
+    expNavigate(parent || expRootPath);
+  }
+  function expUpdateNavButtons(){
+    const back = document.getElementById('expBack');
+    const fwd  = document.getElementById('expForward');
+    const up   = document.getElementById('expUp');
+    if (back) back.disabled = expHistoryBack.length === 0;
+    if (fwd)  fwd.disabled  = expHistoryFwd.length === 0;
+    if (up)   up.disabled   = !expRootPath || expCurrentPath === expRootPath;
+  }
+  function expApplyViewMode(){
+    const grid = document.getElementById('expTree');
+    if (!grid) return;
+    grid.classList.toggle('exp-list', expViewMode === 'list');
+  }
+  function expRenderBreadcrumb(){
+    const bc = document.getElementById('expBreadcrumb');
+    if (!bc) return;
+    bc.innerHTML = '';
+    const root = document.createElement('span');
+    root.className = 'crumb';
+    root.textContent = 'runtime';
+    root.onclick = () => expNavigate(expRootPath || '');
+    if (expCurrentPath === expRootPath || !expRootPath){
+      root.classList.add('current');
+    }
+    bc.appendChild(root);
+    if (!expRootPath || !expCurrentPath || expCurrentPath === expRootPath) return;
+    const rel = expCurrentPath.startsWith(expRootPath + '/')
+        ? expCurrentPath.slice(expRootPath.length + 1)
+        : '';
+    if (!rel) return;
+    const parts = rel.split('/').filter(Boolean);
+    let built = expRootPath;
+    parts.forEach((p, i) => {
+      const sep = document.createElement('span');
+      sep.className = 'crumb-sep'; sep.textContent = ' / ';
+      bc.appendChild(sep);
+      built += '/' + p;
+      const seg = document.createElement('span');
+      seg.className = 'crumb';
+      seg.textContent = p;
+      const target = built;
+      seg.onclick = () => expNavigate(target);
+      if (i === parts.length - 1) seg.classList.add('current');
+      bc.appendChild(seg);
+    });
+  }
+  function expRenderTree(){
+    const tree = document.getElementById('expTree');
+    if (!tree) return;
+    tree.innerHTML = '';
+    const entries = expCurrentEntries.slice();
+    const dirs  = entries.filter(e => e.type === 'dir')
+                        .sort((a,b) => a.name.localeCompare(b.name));
+    const files = entries.filter(e => e.type === 'file')
+                        .sort((a,b) => a.name.localeCompare(b.name));
+    if (!dirs.length && !files.length){
+      const e = document.createElement('div');
+      e.className = 'exp-empty';
+      e.innerHTML = 'Empty folder<div class="exp-empty-hint">'
+        + 'Right-click here or use the toolbar to create a new file or folder.'
+        + '</div>';
+      tree.appendChild(e);
+      return;
+    }
+    for (const d of dirs){
+      tree.appendChild(buildEntry(d));
+    }
+    for (const f of files){
+      tree.appendChild(buildEntry(f));
+    }
+  }
+  function buildEntry(entry){
+    const row = document.createElement('div');
+    row.className = 'exp-entry';
+    const isDir = entry.type === 'dir';
+    const kind  = isDir ? 'folder' : fileKind(entry.name);
+    row.dataset.kind = kind;
+    row.dataset.name = entry.name;
+    row.dataset.type = entry.type;
+    if (isImageEntry(entry)) row.classList.add('is-image');
+    const iconWrap = document.createElement('div');
+    iconWrap.className = 'exp-icon';
+    if (isImageEntry(entry)){
+      const fullPath = (expCurrentPath ? expCurrentPath + '/' : '') + entry.name;
+      const img = document.createElement('img');
+      img.className = 'exp-thumb';
+      img.alt = entry.name;
+      img.src = '/file?p=' + encodeURIComponent(fullPath);
+      img.onerror = () => {
+        // Fall back to the generic image icon if the thumb can't load.
+        img.replaceWith(document.createRange().createContextualFragment(
+          iconSvg('image', entry.name)).firstChild);
+      };
+      iconWrap.appendChild(img);
+    } else {
+      iconWrap.innerHTML = iconSvg(kind, entry.name);
+    }
+    const name = document.createElement('div');
+    name.className = 'exp-name';
+    name.textContent = entry.name;
+    const meta = document.createElement('div');
+    meta.className = 'exp-meta';
+    meta.textContent = isDir
+      ? ''
+      : (fmtFileSize(entry.size) + (entry.mtime ? ' · ' + fmtMtime(entry.mtime) : ''));
+    row.appendChild(iconWrap);
+    row.appendChild(name);
+    row.appendChild(meta);
+    row.onclick = (ev) => {
+      // Single click highlights; double-click opens.
+      document.querySelectorAll('#expTree .exp-entry.active')
+              .forEach(r => r.classList.remove('active'));
+      row.classList.add('active');
+      if (!isDir) expOpenFileFromEntry(entry);
+    };
+    row.ondblclick = (ev) => {
+      ev.preventDefault();
+      if (isDir){
+        const nextPath = (expCurrentPath ? expCurrentPath + '/' : '') + entry.name;
+        expNavigate(nextPath);
+      } else {
+        expOpenFileFromEntry(entry);
+      }
+    };
+    row.oncontextmenu = (ev) => {
+      ev.preventDefault();
+      expShowCtxMenu(ev.clientX, ev.clientY, entry);
+    };
+    return row;
+  }
+  function expOpenFileFromEntry(entry){
+    const fullPath = (expCurrentPath ? expCurrentPath + '/' : '') + entry.name;
+    expOpenFile = fullPath;
+    expOpenFileEntry = entry;
+    const pane = document.getElementById('expEditorPane');
+    pane.hidden = false;
+    document.getElementById('expFilePath').textContent = entry.name;
+    if (isImageEntry(entry)){
+      // Show the image inline rather than dumping bytes into the textarea.
+      const img = document.getElementById('expImage');
+      img.src = '/file?p=' + encodeURIComponent(fullPath);
+      img.hidden = false;
+      document.getElementById('expTextarea').hidden = true;
+      document.getElementById('expSave').disabled = true;
+    } else {
+      document.getElementById('expImage').hidden = true;
+      document.getElementById('expImage').removeAttribute('src');
+      document.getElementById('expTextarea').hidden = false;
+      document.getElementById('expTextarea').value = 'Loading…';
+      document.getElementById('expSave').disabled = false;
+      send({type:'fs_read', path: fullPath});
+    }
+  }
+  function expShowCtxMenu(x, y, entry){
+    const menu = document.getElementById('expCtxMenu');
+    if (!menu) return;
+    menu.innerHTML = '';
+    const isDir = entry.type === 'dir';
+    const items = [];
+    items.push({
+      label: isDir ? 'Open folder' : 'Open in editor',
+      action: () => {
+        if (isDir){
+          const next = (expCurrentPath ? expCurrentPath + '/' : '') + entry.name;
+          expNavigate(next);
+        } else {
+          expOpenFileFromEntry(entry);
+        }
+      },
+    });
+    items.push({label: 'Rename…',    action: () => expRename(entry)});
+    if (!isDir){
+      items.push({label: 'Duplicate', action: () => expDuplicate(entry)});
+    }
+    items.push({sep: true});
+    items.push({label: 'Reveal in toolbar', action: () => {
+      // Picks the row + flashes; a tiny bit of friendliness.
+      const sel = '#expTree .exp-entry[data-name="' + (CSS.escape ? CSS.escape(entry.name) : entry.name) + '"]';
+      const el = document.querySelector(sel);
+      if (el){ el.scrollIntoView({block:'nearest'}); el.classList.add('active'); }
+    }});
+    items.push({sep: true});
+    items.push({label: 'Delete', danger: true, action: () => expDeleteEntry(entry)});
+    for (const it of items){
+      if (it.sep){
+        const s = document.createElement('div');
+        s.className = 'ctx-sep';
+        menu.appendChild(s);
+        continue;
+      }
+      const row = document.createElement('div');
+      row.className = 'ctx-item' + (it.danger ? ' danger' : '');
+      row.textContent = it.label;
+      row.onclick = () => { expHideCtxMenu(); it.action(); };
+      menu.appendChild(row);
+    }
+    menu.hidden = false;
+    // Position the menu, clamped inside the viewport.
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const pad = 8;
+    menu.style.left = Math.min(x, vw - menu.offsetWidth - pad) + 'px';
+    menu.style.top  = Math.min(y, vh - menu.offsetHeight - pad) + 'px';
+    document.addEventListener('mousedown', expCtxOutside, true);
+  }
+  function expHideCtxMenu(){
+    const menu = document.getElementById('expCtxMenu');
+    if (menu){ menu.hidden = true; menu.innerHTML = ''; }
+    document.removeEventListener('mousedown', expCtxOutside, true);
+  }
+  function expCtxOutside(ev){
+    const menu = document.getElementById('expCtxMenu');
+    if (menu && !menu.contains(ev.target)) expHideCtxMenu();
+  }
+  async function expRename(entry){
+    const next = await promptText({
+      title: 'Rename ' + (entry.type === 'dir' ? 'folder' : 'file'),
+      placeholder: entry.name, value: entry.name,
+      confirmText: 'Rename',
+    });
+    if (!next || next === entry.name) return;
+    const oldPath = (expCurrentPath ? expCurrentPath + '/' : '') + entry.name;
+    const newPath = (expCurrentPath ? expCurrentPath + '/' : '') + next;
+    send({type:'fs_rename', oldPath, newPath});
+  }
+  async function expDuplicate(entry){
+    // Same folder, append "-copy" before the extension.
+    const dot = entry.name.lastIndexOf('.');
+    const stem = dot > 0 ? entry.name.slice(0, dot) : entry.name;
+    const ext  = dot > 0 ? entry.name.slice(dot) : '';
+    const cand = stem + '-copy' + ext;
+    const fullPath = (expCurrentPath ? expCurrentPath + '/' : '') + cand;
+    // Read original, then write to the copy. Server has no copy endpoint
+    // — we get away with read+write since text files are the common case.
+    if (entry.type === 'dir'){
+      showBanner('Folder duplication is not yet supported.');
+      setTimeout(hideBanner, 2500);
+      return;
+    }
+    const original = (expCurrentPath ? expCurrentPath + '/' : '') + entry.name;
+    // Stash a one-shot callback for the next fs_content we receive.
+    _expDuplicatePending = { source: original, target: fullPath };
+    send({type:'fs_read', path: original});
+  }
+  let _expDuplicatePending = null;
+
+  async function expDeleteEntry(entry){
+    const isDir = entry.type === 'dir';
+    const ok = await confirmAction({
+      title: 'Delete ' + (isDir ? 'folder' : 'file') + '?',
+      body: entry.name + (isDir ? ' — including everything inside.' : ''),
+      confirmText: 'Delete', danger: true,
+    });
+    if (!ok) return;
+    const fullPath = (expCurrentPath ? expCurrentPath + '/' : '') + entry.name;
+    send({type:'fs_delete', path: fullPath});
+    if (expOpenFile === fullPath){
+      expOpenFile = null;
+      expOpenFileEntry = null;
+      document.getElementById('expEditorPane').hidden = true;
+    }
+  }
+  async function expCreateFile(){
+    const name = await promptText({
+      title: 'New file', placeholder: 'untitled.md',
+      confirmText: 'Create',
+    });
+    if (!name) return;
+    const path = (expCurrentPath ? expCurrentPath + '/' : '') + name;
+    _expRefreshAfter = expCurrentPath;
+    send({type:'fs_write', path, content: ''});
+  }
+  async function expCreateFolder(){
+    const name = await promptText({
+      title: 'New folder', placeholder: 'new-folder',
+      confirmText: 'Create',
+    });
+    if (!name) return;
+    const path = (expCurrentPath ? expCurrentPath + '/' : '') + name;
+    _expRefreshAfter = expCurrentPath;
+    send({type:'fs_mkdir', path});
+  }
+  let _expRefreshAfter = null;
+  function expSaveOpenFile(){
+    if (!expOpenFile) return;
+    const content = document.getElementById('expTextarea').value;
+    send({type:'fs_write', path: expOpenFile, content});
+    // Tiny "saved" confirmation hint — reuse the notes flash style.
+    const tb = document.querySelector('.exp-editor-toolbar');
+    if (!tb) return;
+    tb.querySelectorAll('.notes-saved-flash').forEach(x => x.remove());
+    const flash = document.createElement('span');
+    flash.className = 'notes-saved-flash';
+    flash.textContent = '✓ Saved';
+    tb.appendChild(flash);
+    setTimeout(() => flash.remove(), 1700);
+  }
+
+  // ─── Lightweight prompt() replacement ───
+  // confirmAction() exists; we add promptText() here so file/folder
+  // creation + rename can use the themed dialog instead of native
+  // prompt() (which the user explicitly didn't want).
+  function promptText({ title, body, placeholder, value, confirmText }){
+    return new Promise(resolve => {
+      const back = document.createElement('div');
+      back.className = 'modal-backdrop on';
+      back.style.zIndex = '70';
+      const m = document.createElement('div');
+      m.className = 'modal';
+      m.style.zIndex = '71';
+      m.innerHTML =
+        '<button class="close" type="button" aria-label="Close">×</button>'
+        + '<h3>' + escHtml(title || 'Enter value') + '</h3>'
+        + (body ? '<p class="confirm-body">' + escHtml(body) + '</p>' : '')
+        + '<input type="text" class="rich-input" id="_promptText" '
+          + (placeholder ? 'placeholder="' + escHtml(placeholder) + '" ' : '')
+          + (value != null ? 'value="' + escHtml(value) + '"' : '')
+        + ' style="width:100%;margin:8px 0 14px;font-family:inherit">'
+        + '<div style="display:flex;gap:8px;justify-content:flex-end">'
+        + '<button type="button" class="btn-secondary" data-cancel>Cancel</button>'
+        + '<button type="button" class="btn-primary" data-ok>'
+        + escHtml(confirmText || 'OK') + '</button>'
+        + '</div>';
+      document.body.appendChild(back);
+      document.body.appendChild(m);
+      const inp = m.querySelector('#_promptText');
+      inp.focus(); inp.select();
+      function cleanup(val){
+        m.remove(); back.remove();
+        document.removeEventListener('keydown', onKey, true);
+        resolve(val);
+      }
+      function onKey(ev){
+        if (ev.key === 'Escape'){ ev.preventDefault(); cleanup(null); }
+        if (ev.key === 'Enter' && document.activeElement === inp){
+          ev.preventDefault();
+          const v = inp.value.trim();
+          cleanup(v || null);
+        }
+      }
+      m.querySelector('[data-cancel]').onclick = () => cleanup(null);
+      m.querySelector('.close').onclick      = () => cleanup(null);
+      back.onclick                           = () => cleanup(null);
+      m.querySelector('[data-ok]').onclick = () => {
+        const v = inp.value.trim();
+        cleanup(v || null);
+      };
+      document.addEventListener('keydown', onKey, true);
+    });
+  }
+
+  // ─── Wire up explorer toolbar + global keys ───
+  document.getElementById('explorerBtn')?.addEventListener('click', () => {
+    if (document.getElementById('explorerSheet').classList.contains('on')){
+      closeExplorer();
+    } else {
+      openExplorer();
+    }
+  });
+  document.getElementById('expClose')?.addEventListener('click', closeExplorer);
+  document.getElementById('expBack')?.addEventListener('click', expGoBack);
+  document.getElementById('expForward')?.addEventListener('click', expGoForward);
+  document.getElementById('expUp')?.addEventListener('click', expGoUp);
+  document.getElementById('expRefresh')?.addEventListener('click', () => {
+    send({type:'fs_list', path: expCurrentPath});
+  });
+  document.getElementById('expViewToggle')?.addEventListener('click', () => {
+    expViewMode = (expViewMode === 'grid') ? 'list' : 'grid';
+    try { localStorage.setItem('cc.expView', expViewMode); } catch(e) {}
+    expApplyViewMode();
+  });
+  document.getElementById('expNewFile')?.addEventListener('click', expCreateFile);
+  document.getElementById('expNewDir')?.addEventListener('click', expCreateFolder);
+  document.getElementById('expSave')?.addEventListener('click', expSaveOpenFile);
+  document.getElementById('expEditorClose')?.addEventListener('click', () => {
+    expOpenFile = null;
+    expOpenFileEntry = null;
+    document.getElementById('expEditorPane').hidden = true;
+    document.getElementById('expFilePath').textContent = '';
+    document.getElementById('expTextarea').value = '';
+    document.getElementById('expImage').hidden = true;
+    document.getElementById('expImage').removeAttribute('src');
+    document.querySelectorAll('#expTree .exp-entry.active')
+            .forEach(r => r.classList.remove('active'));
+  });
+  // Right-click on empty space in the grid → quick "New file/folder" menu.
+  document.getElementById('expTree')?.addEventListener('contextmenu', (ev) => {
+    if (ev.target.closest('.exp-entry')) return;
+    ev.preventDefault();
+    const menu = document.getElementById('expCtxMenu');
+    menu.innerHTML = '';
+    [
+      { label: 'New file…',    action: expCreateFile   },
+      { label: 'New folder…',  action: expCreateFolder },
+      { sep: true },
+      { label: 'Refresh',      action: () => send({type:'fs_list', path: expCurrentPath}) },
+    ].forEach(it => {
+      if (it.sep){
+        const s = document.createElement('div'); s.className = 'ctx-sep';
+        menu.appendChild(s); return;
+      }
+      const row = document.createElement('div');
+      row.className = 'ctx-item';
+      row.textContent = it.label;
+      row.onclick = () => { expHideCtxMenu(); it.action(); };
+      menu.appendChild(row);
+    });
+    menu.hidden = false;
+    const vw = window.innerWidth, vh = window.innerHeight;
+    menu.style.left = Math.min(ev.clientX, vw - menu.offsetWidth - 8) + 'px';
+    menu.style.top  = Math.min(ev.clientY, vh - menu.offsetHeight - 8) + 'px';
+    document.addEventListener('mousedown', expCtxOutside, true);
+  });
+
+  // Global keyboard shortcuts inside the explorer.
+  document.addEventListener('keydown', e => {
+    const sheet = document.getElementById('explorerSheet');
+    if (!sheet || !sheet.classList.contains('on')) return;
+    if (e.key === 'Escape'){
+      // Editor pane open → close editor first; otherwise close sheet.
+      const pane = document.getElementById('expEditorPane');
+      if (pane && !pane.hidden){
+        pane.hidden = true;
+        expOpenFile = null;
+        expOpenFileEntry = null;
+        return;
+      }
+      closeExplorer();
+      return;
+    }
+    if (e.key === 'Backspace' && !e.metaKey
+        && document.activeElement?.tagName !== 'TEXTAREA'
+        && document.activeElement?.tagName !== 'INPUT'){
+      e.preventDefault();
+      expGoUp();
+      return;
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's'
+        && !document.getElementById('expEditorPane').hidden){
+      e.preventDefault();
+      expSaveOpenFile();
+    }
+  });
 
   // Replace native <select> dropdowns with the rich custom listbox.
   // Done at script tail so all selects are present in the DOM. The
