@@ -849,11 +849,9 @@
   .typing.on{display:flex}
   .typing .ava{width:28px;height:28px;border-radius:7px;flex:0 0 28px;
     background:linear-gradient(135deg,var(--accent),var(--accent-2));
-    display:grid;place-items:center;color:#fff;font-weight:600;font-size:10.5px}
-  /* Image variant (IronClaw mascot) — drops the gradient bg + text-grid
-     and just shows the PNG. Same square sizing as the text version. */
-  .typing .ava-img{background:none;display:block;object-fit:contain;
-    padding:1px;filter:drop-shadow(0 1px 3px rgba(0,0,0,.25))}
+    display:grid;place-items:center;color:#fff;font-weight:700;font-size:13px;
+    letter-spacing:-.01em;
+    box-shadow:0 1px 4px rgba(0,0,0,.25),inset 0 1px 0 rgba(255,255,255,.18)}
   .typing .dots{background:var(--bubble-bot);border:1px solid var(--border);
     border-radius:18px;border-bottom-left-radius:6px;padding:12px 16px;display:flex;gap:5px}
   .typing .dots span{width:6px;height:6px;background:var(--fg-dim);border-radius:50%;
@@ -2076,7 +2074,10 @@
       <div class="msg-list" id="messages"></div>
       <div class="msg-list" style="padding-top:0;padding-bottom:0">
         <div class="typing" id="typing">
-          <img class="ava ava-img" src="/assets/ironclaw.png" alt="IronClaw">
+          <!-- Avatar text + bg colour are set dynamically based on the
+               active chat's persona (see refreshTypingAva()). 'CC' is
+               just the placeholder for sessions without a persona. -->
+          <div class="ava" id="typingAva">CC</div>
           <div class="dots"><span></span><span></span><span></span></div>
           <!-- Shown only on the FIRST turn of a freshly-spawned chat —
                warms the user that the worker is loading persona,
@@ -3213,6 +3214,64 @@
     // deterministic fallback hue from id
     let h = 0; for (const ch of personaId) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
     return `hsl(${h % 360}, 55%, 55%)`;
+  }
+  // Pick black or white text for a given background colour (luminance
+  // check). Used by the typing-bubble avatar so the persona's first
+  // letter stays readable regardless of how dark/light their tint is.
+  function pickReadableTextColor(col){
+    if (!col || typeof col !== 'string') return '#fff';
+    let r = 0, g = 0, b = 0;
+    if (col[0] === '#'){
+      let h = col.slice(1);
+      if (h.length === 3) h = h.split('').map(c => c + c).join('');
+      if (h.length >= 6){
+        r = parseInt(h.slice(0, 2), 16);
+        g = parseInt(h.slice(2, 4), 16);
+        b = parseInt(h.slice(4, 6), 16);
+      }
+    } else if (col.startsWith('hsl')){
+      // Cheap hsl→approximate luminance from the L channel.
+      const m = col.match(/hsla?\(\s*-?\d+(?:deg)?\s*,\s*-?\d+%\s*,\s*(-?\d+(?:\.\d+)?)%/);
+      const L = m ? parseFloat(m[1]) : 50;
+      return L > 62 ? '#1c1c1c' : '#fff';
+    } else if (col.startsWith('rgb')){
+      const m = col.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+      if (m){ r = +m[1]; g = +m[2]; b = +m[3]; }
+    } else {
+      return '#fff';
+    }
+    const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    return lum > 160 ? '#1c1c1c' : '#fff';
+  }
+  // Update the typing-bubble avatar to reflect the active chat's persona:
+  // first letter of the persona name + the persona's colour. Falls back
+  // to the chat title's first letter / "CC" / accent gradient when no
+  // persona is set.
+  function refreshTypingAva(){
+    const ava = document.getElementById('typingAva');
+    if (!ava) return;
+    const sess = activeId ? sessions.find(x => x.id === activeId) : null;
+    if (!sess){
+      ava.textContent = 'CC';
+      ava.style.removeProperty('background');
+      ava.style.removeProperty('color');
+      ava.style.removeProperty('box-shadow');
+      return;
+    }
+    const pid   = personaIdOf(sess);
+    const pname = personaNameOf(sess);
+    let letter = (pname || '').trim().charAt(0).toUpperCase();
+    if (!letter) letter = (sess.title || '').trim().charAt(0).toUpperCase();
+    if (!letter) letter = 'C';
+    ava.textContent = letter;
+    if (pid){
+      const col = personaColor(pid);
+      ava.style.background = `linear-gradient(135deg, ${col}, ${col}cc)`;
+      ava.style.color = pickReadableTextColor(col);
+    } else {
+      ava.style.removeProperty('background');
+      ava.style.removeProperty('color');
+    }
   }
 
   function buildSessionItem(s){
@@ -4655,6 +4714,8 @@
     // when claude generates a chat title, so the browser tab updates
     // automatically without a separate hook.
     try { refreshDocTitle(); } catch (e) {}
+    // Typing bubble avatar mirrors the persona's first letter + colour.
+    try { refreshTypingAva(); } catch (e) {}
   }
   function setActive(id){
     activeId = id;
@@ -5423,6 +5484,8 @@
         // form pointed at it.
         if (m.savedId) personaEditingId = m.savedId;
         refreshPersonasUI();
+        // Persona colour may have changed — repaint the typing avatar.
+        try { refreshTypingAva(); } catch (e) {}
         break;
       }
       case 'persona': {
