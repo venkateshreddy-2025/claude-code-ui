@@ -155,26 +155,25 @@
       transform:translateX(-100%);box-shadow:0 0 40px rgba(0,0,0,.5)}
     #sidebar.open{transform:translateX(0)}
   }
-  /* IronClaw brand strip — top-left of the sidebar.  Logo (PNG with
-     real transparency, baked from the cute Iron-Man mascot the user
-     dropped in Downloads) + wordmark.  Clickable → clears panel state.
-     Sized to fill the full sidebar width with a nice big logo + bold
-     wordmark — this is the app's identity, not a tiny corner mark. */
-  .brand{display:flex;align-items:center;gap:14px;
+  /* IronClaw brand strip — top of the sidebar. Mascot + wordmark side
+     by side, the whole pair centered horizontally inside the strip
+     (so the cluster sits in the middle, not flush left). */
+  .brand{display:flex;flex-direction:row;align-items:center;
+    justify-content:center;gap:14px;
     padding:18px 16px 16px;width:100%;box-sizing:border-box;
     text-decoration:none;color:inherit;border-bottom:1px solid var(--border-soft);
     transition:background .12s}
   .brand:hover{background:rgba(255,255,255,.03)}
-  .brand-logo{width:54px;height:54px;flex:0 0 54px;object-fit:contain;
-    filter:drop-shadow(0 4px 10px rgba(0,0,0,.45))}
-  .brand-text{display:flex;flex-direction:column;line-height:1.1;min-width:0;
-    flex:1 1 auto}
-  .brand-name{font-size:22px;font-weight:800;letter-spacing:-.01em;
+  .brand-logo{width:64px;height:64px;flex:0 0 64px;object-fit:contain;
+    filter:drop-shadow(0 4px 12px rgba(0,0,0,.45))}
+  .brand-text{display:flex;flex-direction:column;line-height:1.1;
+    min-width:0}
+  .brand-name{font-size:26px;font-weight:800;letter-spacing:-.01em;
     background:linear-gradient(135deg,#ff6b6b,#f59e0b);
     -webkit-background-clip:text;background-clip:text;color:transparent;
-    line-height:1.1}
+    line-height:1.05}
   .brand-sub{font-size:11px;color:var(--fg-faint);font-weight:600;
-    letter-spacing:.08em;text-transform:uppercase;margin-top:3px}
+    letter-spacing:.1em;text-transform:uppercase;margin-top:4px}
 
   .side-top{padding:14px 12px 10px;border-bottom:1px solid var(--border-soft);
     display:flex;flex-direction:column;gap:8px}
@@ -1895,7 +1894,8 @@
   <aside id="sidebar">
     <!-- Brand: IronClaw mascot + wordmark, sits above the New session
          button. Doubles as a "home" link → clears panel + scrolls the
-         sidebar to top. -->
+         sidebar to top. Vertical stack: mascot centered on top,
+         wordmark + subtitle filling the row width below. -->
     <a class="brand" id="brandLink" href="#" aria-label="IronClaw home">
       <img class="brand-logo" src="/assets/ironclaw.png" alt="IronClaw mascot">
       <div class="brand-text">
