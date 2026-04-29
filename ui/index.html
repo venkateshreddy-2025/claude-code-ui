@@ -157,19 +157,24 @@
   }
   /* IronClaw brand strip — top-left of the sidebar.  Logo (PNG with
      real transparency, baked from the cute Iron-Man mascot the user
-     dropped in Downloads) + wordmark.  Clickable → clears panel state. */
-  .brand{display:flex;align-items:center;gap:10px;padding:12px 14px 8px;
+     dropped in Downloads) + wordmark.  Clickable → clears panel state.
+     Sized to fill the full sidebar width with a nice big logo + bold
+     wordmark — this is the app's identity, not a tiny corner mark. */
+  .brand{display:flex;align-items:center;gap:14px;
+    padding:18px 16px 16px;width:100%;box-sizing:border-box;
     text-decoration:none;color:inherit;border-bottom:1px solid var(--border-soft);
     transition:background .12s}
   .brand:hover{background:rgba(255,255,255,.03)}
-  .brand-logo{width:36px;height:36px;flex:0 0 36px;object-fit:contain;
-    filter:drop-shadow(0 2px 6px rgba(0,0,0,.35))}
-  .brand-text{display:flex;flex-direction:column;line-height:1.15;min-width:0}
-  .brand-name{font-size:15px;font-weight:700;color:var(--fg);
-    letter-spacing:.01em;background:linear-gradient(135deg,#ff6b6b,#f59e0b);
-    -webkit-background-clip:text;background-clip:text;color:transparent}
-  .brand-sub{font-size:10.5px;color:var(--fg-faint);font-weight:500;
-    letter-spacing:.06em;text-transform:uppercase}
+  .brand-logo{width:54px;height:54px;flex:0 0 54px;object-fit:contain;
+    filter:drop-shadow(0 4px 10px rgba(0,0,0,.45))}
+  .brand-text{display:flex;flex-direction:column;line-height:1.1;min-width:0;
+    flex:1 1 auto}
+  .brand-name{font-size:22px;font-weight:800;letter-spacing:-.01em;
+    background:linear-gradient(135deg,#ff6b6b,#f59e0b);
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+    line-height:1.1}
+  .brand-sub{font-size:11px;color:var(--fg-faint);font-weight:600;
+    letter-spacing:.08em;text-transform:uppercase;margin-top:3px}
 
   .side-top{padding:14px 12px 10px;border-bottom:1px solid var(--border-soft);
     display:flex;flex-direction:column;gap:8px}
