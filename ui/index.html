@@ -155,6 +155,22 @@
       transform:translateX(-100%);box-shadow:0 0 40px rgba(0,0,0,.5)}
     #sidebar.open{transform:translateX(0)}
   }
+  /* IronClaw brand strip — top-left of the sidebar.  Logo (PNG with
+     real transparency, baked from the cute Iron-Man mascot the user
+     dropped in Downloads) + wordmark.  Clickable → clears panel state. */
+  .brand{display:flex;align-items:center;gap:10px;padding:12px 14px 8px;
+    text-decoration:none;color:inherit;border-bottom:1px solid var(--border-soft);
+    transition:background .12s}
+  .brand:hover{background:rgba(255,255,255,.03)}
+  .brand-logo{width:36px;height:36px;flex:0 0 36px;object-fit:contain;
+    filter:drop-shadow(0 2px 6px rgba(0,0,0,.35))}
+  .brand-text{display:flex;flex-direction:column;line-height:1.15;min-width:0}
+  .brand-name{font-size:15px;font-weight:700;color:var(--fg);
+    letter-spacing:.01em;background:linear-gradient(135deg,#ff6b6b,#f59e0b);
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  .brand-sub{font-size:10.5px;color:var(--fg-faint);font-weight:500;
+    letter-spacing:.06em;text-transform:uppercase}
+
   .side-top{padding:14px 12px 10px;border-bottom:1px solid var(--border-soft);
     display:flex;flex-direction:column;gap:8px}
   .new-btn{display:flex;align-items:center;justify-content:center;gap:8px;
@@ -1872,6 +1888,16 @@
 <div id="app">
   <!-- ────────  sidebar  ──────── -->
   <aside id="sidebar">
+    <!-- Brand: IronClaw mascot + wordmark, sits above the New session
+         button. Doubles as a "home" link → clears panel + scrolls the
+         sidebar to top. -->
+    <a class="brand" id="brandLink" href="#" aria-label="IronClaw home">
+      <img class="brand-logo" src="/assets/ironclaw.png" alt="IronClaw mascot">
+      <div class="brand-text">
+        <span class="brand-name">IronClaw</span>
+        <span class="brand-sub">Claude Code UI</span>
+      </div>
+    </a>
     <div class="side-top">
       <button class="new-btn" id="newBtn" title="Start a new session">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -4687,7 +4713,8 @@
     return parts.length ? '#' + parts.join('&') : '';
   }
   function refreshDocTitle(){
-    const parts = [];
+    // Format: <chat title up to 50ch> - IronClaw - Claude Code UI - <chatId>
+    // When a panel is open, prepend it: e.g. "Terminal - hey there - IronClaw - …"
     const panel = _currentPanel();
     const s = activeId ? sessions.find(x => x.id === activeId) : null;
     const PANEL_LABEL = {
@@ -4695,14 +4722,17 @@
       notes:    'Notes',
       terminal: 'Terminal',
     };
+    const parts = [];
     if (panel) parts.push(PANEL_LABEL[panel] || panel);
     if (s){
-      const t = (s.title || 'New chat').replace(/\s+/g,' ').trim().slice(0, 60);
-      const cid = s.chatId ? '[' + s.chatId + '] ' : '';
-      parts.push(cid + t);
+      const raw = (s.title || 'New chat').replace(/\s+/g,' ').trim();
+      const t   = raw.length > 50 ? raw.slice(0, 49).trimEnd() + '…' : raw;
+      parts.push(t);
     }
+    parts.push('IronClaw');
     parts.push('Claude Code UI');
-    document.title = parts.join(' · ');
+    if (s && s.chatId) parts.push(s.chatId);
+    document.title = parts.join(' - ');
   }
   function syncUrlAndTitle(){
     const target = buildHash();
@@ -5746,6 +5776,20 @@
     // openNewSession is defined below in the settings/popup block.
     if (typeof openNewSession === 'function') openNewSession();
     else send({type:'new'});  // safety fallback if popup module didn't load
+  });
+  // Brand → "home": fold any open side panel + scroll the sidebar to top.
+  // Doesn't switch chats — that's intentional, the user might want to
+  // tap the logo while reading a chat to clear the explorer/notes/term.
+  document.getElementById('brandLink')?.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    try { if (notesOpen) closeNotesPanel(); } catch (e) {}
+    try { if (termOpen)  closeTermPanel();  } catch (e) {}
+    try {
+      const sheet = document.getElementById('explorerSheet');
+      if (sheet && sheet.classList.contains('on')) closeExplorer();
+    } catch (e) {}
+    // Bring the sidebar's recent list into view on mobile drawer.
+    document.querySelector('#sessionList')?.scrollTo({ top: 0, behavior: 'smooth' });
   });
 
   // ───── settings sheet (theme) ─────
