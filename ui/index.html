@@ -188,6 +188,14 @@
   .new-btn:hover{box-shadow:0 8px 20px -8px rgba(0,0,0,.6)}
   .new-btn:active{transform:scale(.98)}
   .new-btn svg{width:16px;height:16px;flex:0 0 16px}
+  /* Group-chat button — same shape as the new-session button but a
+     subtler outline so it doesn't compete for attention. */
+  .new-btn.group-btn{margin-top:6px;background:transparent;color:var(--fg);
+    border:1px solid var(--border);font-weight:500;
+    box-shadow:none}
+  .new-btn.group-btn:hover{background:rgba(255,255,255,.04);
+    border-color:var(--accent);color:var(--accent);box-shadow:none}
+  .new-btn.group-btn svg{color:var(--accent)}
   .side-search{display:none}  /* placeholder for future */
 
   .session-list{flex:1;overflow-y:auto;padding:8px 8px 12px;
@@ -573,6 +581,17 @@
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .who .name .t-persona{font-weight:700}
   .who .name .t-sep{color:var(--fg-faint);margin:0 4px}
+  /* Group-chat header bits: per-member name chips + "+ Add" pill. */
+  .who .name .t-group-members{display:inline-flex;align-items:center;gap:0;
+    margin-left:6px;font-size:13px;font-weight:500}
+  .who .name .t-member{padding:0 4px;border-left:2px solid var(--persona-color, var(--fg-faint));
+    line-height:1.1}
+  .who .name .t-add-member{margin-left:8px;font-size:11px;font-weight:600;
+    padding:2px 8px;border:1px solid var(--border);border-radius:10px;
+    background:rgba(255,255,255,.04);color:var(--fg-dim);cursor:pointer;
+    letter-spacing:.04em;transition:background .12s,color .12s,border-color .12s}
+  .who .name .t-add-member:hover{background:rgba(245,158,11,.14);
+    color:var(--accent);border-color:var(--accent)}
   .who .status{font-size:11.5px;color:var(--fg-dim);display:flex;align-items:center;gap:6px;
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .dot{width:7px;height:7px;border-radius:50%;background:#5d5d66;flex:0 0 7px;transition:background .25s}
@@ -681,6 +700,18 @@
   /* Claude messages: quieter card surface, subtle border. */
   .msg.bot .bubble{background:var(--bubble-bot);color:var(--fg);
     border:1px solid var(--border)}
+  /* Group-chat assistant bubbles get a subtle persona-coloured left
+     border so different speakers are distinguishable even without
+     looking at the name tag. */
+  .msg.bot .bubble.with-persona{
+    border-left:3px solid var(--persona-color, var(--accent))}
+  /* Tiny "Pallavi" / "Claudy" badge above the bubble — only shown for
+     group-chat assistant messages. Sits before the bubble in the
+     stack so the bubble itself stays clean. */
+  .persona-tag{font-size:10.5px;font-weight:700;letter-spacing:.06em;
+    text-transform:uppercase;align-self:flex-start;
+    padding:1px 8px 1px 0;margin:0 0 3px 0;border-left:3px solid;
+    padding-left:8px;line-height:1.2}
   .meta{font-size:9.5px;color:var(--fg-faint);
     margin:4px 4px 0;letter-spacing:.02em;font-variant-numeric:tabular-nums;
     text-transform:lowercase}
@@ -1566,6 +1597,35 @@
   .pl-empty{color:var(--fg-faint);font-size:12px;padding:18px;text-align:center;
     line-height:1.5}
 
+  /* Group-chat creation modal — chip-add picker for personas. */
+  .grp-picker{position:relative;display:flex;flex-direction:column;gap:6px;
+    margin:6px 0 4px}
+  .grp-chips{display:flex;flex-wrap:wrap;gap:6px;min-height:0}
+  .grp-chip{display:inline-flex;align-items:center;gap:6px;padding:4px 8px 4px 10px;
+    background:rgba(255,255,255,.06);border:1px solid var(--border);
+    border-radius:14px;font-size:12.5px;color:var(--fg);
+    border-left:3px solid var(--persona-color, var(--accent))}
+  .grp-chip .grp-chip-x{cursor:pointer;color:var(--fg-faint);font-size:14px;
+    line-height:1;padding:0 2px;border-radius:50%;
+    transition:background .12s, color .12s}
+  .grp-chip .grp-chip-x:hover{background:rgba(255,80,80,.18);color:#ff8888}
+  .grp-suggest{position:absolute;left:0;right:0;top:100%;margin-top:4px;
+    background:var(--bg-2);border:1px solid var(--border);border-radius:8px;
+    box-shadow:0 12px 36px rgba(0,0,0,.42);max-height:240px;overflow-y:auto;
+    padding:4px;z-index:80;animation:rs-pop-in .12s ease-out}
+  .grp-suggest .grp-row{display:flex;align-items:center;gap:8px;
+    padding:7px 10px;border-radius:6px;cursor:pointer;font-size:13px;
+    color:var(--fg);transition:background .1s}
+  .grp-suggest .grp-row:hover,.grp-suggest .grp-row.active{
+    background:rgba(255,255,255,.06)}
+  .grp-suggest .grp-row .grp-dot{width:9px;height:9px;border-radius:50%;
+    flex:0 0 9px;background:var(--persona-color, var(--accent))}
+  .grp-suggest .grp-row .grp-name{font-weight:500}
+  .grp-suggest .grp-row .grp-cap{flex:1;font-size:11.5px;color:var(--fg-faint);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-left:4px}
+  .grp-empty{padding:10px 12px;color:var(--fg-faint);font-size:12.5px;
+    line-height:1.4;text-align:center}
+
   /* Personas edit view */
   .persona-edit-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
   .back-btn{flex:0 0 32px;width:32px;height:32px;border-radius:8px;border:none;
@@ -1914,6 +1974,20 @@
           <path d="M12 5v14M5 12h14"/>
         </svg>
         <span>New session</span>
+      </button>
+      <!-- Group chat: pick 2+ personas, every message you send fans
+           out to all of them in parallel and each replies in their
+           own bubble. -->
+      <button class="new-btn group-btn" id="newGroupBtn"
+              title="Pick 2+ personas; every message fans out to all of them in parallel">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+          <circle cx="9" cy="7" r="4"/>
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+          <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+        </svg>
+        <span>New group chat</span>
       </button>
     </div>
     <!-- Persona filter dropdown. Populated dynamically by JS — one
@@ -2567,6 +2641,37 @@
   <div class="modal-actions">
     <button type="button" class="btn-ghost"   id="newSessionCancel">Cancel</button>
     <button type="button" class="btn-primary" id="newSessionCreate">Create</button>
+  </div>
+</div>
+
+<!-- New-group-chat popup — pick 2+ personas, chat with all of them at
+     once. The picker uses a chip-add UI: type @ in the input to filter
+     suggestions, click to add. Already-added personas are filtered out
+     of suggestions on subsequent picks. -->
+<div class="modal-backdrop" id="newGroupBackdrop"></div>
+<div class="modal" id="newGroupModal" hidden>
+  <button class="close" id="newGroupClose" aria-label="Close">×</button>
+  <h3>New group chat</h3>
+  <label class="setting-label" for="newGroupTitle">Title (optional)</label>
+  <input type="text" id="newGroupTitle" class="setting-input wide"
+         placeholder="e.g. Brainstorm session"
+         autocomplete="off" spellcheck="false" maxlength="80">
+  <label class="setting-label">Members (pick 2+)</label>
+  <div class="grp-picker">
+    <div class="grp-chips" id="newGroupChips"></div>
+    <input type="text" id="newGroupSearch" class="setting-input wide"
+           placeholder="Type @ or search to add personas…"
+           autocomplete="off" spellcheck="false">
+    <div class="grp-suggest" id="newGroupSuggest" hidden></div>
+  </div>
+  <p class="setting-help">
+    Every message you send goes to all members in parallel; each
+    persona replies in their own bubble. You can add more later from
+    the chat header.
+  </p>
+  <div class="modal-actions">
+    <button type="button" class="btn-ghost"   id="newGroupCancel">Cancel</button>
+    <button type="button" class="btn-primary" id="newGroupCreate">Create</button>
   </div>
 </div>
 
@@ -3650,7 +3755,19 @@
   }
 
   // ───── messages ─────
-  function clearMessages(){messagesEl.innerHTML='';streamingId=streamingBubble=null;}
+  function clearMessages(){
+    messagesEl.innerHTML='';
+    // Multi-stream cleanup: drop every in-flight bubble's state so
+    // switching chats doesn't leave the rAF drainer poking detached
+    // DOM nodes.
+    _streams.clear();
+    if (_streamRafId != null){
+      cancelAnimationFrame(_streamRafId);
+      _streamRafId = null;
+    }
+    streamingId = streamingBubble = null;
+    _streamFrozenEl = _streamLiveEl = _streamCursorEl = null;
+  }
 
   function emptyPane(){
     // Surface the active session's persona so the welcome heading reads
@@ -3953,6 +4070,7 @@
     const wrap = document.createElement('div');
     wrap.className = 'msg ' + (msg.role === 'user' ? 'user' : 'bot');
     if (msg.id) wrap.dataset.id = msg.id;
+    if (msg.personaId) wrap.dataset.personaId = msg.personaId;
     wrap.dataset.text = msg.text || '';
 
     // No "CC" avatar on bot bubbles — keeps the chat clean and reads like
@@ -3963,9 +4081,30 @@
     const stack = document.createElement('div');
     stack.className = 'bubble-stack';
 
+    // Group-chat label: when a bot message is tagged with personaId,
+    // prepend a tiny "Pallavi" / "Claudy" / etc. badge in that persona's
+    // colour so the user can tell who's speaking at a glance. The
+    // badge sits above the bubble so it doesn't compete with content.
+    if (msg.role === 'assistant' && msg.personaId){
+      const tag = document.createElement('div');
+      tag.className = 'persona-tag';
+      const col = personaColor(msg.personaId);
+      tag.style.color = col;
+      tag.style.borderColor = col;
+      const pname = (personasState.personas.find(p => p.id === msg.personaId)?.name)
+                    || msg.personaId;
+      tag.textContent = pname;
+      stack.appendChild(tag);
+    }
+
     const bubble = document.createElement('div');
     bubble.className = 'bubble' + (msg.role === 'user' ? '' : ' bot');
     bubble.dataset.raw = msg.text || '';
+    if (msg.role === 'assistant' && msg.personaId){
+      bubble.classList.add('with-persona');
+      const col = personaColor(msg.personaId);
+      bubble.style.setProperty('--persona-color', col);
+    }
 
     let html = '';
     if (msg.role === 'user' && msg.attachments) html += renderAttachments(msg.attachments);
@@ -4087,28 +4226,29 @@
     // except the last RESUME_TAIL chars into the frozen <div>, then
     // let the rAF drainer animate only the small tail.
     const RESUME_TAIL = 200;
-    if (c && c.current && c.current.id){
-      startStream(c.current.id);
-      if (c.current.text){
-        const full = c.current.text;
-        if (streamingBubble) streamingBubble.dataset.raw = full;
-        if (full.length > RESUME_TAIL){
-          let freezeAt = findSafeFreezeIdx(full, full.length - RESUME_TAIL);
-          // Fallback: no safe paragraph break in the early prefix —
-          // hard-cap at full.length - RESUME_TAIL so we still show
-          // the bulk of the reply instantly.
-          if (freezeAt <= 0) freezeAt = Math.max(0, full.length - RESUME_TAIL);
-          if (freezeAt > 0 && _streamFrozenEl){
-            _streamFrozenEl.insertAdjacentHTML('beforeend', md(full.slice(0, freezeAt)));
-            _streamFrozenLen = freezeAt;
+    // Group chats may have multiple in-flight streams — restore each.
+    const liveStreams = c && c.streams && c.streams.size
+      ? [...c.streams.values()]
+      : (c && c.current && c.current.id ? [c.current] : []);
+    if (liveStreams.length){
+      for (const cs of liveStreams){
+        startStream(cs.id, cs.personaId);
+        const sState = _streams.get(cs.id);
+        const full = cs.text || '';
+        if (sState && full){
+          sState.bubble.dataset.raw = full;
+          if (full.length > RESUME_TAIL){
+            let freezeAt = findSafeFreezeIdx(full, full.length - RESUME_TAIL);
+            if (freezeAt <= 0) freezeAt = Math.max(0, full.length - RESUME_TAIL);
+            if (freezeAt > 0 && sState.frozenEl){
+              sState.frozenEl.insertAdjacentHTML('beforeend', md(full.slice(0, freezeAt)));
+              sState.frozenLen = freezeAt;
+            }
+            sState.revealedLen = freezeAt;
           }
-          _streamRevealedLen = freezeAt;
         }
-        // Kick the rAF drainer; it'll animate the tail.
-        ensureStreamRaf();
       }
-      // Show "thinking" dots if claude is mid-tool-use (no text yet
-      // but more is coming) — provides a continuity cue.
+      ensureStreamRaf();
       if (c.busy) setStatus('thinking…','busy');
     } else if (c && c.busy){
       // Worker is busy but hasn't emitted any text yet — show dots
@@ -4160,15 +4300,31 @@
   // switch) drains in ~2 seconds — visible typewriter effect, not 12s.
   // Small incremental deltas stay at baseline cps so they look natural.
   const MAX_CHARS_PER_FRAME     = 800;   // ceiling per frame on huge bursts
-  // Stream state — one in-flight stream at a time, attached to streamingBubble.
-  let _streamRafId         = null;
-  let _streamLastFrameTs   = 0;
-  let _streamCharBudget    = 0;     // fractional chars carried between frames
-  let _streamRevealedLen   = 0;     // # of chars from .dataset.raw drained to DOM
-  let _streamFrozenLen     = 0;     // # of chars committed to .md-frozen
-  let _streamFrozenEl      = null;  // <div class="md-frozen"> inside the bubble
-  let _streamLiveEl        = null;  // <div class="md-live"> inside the bubble
-  let _streamCursorEl      = null;  // <span class="stream-cursor">
+  // ─── multi-stream renderer ───
+  // Each in-flight assistant message has its own bubble + per-stream
+  // state. Keyed by message id so a group chat can stream from N
+  // personas in parallel without their typewriter effects clobbering
+  // each other. The legacy `streamingBubble` / `streamingId` vars below
+  // track the most-recently-started stream as a back-compat shim for
+  // call sites that don't care about parallelism.
+  const _streams = new Map();   // msgId → StreamState
+  let _streamRafId = null;
+
+  function _newStreamState(id, personaId){
+    return {
+      id,
+      personaId: personaId || null,
+      bubble: null,
+      frozenEl: null,
+      liveEl: null,
+      cursorEl: null,
+      revealedLen: 0,
+      frozenLen: 0,
+      lastFrameTs: 0,
+      charBudget: 0,
+      hidden: false,           // bracketed scheduler messages
+    };
+  }
 
   // Find the largest index `i <= upto` such that raw[0..i] ends right
   // after a paragraph break (`\n\n`) and that break is NOT inside an
@@ -4201,81 +4357,104 @@
     _streamRafId = requestAnimationFrame(_streamFrame);
   }
 
+  function _drainStream(s, now){
+    // Returns true if this stream still has unread chars after the frame.
+    if (!s.bubble || s.hidden) return false;
+    const raw    = s.bubble.dataset.raw || '';
+    const unread = raw.length - s.revealedLen;
+    if (unread <= 0){
+      s.lastFrameTs = now;
+      return false;
+    }
+    const speedup = Math.min(STREAM_MAX_SPEEDUP,
+                              1 + unread / STREAM_ADAPT_DENOM);
+    const cps     = STREAM_BASE_CPS * speedup;
+    const dt      = s.lastFrameTs ? Math.max(1, now - s.lastFrameTs) : 16;
+    s.charBudget += (cps * dt) / 1000;
+    let n = Math.floor(s.charBudget);
+    if (n < 1){
+      s.lastFrameTs = now;
+      return true;            // wait for next frame
+    }
+    s.charBudget -= n;
+    n = Math.min(n, unread, MAX_CHARS_PER_FRAME);
+    s.revealedLen += n;
+
+    const safeIdx = findSafeFreezeIdx(raw, s.revealedLen);
+    if (safeIdx > s.frozenLen && s.frozenEl){
+      const freezeChunk = raw.slice(s.frozenLen, safeIdx);
+      s.frozenEl.insertAdjacentHTML('beforeend', md(freezeChunk));
+      s.frozenLen = safeIdx;
+    }
+    const liveTail = raw.slice(s.frozenLen, s.revealedLen);
+    if (s.liveEl){
+      s.liveEl.innerHTML = md(liveTail);
+    }
+    s.lastFrameTs = now;
+    return s.revealedLen < raw.length;
+  }
+
   function _streamFrame(now){
     _streamRafId = null;
-    if (!streamingBubble) return;
-    const raw   = streamingBubble.dataset.raw || '';
-    const unread = raw.length - _streamRevealedLen;
-    if (unread <= 0){
-      _streamLastFrameTs = now;
-      return;
+    let needsMore = false;
+    for (const s of _streams.values()){
+      try {
+        if (_drainStream(s, now)) needsMore = true;
+      } catch (e) { console.warn('stream frame error', e); }
     }
-    // Adaptive cps: base + linear ramp on buffer pressure.
-    const speedup   = Math.min(STREAM_MAX_SPEEDUP, 1 + unread / STREAM_ADAPT_DENOM);
-    const cps       = STREAM_BASE_CPS * speedup;
-    // Accumulate fractional char budget so an integer floor doesn't
-    // permanently lose tiny per-frame remainders (which would cap us
-    // below the configured cps).
-    const dt = _streamLastFrameTs ? Math.max(1, now - _streamLastFrameTs) : 16;
-    _streamCharBudget += (cps * dt) / 1000;
-    let n = Math.floor(_streamCharBudget);
-    if (n < 1){
-      // Not enough budget yet — wait one more frame.
-      _streamLastFrameTs = now;
-      _streamRafId = requestAnimationFrame(_streamFrame);
-      return;
-    }
-    _streamCharBudget -= n;
-    n = Math.min(n, unread, MAX_CHARS_PER_FRAME);
-    _streamRevealedLen += n;
-
-    // Step 1: see if we crossed a safe paragraph break since last frame.
-    // If so, freeze everything up to that boundary.
-    const safeIdx = findSafeFreezeIdx(raw, _streamRevealedLen);
-    if (safeIdx > _streamFrozenLen && _streamFrozenEl){
-      const freezeChunk = raw.slice(_streamFrozenLen, safeIdx);
-      // insertAdjacentHTML appends without touching prior siblings — no flicker on already-frozen blocks.
-      _streamFrozenEl.insertAdjacentHTML('beforeend', md(freezeChunk));
-      _streamFrozenLen = safeIdx;
-    }
-
-    // Step 2: render the live tail. Because we freeze on `\n\n`, the
-    // live tail is bounded to a single paragraph (or one in-flight
-    // code/list block) — reparsing it on every frame is cheap and
-    // visually invisible. The expensive cost would be reparsing the
-    // ENTIRE bubble; that no longer happens because frozen blocks
-    // are siblings that never get re-rendered.
-    const liveTail = raw.slice(_streamFrozenLen, _streamRevealedLen);
-    if (_streamLiveEl){
-      _streamLiveEl.innerHTML = md(liveTail);
-    }
-
-    _streamLastFrameTs = now;
-    followIfPinned();
-
-    // If buffer still has unread chars, keep ticking. If we've drained
-    // everything, stop — appendDelta() will rearm the rAF when more
-    // arrives.
-    if (_streamRevealedLen < raw.length){
+    if (_streams.size) followIfPinned();
+    if (needsMore){
       _streamRafId = requestAnimationFrame(_streamFrame);
     }
   }
 
-  function startStream(id){
+  // (legacy single-stream drainer removed — _streamFrame above now
+  // iterates over every entry in _streams, so multiple personas can
+  // typewriter in parallel without clobbering each other.)
+
+  function startStream(id, personaId){
+    // Idempotent — if a state already exists for this id (e.g. resume
+    // after chat switch), reuse the bubble.
+    if (_streams.has(id)){
+      const s = _streams.get(id);
+      streamingId = id;
+      streamingBubble = s.bubble;
+      _streamFrozenEl = s.frozenEl;
+      _streamLiveEl   = s.liveEl;
+      _streamCursorEl = s.cursorEl;
+      return;
+    }
     const placeholder = messagesEl.querySelector('.empty-pane');
     if (placeholder) placeholder.remove();
     const wrap = document.createElement('div');
     wrap.className = 'msg bot';
     wrap.dataset.id = id;
+    if (personaId) wrap.dataset.personaId = personaId;
     wrap.dataset.text = '';
-    // No avatar — see comment in renderMessage().
 
     const stack = document.createElement('div');
     stack.className = 'bubble-stack';
 
+    // Persona tag above the bubble — same convention as renderMessage().
+    if (personaId){
+      const tag = document.createElement('div');
+      tag.className = 'persona-tag';
+      const col = personaColor(personaId);
+      tag.style.color = col;
+      tag.style.borderColor = col;
+      const pname = (personasState.personas.find(p => p.id === personaId)?.name)
+                    || personaId;
+      tag.textContent = pname;
+      stack.appendChild(tag);
+    }
+
     const bubble = document.createElement('div');
     bubble.className = 'bubble bot streaming';
     bubble.dataset.raw = '';
+    if (personaId){
+      bubble.classList.add('with-persona');
+      bubble.style.setProperty('--persona-color', personaColor(personaId));
+    }
 
     // Sub-containers: frozen (parsed once) + live (in-flight tail) + cursor
     const frozen = document.createElement('div'); frozen.className = 'md-frozen';
@@ -4294,67 +4473,82 @@
     wrap.appendChild(stack);
     messagesEl.appendChild(wrap);
 
-    streamingId         = id;
-    streamingBubble     = bubble;
-    _streamFrozenEl     = frozen;
-    _streamLiveEl       = live;
-    _streamCursorEl     = cursor;
-    _streamRevealedLen   = 0;
-    _streamFrozenLen     = 0;
-    _streamLastFrameTs   = 0;
-    _streamCharBudget    = 0;
+    const s = _newStreamState(id, personaId);
+    s.bubble    = bubble;
+    s.frozenEl  = frozen;
+    s.liveEl    = live;
+    s.cursorEl  = cursor;
+    _streams.set(id, s);
+    // Back-compat singletons — point at the latest stream so any
+    // call sites that still read these get something sensible.
+    streamingId      = id;
+    streamingBubble  = bubble;
+    _streamFrozenEl  = frozen;
+    _streamLiveEl    = live;
+    _streamCursorEl  = cursor;
     followIfPinned();
   }
 
-  function appendDelta(id, text){
-    if (streamingId !== id || !streamingBubble) startStream(id);
-    streamingBubble.dataset.raw = (streamingBubble.dataset.raw || '') + text;
+  function appendDelta(id, text, personaId){
+    let s = _streams.get(id);
+    if (!s){
+      startStream(id, personaId);
+      s = _streams.get(id);
+    }
+    if (!s) return;
+    s.bubble.dataset.raw = (s.bubble.dataset.raw || '') + (text || '');
     // Bracket-prefix scheduler messages stay invisible in the UI but
     // are still buffered + persisted. Once the assistant's response
-    // begins with `[`, hide the streaming bubble's wrapping `.msg`
-    // element (it'll be skipped on re-render too via renderMessage).
-    // The debug-toggle eye-button in the header flips visibility back
-    // on if the user wants to inspect scheduler traffic.
-    const head = (streamingBubble.dataset.raw || '').trimStart();
+    // begins with `[`, hide the streaming bubble's wrapping `.msg`.
+    const head = (s.bubble.dataset.raw || '').trimStart();
     if (head && head.startsWith('[') && !showBracketed){
-      const wrap = streamingBubble.closest('.msg');
+      const wrap = s.bubble.closest('.msg');
       if (wrap && wrap.style.display !== 'none') wrap.style.display = 'none';
-      return;  // also skip rAF tick — nothing visible to update
+      s.hidden = true;
+      return;
     }
     ensureStreamRaf();
   }
 
   function endStream(id){
-    if (_streamRafId != null){ cancelAnimationFrame(_streamRafId); _streamRafId = null; }
-    if (streamingBubble){
-      streamingBubble.classList.remove('streaming');
-      const raw = streamingBubble.dataset.raw || streamingBubble.innerText;
-      // Strip `|SEND| / |ARTIFACT|` markers before rendering — keep
-      // the raw text on dataset for copy/fork actions but display
-      // the cleaned version.
-      const display = stripSendMarkers(raw);
-      const stillThinking = isBusy();
-      // Final pass: collapse frozen+live back into a single innerHTML
-      // so the bubble matches the format of historical (non-streaming)
-      // bubbles. Keeps copy/fork/markdown actions consistent.
-      streamingBubble.innerHTML = md(display)
-        + (stillThinking ? '<span class="stream-cursor pending"></span>' : '');
-      const wrap = streamingBubble.closest('.msg');
-      if (wrap){
-        wrap.dataset.text = display;
-        const stack = streamingBubble.closest('.bubble-stack');
-        if (stack && !stack.querySelector('.msg-actions')){
-          stack.appendChild(buildMsgActions({role:'assistant', text: display, id}, streamingBubble));
-        }
-      }
-      refreshLastBotForkButton();
-      injectCodeCopyButtons(streamingBubble);
+    const s = _streams.get(id);
+    if (!s){
+      // Legacy single-stream cleanup if nothing is in the map (e.g.
+      // a hand-built stream from artificial assistant fallback).
+      streamingId = null; streamingBubble = null;
+      return;
     }
-    streamingId = null; streamingBubble = null;
-    _streamFrozenEl = _streamLiveEl = _streamCursorEl = null;
-    _streamRevealedLen = _streamFrozenLen = 0;
-    _streamLastFrameTs = 0;
-    _streamCharBudget = 0;
+    s.bubble.classList.remove('streaming');
+    const raw = s.bubble.dataset.raw || s.bubble.innerText || '';
+    const display = stripSendMarkers(raw);
+    const stillThinking = isBusy();
+    // Preserve the persona-coloured left border by rebuilding innerHTML
+    // (which we set to a flat md() pass below) without dropping the
+    // .with-persona class — that's a class on .bubble, not its content.
+    s.bubble.innerHTML = md(display)
+      + (stillThinking ? '<span class="stream-cursor pending"></span>' : '');
+    const wrap = s.bubble.closest('.msg');
+    if (wrap){
+      wrap.dataset.text = display;
+      const stack = s.bubble.closest('.bubble-stack');
+      if (stack && !stack.querySelector('.msg-actions')){
+        const msgObj = {role:'assistant', text: display, id};
+        if (s.personaId) msgObj.personaId = s.personaId;
+        stack.appendChild(buildMsgActions(msgObj, s.bubble));
+      }
+    }
+    refreshLastBotForkButton();
+    injectCodeCopyButtons(s.bubble);
+    _streams.delete(id);
+    // Clear back-compat singletons if they point at this stream.
+    if (streamingId === id){
+      streamingId = null; streamingBubble = null;
+      _streamFrozenEl = _streamLiveEl = _streamCursorEl = null;
+    }
+    if (!_streams.size && _streamRafId != null){
+      cancelAnimationFrame(_streamRafId);
+      _streamRafId = null;
+    }
   }
 
   // Strip every "still thinking" cursor we may have left on past bubbles.
@@ -4709,7 +4903,25 @@
     const tagChip = `<button type="button" class="t-tag" id="titleTagBtn"
         title="Click to set the project / theme tag for this chat"
         aria-label="Edit tag">${escHtml(tag)}</button>`;
-    if (pid){
+    if (s.groupChat){
+      // Group chats: title shows "Group · <title>" plus member chips +
+      // a "+ Add" button. Persona dot uses a multi-coloured gradient
+      // built from the member colours so the chat list also flags it
+      // visually.
+      const members = s.groupMembers || [];
+      const chips = members.map(m => {
+        const c = personaColor(m.id);
+        return `<span class="t-member" style="--persona-color:${c};color:${c}">${escHtml(m.name || m.id)}</span>`;
+      }).join('<span class="t-sep">·</span>');
+      titleLabel.innerHTML =
+        `<span class="t-persona" style="color:#f59e0b">Group</span>` +
+        ` <span class="t-sep">·</span> ${escHtml(s.title || 'Group chat')}` +
+        ` <span class="t-group-members">${chips}</span>` +
+        ` <button type="button" class="t-add-member" id="titleAddMemberBtn"
+            title="Add another persona to this group"
+            aria-label="Add persona">+ Add</button>` +
+        tagChip;
+    } else if (pid){
       titleLabel.innerHTML =
         `<span class="t-persona" style="color:${col}">${escHtml(pname)}</span>` +
         ` <span class="t-sep">·</span> ${escHtml(s.title || 'New chat')}` +
@@ -4717,6 +4929,11 @@
     } else {
       titleLabel.innerHTML = `${escHtml(s.title || 'New chat')}${tagChip}`;
     }
+    // "+ Add" button → open the persona picker in add-member mode.
+    document.getElementById('titleAddMemberBtn')?.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      openGroupAddPicker(activeId);
+    });
     // Page title follows the same data — `sessions` events fire here
     // when claude generates a chat title, so the browser tab updates
     // automatically without a separate hook.
@@ -5079,11 +5296,18 @@
         const c = getChat(sid);
         c.busy = true;
         c.turnHadAssistant = true;
-        c.current = {id: m.id, text: ''};
+        // Multi-stream tracking: c.streams is keyed by message id and
+        // holds {id, text, personaId} for every in-flight assistant
+        // message. Group chats can have several at once. c.current
+        // stays as a back-compat reference to the latest stream so
+        // older code paths keep working.
+        if (!c.streams) c.streams = new Map();
+        c.streams.set(m.id, {id: m.id, text: '', personaId: m.personaId || null});
+        c.current = {id: m.id, text: '', personaId: m.personaId || null};
         if (focused){
           turnHadAssistant = true;
           showTyping(false);
-          startStream(m.id);
+          startStream(m.id, m.personaId);
           setStatus('thinking…','busy');
         } else {
           markUnread(sid);
@@ -5093,12 +5317,19 @@
       case 'assistant_delta': {
         if (!sid) break;
         const c = getChat(sid);
-        if (!c.current || c.current.id !== m.id){
-          c.current = {id: m.id, text: ''};
+        if (!c.streams) c.streams = new Map();
+        let s = c.streams.get(m.id);
+        if (!s){
+          s = {id: m.id, text: '', personaId: m.personaId || null};
+          c.streams.set(m.id, s);
         }
-        c.current.text += (m.text || '');
+        s.text += (m.text || '');
+        // Keep c.current pointed at this delta's stream so any single-
+        // stream-aware code (e.g. the resume-on-switch path) sees the
+        // most-recent text.
+        c.current = s;
         if (focused){
-          appendDelta(m.id, m.text || '');
+          appendDelta(m.id, m.text || '', m.personaId);
         } else {
           markUnread(sid);
         }
@@ -5107,21 +5338,26 @@
       case 'assistant_end': {
         if (!sid) break;
         const c = getChat(sid);
-        if (c.current && c.current.text){
+        const s = c.streams && c.streams.get(m.id);
+        if (s && s.text){
           // Persist as a finalised message so a switch later shows it.
           if (!c.messages.some(x => x.id === m.id)){
-            c.messages.push({role:'assistant', text: c.current.text,
-                             id: m.id, ts: Date.now()/1000});
+            const persisted = {role:'assistant', text: s.text,
+                               id: m.id, ts: Date.now()/1000};
+            if (s.personaId) persisted.personaId = s.personaId;
+            c.messages.push(persisted);
           }
         }
-        c.current = null;
+        if (c.streams) c.streams.delete(m.id);
+        // Refresh c.current to the next active stream (if any) for
+        // back-compat readers.
+        c.current = (c.streams && c.streams.size)
+          ? c.streams.values().next().value
+          : null;
         if (focused){
           endStream(m.id);
-          // Safety net: once the assistant has produced a full reply,
-          // the first-reply hint is no longer relevant. Some flows
-          // (esp. tool-heavy turns where assistant_start was missed
-          // for the focused chat) leave the hint stuck — kill it
-          // here too. Cheap call, idempotent.
+          // Safety net: once an assistant reply has fully landed, the
+          // "first-reply takes a moment…" hint is no longer relevant.
           showTyping(false);
         }
         break;
@@ -5129,8 +5365,26 @@
       case 'turn_done': {
         if (sid){
           const c = getChat(sid);
-          c.busy = false;
-          c.current = null;
+          // Group-chat fan-out: each member fires its own turn_done
+          // tagged with personaId. We only flip c.busy = false when
+          // every member's turn is in. For non-group chats personaId
+          // is null and we clear immediately as before.
+          if (m.personaId && c.streams){
+            // Drop only this member's slot; other members may still
+            // be replying.
+            for (const [id, s] of c.streams.entries()){
+              if (s.personaId === m.personaId) c.streams.delete(id);
+            }
+            const stillStreaming = c.streams.size > 0;
+            c.busy = stillStreaming;
+            c.current = stillStreaming
+              ? c.streams.values().next().value
+              : null;
+          } else {
+            c.busy = false;
+            c.current = null;
+            if (c.streams) c.streams.clear();
+          }
           // Stash artifact records on the last assistant message in
           // memory, so renderAllMessages on session-switch repaints
           // chips correctly. The server has already mirrored these
@@ -5499,6 +5753,23 @@
         try { renderSessions(); } catch (e) {}
         try { refreshHeaderTitle(); } catch (e) {}
         try { refreshTypingAva(); } catch (e) {}
+        // If the group-chat modal is currently open, repaint its
+        // suggest list so the user immediately sees the freshly-loaded
+        // personas (no stale "no personas" empty state on first open).
+        try {
+          if (!document.getElementById('newGroupModal').hidden){
+            renderGroupSuggest(document.getElementById('newGroupSearch')?.value || '');
+          }
+        } catch (e) {}
+        break;
+      }
+      case 'group_member_added': {
+        // Server confirmed mid-convo add. The state-snapshot broadcast
+        // will refresh sessions[] which updates the chat header. Just
+        // flash a tiny banner so the user knows it landed.
+        const name = m.persona?.name || m.persona?.id || 'someone';
+        showBanner(`Added ${name} to the group.`);
+        setTimeout(hideBanner, 1800);
         break;
       }
       case 'persona': {
@@ -6044,6 +6315,179 @@
     document.getElementById('newSessionBackdrop').classList.remove('on');
     document.getElementById('newSessionModal').hidden = true;
   }
+
+  // ─────────────────────────────────────────────────────────────────
+  //  Group-chat creation
+  // ─────────────────────────────────────────────────────────────────
+  // The modal hosts a chip-add picker (selected personas as chips +
+  // an input that filters the suggestion list). Already-added personas
+  // disappear from suggestions until the user removes them. Mid-convo
+  // adds use the same picker via openGroupAddPicker(sid).
+  let _groupPickerSelected = [];   // [{id, name, color}, ...]
+  let _groupPickerActiveIdx = 0;   // arrow-nav highlight in suggestions
+  let _groupPickerExclude = [];    // ids the picker should hide (used by add-member flow)
+  let _groupAddTargetSid = null;   // when set, picker emits group_add for this sid
+
+  function openNewGroup(){
+    _groupPickerSelected = [];
+    _groupPickerExclude  = [];
+    _groupAddTargetSid   = null;
+    document.getElementById('newGroupTitle').value = '';
+    document.getElementById('newGroupSearch').value = '';
+    renderGroupChips();
+    renderGroupSuggest('');
+    document.getElementById('newGroupBackdrop').classList.add('on');
+    document.getElementById('newGroupModal').hidden = false;
+    // Refresh personas so the picker has the latest set / colours.
+    send({ type: 'personas_list' });
+    setTimeout(() => document.getElementById('newGroupSearch')?.focus(), 60);
+  }
+
+  function openGroupAddPicker(sid){
+    // Reuses the same modal but in "add to existing group" mode:
+    // selected → emit one group_add per add; existing members are
+    // pre-filtered so they don't reappear.
+    const sess = sessions.find(x => x.id === sid);
+    if (!sess || !sess.groupChat) return;
+    _groupPickerSelected = [];
+    _groupPickerExclude  = (sess.groupMembers || []).map(m => m.id);
+    _groupAddTargetSid   = sid;
+    document.getElementById('newGroupTitle').value = '';
+    document.getElementById('newGroupTitle').disabled = true;
+    document.getElementById('newGroupSearch').value = '';
+    renderGroupChips();
+    renderGroupSuggest('');
+    document.getElementById('newGroupBackdrop').classList.add('on');
+    document.getElementById('newGroupModal').hidden = false;
+    document.getElementById('newGroupModal').querySelector('h3').textContent = 'Add members';
+    document.getElementById('newGroupCreate').textContent = 'Add';
+    send({ type: 'personas_list' });
+    setTimeout(() => document.getElementById('newGroupSearch')?.focus(), 60);
+  }
+
+  function closeNewGroup(){
+    document.getElementById('newGroupBackdrop').classList.remove('on');
+    document.getElementById('newGroupModal').hidden = true;
+    document.getElementById('newGroupSuggest').hidden = true;
+    document.getElementById('newGroupTitle').disabled = false;
+    document.getElementById('newGroupModal').querySelector('h3').textContent = 'New group chat';
+    document.getElementById('newGroupCreate').textContent = 'Create';
+  }
+
+  function renderGroupChips(){
+    const wrap = document.getElementById('newGroupChips');
+    if (!wrap) return;
+    wrap.innerHTML = '';
+    for (const p of _groupPickerSelected){
+      const chip = document.createElement('span');
+      chip.className = 'grp-chip';
+      chip.style.setProperty('--persona-color', p.color || '#888');
+      chip.innerHTML = '<span class="grp-chip-name"></span>'
+                     + '<span class="grp-chip-x" aria-label="Remove">×</span>';
+      chip.querySelector('.grp-chip-name').textContent = p.name || p.id;
+      chip.querySelector('.grp-chip-x').onclick = () => {
+        _groupPickerSelected = _groupPickerSelected.filter(x => x.id !== p.id);
+        renderGroupChips();
+        renderGroupSuggest(document.getElementById('newGroupSearch')?.value || '');
+      };
+      wrap.appendChild(chip);
+    }
+  }
+
+  function renderGroupSuggest(query){
+    const box = document.getElementById('newGroupSuggest');
+    if (!box) return;
+    // Strip a leading @ so the user can type either "claudy" or "@claudy".
+    const q = (query || '').replace(/^@/, '').trim().toLowerCase();
+    const taken = new Set(_groupPickerSelected.map(p => p.id));
+    const exclude = new Set(_groupPickerExclude);
+    const candidates = (personasState.personas || []).filter(p => {
+      if (taken.has(p.id))   return false;
+      if (exclude.has(p.id)) return false;
+      if (p.disabled)        return false;
+      if (!q) return true;
+      const hay = ((p.name || '') + ' ' + (p.id || '') + ' '
+                   + (PERSONA_CAPABILITIES[p.id] || '')).toLowerCase();
+      return hay.includes(q);
+    });
+    box.innerHTML = '';
+    if (!candidates.length){
+      const e = document.createElement('div');
+      e.className = 'grp-empty';
+      e.textContent = q
+        ? `No personas matching "${q}"`
+        : (taken.size + exclude.size > 0
+            ? 'All available personas already in this group.'
+            : 'No personas yet — create some in Settings → Personas.');
+      box.appendChild(e);
+      box.hidden = false;
+      return;
+    }
+    _groupPickerActiveIdx = Math.min(_groupPickerActiveIdx, candidates.length - 1);
+    candidates.forEach((p, i) => {
+      const row = document.createElement('div');
+      row.className = 'grp-row' + (i === _groupPickerActiveIdx ? ' active' : '');
+      row.dataset.idx = i;
+      const dot = document.createElement('span');
+      dot.className = 'grp-dot';
+      dot.style.background = personaColor(p.id);
+      const nm = document.createElement('span');
+      nm.className = 'grp-name';
+      nm.textContent = p.name || p.id;
+      const cap = document.createElement('span');
+      cap.className = 'grp-cap';
+      cap.textContent = PERSONA_CAPABILITIES[p.id] || '';
+      row.appendChild(dot);
+      row.appendChild(nm);
+      row.appendChild(cap);
+      row.onmouseenter = () => {
+        _groupPickerActiveIdx = i;
+        box.querySelectorAll('.grp-row.active').forEach(r => r.classList.remove('active'));
+        row.classList.add('active');
+      };
+      row.onclick = () => groupPickerAdd(p);
+      box.appendChild(row);
+    });
+    box.hidden = false;
+  }
+
+  function groupPickerAdd(p){
+    if (!p || !p.id) return;
+    if (_groupPickerSelected.some(x => x.id === p.id)) return;
+    _groupPickerSelected.push({ id: p.id, name: p.name, color: personaColor(p.id) });
+    document.getElementById('newGroupSearch').value = '';
+    _groupPickerActiveIdx = 0;
+    renderGroupChips();
+    renderGroupSuggest('');
+    document.getElementById('newGroupSearch')?.focus();
+  }
+
+  function groupPickerSubmit(){
+    if (_groupAddTargetSid){
+      // Mid-convo add to existing group — fire one group_add per pick.
+      if (!_groupPickerSelected.length) return;
+      const sid = _groupAddTargetSid;
+      for (const p of _groupPickerSelected){
+        send({ type: 'group_add', id: sid, persona: p.id });
+      }
+      closeNewGroup();
+      return;
+    }
+    // New group — needs at least 2 members.
+    if (_groupPickerSelected.length < 2){
+      showBanner('Pick at least 2 personas to start a group chat.');
+      setTimeout(hideBanner, 2500);
+      return;
+    }
+    const title = (document.getElementById('newGroupTitle').value || '').trim();
+    _pendingNewSession = true;
+    send({
+      type:    'new_group',
+      members: _groupPickerSelected.map(p => p.id),
+      title:   title || undefined,
+    });
+    closeNewGroup();
+  }
   document.getElementById('newSessionClose').addEventListener('click', closeNewSession);
   document.getElementById('newSessionCancel').addEventListener('click', closeNewSession);
   document.getElementById('newSessionBackdrop').addEventListener('click', closeNewSession);
@@ -6061,6 +6505,55 @@
     // event arrives. Other tabs (state-event sticky) won't follow.
     _pendingNewSession = true;
     if (send(payload)) closeNewSession();
+  });
+
+  // ─── group-chat modal wiring ───
+  document.getElementById('newGroupBtn')?.addEventListener('click', () => {
+    if (!online) return;
+    closeDrawer();
+    openNewGroup();
+  });
+  document.getElementById('newGroupClose')?.addEventListener('click', closeNewGroup);
+  document.getElementById('newGroupCancel')?.addEventListener('click', closeNewGroup);
+  document.getElementById('newGroupBackdrop')?.addEventListener('click', closeNewGroup);
+  document.getElementById('newGroupCreate')?.addEventListener('click', groupPickerSubmit);
+  document.getElementById('newGroupSearch')?.addEventListener('input', (ev) => {
+    _groupPickerActiveIdx = 0;
+    renderGroupSuggest(ev.target.value);
+  });
+  document.getElementById('newGroupSearch')?.addEventListener('keydown', (ev) => {
+    const box = document.getElementById('newGroupSuggest');
+    const rows = [...(box?.querySelectorAll('.grp-row') || [])];
+    if (ev.key === 'ArrowDown'){
+      ev.preventDefault();
+      if (!rows.length) return;
+      _groupPickerActiveIdx = (_groupPickerActiveIdx + 1) % rows.length;
+      rows.forEach(r => r.classList.toggle('active',
+        +r.dataset.idx === _groupPickerActiveIdx));
+      rows[_groupPickerActiveIdx]?.scrollIntoView({block:'nearest'});
+    } else if (ev.key === 'ArrowUp'){
+      ev.preventDefault();
+      if (!rows.length) return;
+      _groupPickerActiveIdx = (_groupPickerActiveIdx - 1 + rows.length) % rows.length;
+      rows.forEach(r => r.classList.toggle('active',
+        +r.dataset.idx === _groupPickerActiveIdx));
+      rows[_groupPickerActiveIdx]?.scrollIntoView({block:'nearest'});
+    } else if (ev.key === 'Enter'){
+      ev.preventDefault();
+      if (rows.length){
+        rows[_groupPickerActiveIdx]?.click();
+      } else if (_groupPickerSelected.length >= 2 || _groupAddTargetSid){
+        // Empty input + already have picks → submit.
+        groupPickerSubmit();
+      }
+    } else if (ev.key === 'Backspace' && !ev.target.value && _groupPickerSelected.length){
+      // Backspace on empty input pops the last chip — IDE-style.
+      _groupPickerSelected.pop();
+      renderGroupChips();
+      renderGroupSuggest('');
+    } else if (ev.key === 'Escape'){
+      closeNewGroup();
+    }
   });
   // Browse → server-side native folder picker (macOS Finder via osascript,
   // Linux zenity / kdialog if available, Windows COM dialog). The picked

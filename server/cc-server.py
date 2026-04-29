@@ -689,9 +689,33 @@ TELEGRAM_MAX_MSG_LEN = 3800
 # a session we don't have a worker for, we spawn one. Workers can be
 # explicitly stopped (delete session, /stop) but switching never kills
 # them.
+def worker_key(sid: str, persona_id: str | None = None) -> str:
+    """Compose the workers-dict key for a session.
+
+    Normal chats: just the sid. Group chats: <sid>:<personaId> so each
+    member persona has its own claude subprocess inside the same group
+    session. The colon is not a valid char in uuid4 strings so the
+    namespace is unambiguous."""
+    if not persona_id:
+        return sid
+    return f'{sid}:{persona_id}'
+
+
+def parse_worker_key(key: str) -> tuple[str, str | None]:
+    """Inverse of worker_key — splits "<sid>:<personaId>" back out."""
+    if ':' in key:
+        s, _, p = key.partition(':')
+        return s, p
+    return key, None
+
+
 class Worker:
-    def __init__(self, sid: str):
+    def __init__(self, sid: str, persona_id: str | None = None):
+        # `sid` here is the BRIDGE session id. `persona_id` is set only
+        # when this worker is one member of a group chat — its presence
+        # also makes the workers-dict key compound (see worker_key()).
         self.sid = sid
+        self.persona_id = persona_id    # None for normal chats
         self.proc: asyncio.subprocess.Process | None = None
         self.pid: int | None = None
         self.busy: bool = False
@@ -728,12 +752,23 @@ class State:
         # because it needs broadcast() defined and a running event loop.
         self.routines: 'RoutineManager | None' = None
 
-    def worker_for(self, sid: str) -> Worker:
-        w = self.workers.get(sid)
+    def worker_for(self, sid: str, persona_id: str | None = None) -> Worker:
+        key = worker_key(sid, persona_id)
+        w = self.workers.get(key)
         if w is None:
-            w = Worker(sid)
-            self.workers[sid] = w
+            w = Worker(sid, persona_id)
+            self.workers[key] = w
         return w
+
+    def members_workers(self, sid: str) -> list[Worker]:
+        """All workers (across all member personas) for a group chat
+        sid. Returns [] if no workers have spawned yet."""
+        out = []
+        prefix = sid + ':'
+        for key, w in self.workers.items():
+            if key == sid or key.startswith(prefix):
+                out.append(w)
+        return out
 
 state = State()
 
@@ -1769,20 +1804,28 @@ def build_skills_preamble() -> str:
     )
 
 
-async def start_worker(sid: str, *, force_fresh: bool = False) -> Worker | None:
+async def start_worker(sid: str, *, force_fresh: bool = False,
+                       persona_override: str | None = None) -> Worker | None:
     """Spawn (or respawn) the claude subprocess for session `sid`. If a
     worker already exists for this sid AND its proc is alive, it's left
     alone — sends from other tabs land on it harmlessly.
 
     `force_fresh=True` skips the --resume path even if the session id
     looks healthy. Useful for the resilience fallback after repeated
-    crashes."""
+    crashes.
+
+    `persona_override` swaps in a different persona's system prompt
+    instead of the session's persona. Used by group chats so each
+    member persona has its own claude worker (keyed by
+    `<sid>:<personaId>`) using its own personality. Group chats always
+    force_fresh because we synthesize context per-turn rather than
+    relying on claude's own session memory."""
     sess = load_session(sid)
     if sess is None:
         log(f'start_worker: unknown session {sid}')
         return None
 
-    w = state.worker_for(sid)
+    w = state.worker_for(sid, persona_override)
     # Already running? Nothing to do.
     if w.proc is not None and w.proc.returncode is None:
         return w
@@ -1790,10 +1833,22 @@ async def start_worker(sid: str, *, force_fresh: bool = False) -> Worker | None:
     cwd = sess.get('cwd') or DEFAULT_CWD
     sess_model = sess.get('model') or MODEL_DEFAULT
 
-    # If the session has a stored systemPrompt (forked / persona-pinned),
-    # always use it. Otherwise build a resume context blob from recent
-    # messages — this is our reboot/crash safety net.
-    persona_prompt = sess.get('systemPrompt') or build_resume_system_prompt(sess)
+    # Persona override (group-chat member): use that persona's prompt
+    # bundle (PERSONA.md + INSTRUCTIONS.md → systemPrompt) and force
+    # fresh spawning since we don't reuse a single claude session for
+    # group members.
+    if persona_override:
+        force_fresh = True
+        p = persona_full(persona_override)
+        if p:
+            persona_prompt = materialise_persona_files(p, Path(cwd))
+        else:
+            persona_prompt = None
+    else:
+        # If the session has a stored systemPrompt (forked / persona-
+        # pinned), always use it. Otherwise build a resume context blob
+        # from recent messages — this is our reboot/crash safety net.
+        persona_prompt = sess.get('systemPrompt') or build_resume_system_prompt(sess)
     # Always prepend the global rules so claude knows how to handle the
     # `[TG]` source marker, when to use Markdown, and the file-output
     # convention. Persona instructions come AFTER so the persona can
@@ -1813,6 +1868,17 @@ async def start_worker(sid: str, *, force_fresh: bool = False) -> Worker | None:
     # via the system-prompt blob).
     use_resume = (not force_fresh) and (not w.fallback_armed)
 
+    # Group-member workers share the bridge session id (used for our
+    # fan-out + history append) but need a UNIQUE claude-session id so
+    # the per-persona memories don't collide. uuid5 makes the per-member
+    # id deterministic across restarts so --resume keeps working.
+    if persona_override:
+        claude_sid = str(uuid.uuid5(
+            uuid.UUID('00000000-0000-0000-0000-c1aac1aac1aa'),
+            f'{sid}:{persona_override}'))
+    else:
+        claude_sid = sid
+
     args = [
         CLAUDE_BIN, '-p',
         '--input-format', 'stream-json',
@@ -1825,12 +1891,14 @@ async def start_worker(sid: str, *, force_fresh: bool = False) -> Worker | None:
     if system_prompt:
         args += ['--append-system-prompt', system_prompt]
     if use_resume:
-        args += ['--resume', sid]
+        args += ['--resume', claude_sid]
     else:
-        args += ['--session-id', sid]
+        args += ['--session-id', claude_sid]
 
-    log(f'spawning claude sid={sid[:8]} resume={use_resume} model={sess_model} '
-        f'cwd={cwd} (fallback_armed={w.fallback_armed})')
+    log(f'spawning claude sid={sid[:8]}'
+        f'{":"+persona_override if persona_override else ""} '
+        f'resume={use_resume} model={sess_model} cwd={cwd} '
+        f'(fallback_armed={w.fallback_armed})')
     try:
         w.proc = await asyncio.create_subprocess_exec(
             *args,
@@ -1955,6 +2023,127 @@ async def new_session(cwd_override: str | None = None,
     # locks once she's spawned), so refresh that.
     await broadcast({'type': 'personas', **list_personas_brief()})
     await broadcast(state_snapshot())
+
+
+async def group_add_member(sid: str, persona_id: str) -> None:
+    """Add a persona to an existing group chat mid-conversation. Idempotent
+    — adding a persona that's already a member is a no-op."""
+    sess = load_session(sid)
+    if sess is None or not sess.get('groupChat'):
+        await broadcast({'type': 'error',
+            'message': 'group_add: not a group chat'})
+        return
+    p = persona_full(persona_id)
+    if p is None:
+        await broadcast({'type': 'error',
+            'message': f'group_add: unknown persona {persona_id!r}'})
+        return
+    members = sess.get('groupMembers') or []
+    if any(m.get('id') == persona_id for m in members):
+        return                                # already in the group
+    members.append({'id': p['id'], 'name': p.get('name')})
+    sess['groupMembers'] = members
+    sess['lastActiveAt'] = time.time()
+    save_session(sess)
+    upsert_index_entry(sess)
+    # Drop persona files into the cwd so the new member-worker has them.
+    try:
+        cwd = Path(sess.get('cwd') or DEFAULT_CWD)
+        mdir = cwd / 'personas' / p['id']
+        mdir.mkdir(parents=True, exist_ok=True)
+        (mdir / 'PERSONA.md').write_text(p.get('text') or '', encoding='utf-8')
+        (mdir / 'INSTRUCTIONS.md').write_text(p.get('instructions') or '',
+                                              encoding='utf-8')
+    except Exception as e:
+        log(f'group_add_member: persona file write failed: {e}')
+    # Pre-spawn the worker so the next user turn answers without lag.
+    try:
+        await start_worker(sid, force_fresh=True, persona_override=p['id'])
+    except Exception as e:
+        log(f'group_add_member: spawn failed: {e}')
+    await broadcast({'type': 'group_member_added',
+                     'sessionId': sid, 'persona': members[-1]})
+    await broadcast(state_snapshot())
+
+
+async def new_group_session(member_ids: list[str],
+                              title: str | None = None,
+                              cwd_override: str | None = None) -> str | None:
+    """Create a group chat that fans messages out to multiple personas.
+    Each member persona gets its own claude worker (keyed by
+    `<sid>:<personaId>`) when the first message arrives.
+
+    `member_ids` must contain at least 2 valid persona ids. Duplicates
+    are dropped. Returns the new session id, or None on failure."""
+    member_ids = list(dict.fromkeys(member_ids or []))   # dedupe, preserve order
+    # Validate every id resolves to a real persona — otherwise the
+    # member-worker spawn would crash later with no system prompt.
+    valid: list[dict] = []
+    for pid in member_ids:
+        p = persona_full(pid)
+        if p:
+            valid.append(p)
+        else:
+            log(f'new_group_session: unknown persona {pid!r}, skipping')
+    if len(valid) < 2:
+        await broadcast({'type': 'error',
+            'message': 'Group chat needs at least 2 valid personas.'})
+        return None
+
+    sid = str(uuid.uuid4())
+    chat_id = next_chat_id('group')
+    if cwd_override:
+        cwd = Path(cwd_override).expanduser().resolve()
+    else:
+        cwd = CWD_ROOT / chat_id
+    cwd.mkdir(parents=True, exist_ok=True)
+
+    # Materialise EVERY member's persona files into the group cwd so
+    # each member-worker has its own PERSONA.md / INSTRUCTIONS.md ready
+    # to read when it spawns. Files are namespaced under personas/<id>/
+    # to avoid collisions.
+    for p in valid:
+        try:
+            mdir = cwd / 'personas' / p['id']
+            mdir.mkdir(parents=True, exist_ok=True)
+            (mdir / 'PERSONA.md').write_text(p.get('text') or '', encoding='utf-8')
+            (mdir / 'INSTRUCTIONS.md').write_text(p.get('instructions') or '',
+                                                  encoding='utf-8')
+        except Exception as e:
+            log(f'new_group_session: persona file write failed for '
+                f'{p["id"]}: {e}')
+
+    member_brief = [{'id': p['id'], 'name': p.get('name')} for p in valid]
+    sess = {
+        'id': sid,
+        'title': (title or 'Group chat').strip()[:80] or 'Group chat',
+        'createdAt': time.time(),
+        'lastActiveAt': time.time(),
+        'favorite': False,
+        'cwd': str(cwd),
+        'messages': [],
+        'chatId': chat_id,
+        'tag': 'general',
+        'groupChat': True,
+        'groupMembers': member_brief,    # [{id, name}, …] — UI label cache
+    }
+    save_session(sess)
+    upsert_index_entry(sess)
+    state.active_id = sid
+    set_active(sid)
+    await broadcast({'type': 'spawning',
+                     'sessionId': sid,
+                     'title': sess['title']})
+    # Pre-spawn each member worker so the first user message gets
+    # answered without a cold-start lag. force_fresh — group members
+    # don't share claude sessions with anything else.
+    for p in valid:
+        try:
+            await start_worker(sid, force_fresh=True, persona_override=p['id'])
+        except Exception as e:
+            log(f'new_group_session: spawn for {p["id"]} failed: {e}')
+    await broadcast(state_snapshot())
+    return sid
 
 
 # ──────────────────  Orchestrator (Aurora) heartbeat  ──────────────────
@@ -3599,9 +3788,15 @@ async def claude_reader(w: Worker):
                         if w.current is None:
                             w.current = {'id': str(uuid.uuid4()),
                                          'text': '', 'started_at': time.time()}
-                            await broadcast({'type': 'assistant_start',
-                                             'sessionId': sid,
-                                             'id': w.current['id']})
+                            ev_start = {'type': 'assistant_start',
+                                        'sessionId': sid,
+                                        'id': w.current['id']}
+                            # Group-chat members tag every event with
+                            # their personaId so the client can render
+                            # the bubble with the right colour + name.
+                            if w.persona_id:
+                                ev_start['personaId'] = w.persona_id
+                            await broadcast(ev_start)
                     else:
                         in_text_block = False
                 elif ev_type == 'content_block_delta':
@@ -3611,10 +3806,13 @@ async def claude_reader(w: Worker):
                             chunk = delta.get('text', '') or ''
                             if chunk and w.current:
                                 w.current['text'] += chunk
-                                await broadcast({'type': 'assistant_delta',
-                                                 'sessionId': sid,
-                                                 'id': w.current['id'],
-                                                 'text': chunk})
+                                ev_delta = {'type': 'assistant_delta',
+                                            'sessionId': sid,
+                                            'id': w.current['id'],
+                                            'text': chunk}
+                                if w.persona_id:
+                                    ev_delta['personaId'] = w.persona_id
+                                await broadcast(ev_delta)
                 elif ev_type == 'content_block_stop':
                     in_text_block = False
                 elif ev_type == 'message_stop':
@@ -3623,10 +3821,18 @@ async def claude_reader(w: Worker):
                                'text': w.current['text'],
                                'ts': time.time(),
                                'id': w.current['id']}
+                        # Tag the persisted message too so re-renders
+                        # (chat switch / page reload) can colour the
+                        # bubble correctly without needing the live event.
+                        if w.persona_id:
+                            msg['personaId'] = w.persona_id
                         append_message(sid, msg)
-                        await broadcast({'type': 'assistant_end',
-                                         'sessionId': sid,
-                                         'id': w.current['id']})
+                        ev_end = {'type': 'assistant_end',
+                                  'sessionId': sid,
+                                  'id': w.current['id']}
+                        if w.persona_id:
+                            ev_end['personaId'] = w.persona_id
+                        await broadcast(ev_end)
                     w.current = None
                 continue
 
@@ -3675,10 +3881,15 @@ async def claude_reader(w: Worker):
                            'text': w.current['text'],
                            'ts': time.time(),
                            'id': w.current['id']}
+                    if w.persona_id:
+                        msg['personaId'] = w.persona_id
                     append_message(sid, msg)
-                    await broadcast({'type': 'assistant_end',
-                                     'sessionId': sid,
-                                     'id': w.current['id']})
+                    ev_end = {'type': 'assistant_end',
+                              'sessionId': sid,
+                              'id': w.current['id']}
+                    if w.persona_id:
+                        ev_end['personaId'] = w.persona_id
+                    await broadcast(ev_end)
                 w.current = None
                 # Successful turn — clear the recent-failures counter so
                 # one bad spawn early on doesn't permanently arm the
@@ -3848,10 +4059,17 @@ async def claude_reader(w: Worker):
                                 if attached_records:
                                     tturn.pending_file_count = pending_file_count
 
-                await broadcast({'type': 'turn_done',
-                                 'sessionId': sid,
-                                 'sessions': list_sessions_brief(),
-                                 'artifacts': artifact_records or None})
+                td_payload = {'type': 'turn_done',
+                              'sessionId': sid,
+                              'sessions': list_sessions_brief(),
+                              'artifacts': artifact_records or None}
+                # Group-chat workers tag their turn_done with the
+                # member's personaId so the client only clears that
+                # one stream slot — other members in the group might
+                # still be mid-reply.
+                if w.persona_id:
+                    td_payload['personaId'] = w.persona_id
+                await broadcast(td_payload)
                 if routines_changed and state.routines is not None:
                     await broadcast({'type': 'routines',
                                      'routines': state.routines.all_brief()})
@@ -3889,10 +4107,13 @@ async def claude_reader(w: Worker):
                     mid = str(uuid.uuid4())
                     msg = {'role': 'assistant', 'text': full_text,
                            'ts': time.time(), 'id': mid}
+                    if w.persona_id:
+                        msg['personaId'] = w.persona_id
                     append_message(sid, msg)
-                    await broadcast({'type': 'assistant_start', 'sessionId': sid, 'id': mid})
-                    await broadcast({'type': 'assistant_delta', 'sessionId': sid, 'id': mid, 'text': full_text})
-                    await broadcast({'type': 'assistant_end', 'sessionId': sid, 'id': mid})
+                    extra = {'personaId': w.persona_id} if w.persona_id else {}
+                    await broadcast({'type': 'assistant_start', 'sessionId': sid, 'id': mid, **extra})
+                    await broadcast({'type': 'assistant_delta', 'sessionId': sid, 'id': mid, 'text': full_text, **extra})
+                    await broadcast({'type': 'assistant_end', 'sessionId': sid, 'id': mid, **extra})
 
     except asyncio.CancelledError:
         pass
@@ -3980,73 +4201,14 @@ async def handle_upload(payload: dict) -> dict:
     }
 
 
-async def send_to_session(sid: str, text: str, attachments: list[dict],
-                          *, source: str = 'web'):
-    """Send a turn to the claude worker for `sid`. If no worker is
-    running, lazy-spawn one. Persists the user message + broadcasts a
-    sessionId-tagged 'user' event regardless of UI focus.
-
-    `source` records which surface initiated this turn ('web' or
-    'telegram'); it's saved on the user message in chat.json so the
-    UI can show a "via telegram" badge. The text we send to claude
-    is identical regardless of source — claude doesn't get a hint."""
-    sess = load_session(sid)
-    if sess is None:
-        log(f'send: unknown session {sid}')
-        return
-
-    # Lazy-spawn the worker if needed.
-    w = state.workers.get(sid)
-    if w is None or w.proc is None or w.proc.returncode is not None:
-        await broadcast({'type': 'spawning',
-                         'sessionId': sid,
-                         'title': sess.get('title') or 'New chat'})
-        w = await start_worker(sid)
-        if w is None:
-            await broadcast({'type': 'error', 'sessionId': sid,
-                             'message': 'failed to start claude'})
-            return
-
-    msg_id = str(uuid.uuid4())
-    user_msg = {
-        'role': 'user', 'text': text, 'ts': time.time(), 'id': msg_id,
-    }
-    if source and source != 'web':
-        # Saved on the message so the UI can show a "from Telegram"
-        # badge and so a future audit knows where the turn came from.
-        user_msg['source'] = source
-    if attachments:
-        user_msg['attachments'] = [
-            {'name': a.get('name'), 'mimeType': a.get('mimeType'),
-             'size': a.get('size'), 'path': a.get('path'), 'url': a.get('url')}
-            for a in attachments
-        ]
-
-    append_message(sid, user_msg)
-    w.busy = True
-    w.turn_started_at = time.time()
-    # Persist a "this chat is mid-turn" flag so a SIGKILL / restart can
-    # detect chats that died with their reply half-typed. Cleared in the
-    # streaming reader when the worker emits its `result` event.
-    mark_streaming(sid, True)
-    await broadcast({'type': 'user', 'sessionId': sid, 'msg': user_msg})
-
-    # First-real-message trigger for Aurora's heartbeat: if this is an
-    # Aurora session AND this message came from a human (not a routine
-    # echoing itself), make sure her 5-min heartbeat is running. The
-    # helper is idempotent — second call is a no-op. We deliberately
-    # skip routine-source messages so the heartbeat can't recursively
-    # trigger itself.
-    try:
-        if source != 'routine':
-            maybe_spawn_orchestrator_heartbeat(sess)
-    except Exception as e:
-        log(f'orchestrator heartbeat (lazy) dispatch failed: {e}')
-
+def _build_claude_payload(text: str, attachments: list[dict]) -> dict | None:
+    """Compose the claude stdin payload for a user turn (text + image
+    inlining + non-image file references). Returns None if there's
+    nothing to send. Pulled out of send_to_session so the group-chat
+    fan-out can re-use it for every member without rebuilding."""
     content = []
     if text:
         content.append({'type': 'text', 'text': text})
-
     file_lines = []
     for a in attachments or []:
         path = a.get('path')
@@ -4075,22 +4237,138 @@ async def send_to_session(sid: str, text: str, attachments: list[dict],
             content[0]['text'] = (content[0]['text'] + '\n\n' + joined).strip()
         else:
             content.insert(0, {'type': 'text', 'text': joined})
-
     if not content:
-        log('send: empty content, skipping')
-        return
+        return None
+    return {'type': 'user',
+            'message': {'role': 'user', 'content': content}}
 
-    payload = {
-        'type': 'user',
-        'message': {'role': 'user', 'content': content},
-    }
+
+async def _ensure_worker(sid: str, sess: dict,
+                         persona_override: str | None = None) -> Worker | None:
+    """Lazy-spawn (or respawn) one worker — resolves to the existing
+    worker if it's alive, else starts a fresh one. Used both by the
+    single-worker send path and by the group-chat fan-out."""
+    w = state.workers.get(worker_key(sid, persona_override))
+    if w is None or w.proc is None or w.proc.returncode is not None:
+        await broadcast({'type': 'spawning',
+                         'sessionId': sid,
+                         'title': sess.get('title') or 'New chat'})
+        w = await start_worker(sid, persona_override=persona_override)
+        if w is None:
+            await broadcast({
+                'type': 'error', 'sessionId': sid,
+                'message': (f'failed to start claude'
+                            + (f' for {persona_override}' if persona_override else ''))})
+            return None
+    return w
+
+
+async def _write_to_worker(w: Worker, payload: dict, sid: str) -> bool:
+    """Push the prepared payload onto a worker's stdin. Returns True on
+    success, False if the write errored (broadcast as a session error)."""
     try:
         w.proc.stdin.write((json.dumps(payload) + '\n').encode('utf-8'))
         await w.proc.stdin.drain()
+        return True
     except Exception as e:
-        log(f'write error sid={sid[:8]}: {e}')
-        await broadcast({'type': 'error', 'sessionId': sid,
-                         'message': f'send failed: {e}'})
+        log(f'write error sid={sid[:8]}'
+            f'{":"+w.persona_id if w.persona_id else ""}: {e}')
+        ev = {'type': 'error', 'sessionId': sid, 'message': f'send failed: {e}'}
+        if w.persona_id:
+            ev['personaId'] = w.persona_id
+        await broadcast(ev)
+        return False
+
+
+async def send_to_session(sid: str, text: str, attachments: list[dict],
+                          *, source: str = 'web'):
+    """Send a turn to the claude worker for `sid`. If no worker is
+    running, lazy-spawn one. Persists the user message + broadcasts a
+    sessionId-tagged 'user' event regardless of UI focus.
+
+    Group chats (sess.groupChat == True): the user message is appended
+    once, then fanned out to every member persona's worker. Each member
+    streams its own response in parallel; events are tagged with
+    `personaId` so the UI can show one bubble per persona.
+
+    `source` records which surface initiated this turn ('web' or
+    'telegram'); it's saved on the user message in chat.json so the
+    UI can show a "via telegram" badge. The text we send to claude
+    is identical regardless of source — claude doesn't get a hint."""
+    sess = load_session(sid)
+    if sess is None:
+        log(f'send: unknown session {sid}')
+        return
+
+    is_group = bool(sess.get('groupChat'))
+
+    # Compose the user-side message once — it's identical for every
+    # recipient in the group.
+    msg_id = str(uuid.uuid4())
+    user_msg = {
+        'role': 'user', 'text': text, 'ts': time.time(), 'id': msg_id,
+    }
+    if source and source != 'web':
+        user_msg['source'] = source
+    if attachments:
+        user_msg['attachments'] = [
+            {'name': a.get('name'), 'mimeType': a.get('mimeType'),
+             'size': a.get('size'), 'path': a.get('path'), 'url': a.get('url')}
+            for a in attachments
+        ]
+
+    append_message(sid, user_msg)
+    mark_streaming(sid, True)
+    await broadcast({'type': 'user', 'sessionId': sid, 'msg': user_msg})
+
+    payload = _build_claude_payload(text, attachments)
+    if payload is None:
+        log('send: empty content, skipping')
+        return
+
+    # ── group fan-out ──
+    if is_group:
+        members = sess.get('groupMembers') or []
+        if not members:
+            log(f'send: group {sid[:8]} has no members')
+            return
+        log(f'group send: {sid[:8]} → {len(members)} members')
+        async def _deliver(persona_id: str):
+            w = await _ensure_worker(sid, sess, persona_override=persona_id)
+            if w is None:
+                return
+            w.busy = True
+            w.turn_started_at = time.time()
+            await _write_to_worker(w, payload, sid)
+        # Fire all member sends in parallel — each worker's reader will
+        # stream its assistant_* events tagged with personaId, so the
+        # UI lands them as separate bubbles.
+        await asyncio.gather(
+            *[_deliver(m['id']) for m in members if m.get('id')],
+            return_exceptions=True,
+        )
+        return
+
+    # ── single-persona send (existing path) ──
+    w = await _ensure_worker(sid, sess)
+    if w is None:
+        return
+    w.busy = True
+    w.turn_started_at = time.time()
+
+    # First-real-message trigger for Aurora's heartbeat: if this is an
+    # Aurora session AND this message came from a human (not a routine
+    # echoing itself), make sure her 5-min heartbeat is running. The
+    # helper is idempotent — second call is a no-op. We deliberately
+    # skip routine-source messages so the heartbeat can't recursively
+    # trigger itself.
+    try:
+        if source != 'routine':
+            maybe_spawn_orchestrator_heartbeat(sess)
+    except Exception as e:
+        log(f'orchestrator heartbeat (lazy) dispatch failed: {e}')
+
+    await _write_to_worker(w, payload, sid)
 
 
 # ───────────────────  File explorer (runtime/) ─────────────────
@@ -4426,6 +4704,22 @@ async def handle_client(websocket):
                     model_override=msg.get('model'),
                     persona_id=msg.get('persona'),
                 )
+            elif cmd == 'new_group':
+                # `members` is a list of persona ids the user picked
+                # in the group-chat creation modal. The server validates
+                # them (drops unknowns) and refuses to create a group
+                # with fewer than 2 valid members.
+                await new_group_session(
+                    member_ids=msg.get('members') or [],
+                    title=msg.get('title') or None,
+                    cwd_override=msg.get('cwd'),
+                )
+            elif cmd == 'group_add':
+                # Add a persona to an existing group chat mid-convo.
+                gsid = msg.get('id') or state.active_id
+                pid = msg.get('persona')
+                if gsid and pid:
+                    await group_add_member(gsid, pid)
             elif cmd == 'personas_list':
                 await websocket.send(json.dumps({
                     'type': 'personas',
