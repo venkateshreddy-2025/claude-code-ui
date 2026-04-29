@@ -4616,6 +4616,10 @@
     } else {
       titleLabel.innerHTML = `${escHtml(s.title || 'New chat')}${tagChip}`;
     }
+    // Page title follows the same data — `sessions` events fire here
+    // when claude generates a chat title, so the browser tab updates
+    // automatically without a separate hook.
+    try { refreshDocTitle(); } catch (e) {}
   }
   function setActive(id){
     activeId = id;
@@ -4623,14 +4627,9 @@
     refreshHeaderTitle();
     refreshSaveButton();
     applySavingUI();    // show/hide saving overlay based on new active chat
-    // Update URL hash so each chat is bookmarkable / shareable.
-    // Uses chatId (`c1`, `a1`...) when available, else 8-char sid.
-    const s = id ? sessions.find(x => x.id === id) : null;
-    const tag = s ? (s.chatId || (id || '').slice(0, 8)) : '';
-    const target = tag ? '#chat=' + tag : location.pathname;
-    if (location.hash !== '#chat=' + tag){
-      try { history.replaceState(null, '', target); } catch(e) {}
-    }
+    // URL hash + page title both reflect current chat + panel state, so
+    // every view is bookmarkable. See buildHash() for the canonical format.
+    syncUrlAndTitle();
     // Notes panel is per-chat. If it's open and the user just switched
     // chats, repoint it at the new chat's NOTES.md without forcing a
     // full close+reopen (auto-save first to protect any unsaved edits).
@@ -4648,6 +4647,72 @@
     } catch(e) { /* notes module not yet initialised */ }
   }
 
+  // ─── URL hash + page title plumbing ───
+  // Hash format: `#chat=<chatId>[&panel=<explorer|notes|terminal>]`
+  // - parseHash() extracts chat + panel from a string (or location.hash)
+  // - buildHash() produces the canonical hash for the current state
+  // - syncUrlAndTitle() pushes the hash to history + retitles the tab
+  // - refreshDocTitle() updates document.title separately
+  // Bookmarking any view restores the same chat AND the same panel.
+  function parseHash(raw){
+    raw = (raw == null ? (location.hash || '') : raw).replace(/^#/, '');
+    if (!raw) return { chat: null, panel: null };
+    const out = { chat: null, panel: null };
+    for (const part of raw.split('&')){
+      if (!part) continue;
+      const eq = part.indexOf('=');
+      const k = (eq < 0 ? part : part.slice(0, eq)).toLowerCase();
+      const v = eq < 0 ? '' : decodeURIComponent(part.slice(eq + 1));
+      if (k === 'chat')  out.chat  = v.toLowerCase();
+      else if (k === 'panel') out.panel = v.toLowerCase();
+    }
+    return out;
+  }
+  function _currentPanel(){
+    // Explorer trumps notes/terminal because it's a full-screen overlay
+    // (the others live in the side artifact panel).
+    if (document.getElementById('explorerSheet')?.classList.contains('on'))
+      return 'explorer';
+    try { if (notesOpen) return 'notes'; } catch (e) {}
+    try { if (termOpen)  return 'terminal'; } catch (e) {}
+    return null;
+  }
+  function buildHash(){
+    const s = activeId ? sessions.find(x => x.id === activeId) : null;
+    const tag = s ? (s.chatId || (activeId || '').slice(0, 8)) : '';
+    const parts = [];
+    if (tag) parts.push('chat=' + tag);
+    const panel = _currentPanel();
+    if (panel) parts.push('panel=' + panel);
+    return parts.length ? '#' + parts.join('&') : '';
+  }
+  function refreshDocTitle(){
+    const parts = [];
+    const panel = _currentPanel();
+    const s = activeId ? sessions.find(x => x.id === activeId) : null;
+    const PANEL_LABEL = {
+      explorer: 'File Explorer',
+      notes:    'Notes',
+      terminal: 'Terminal',
+    };
+    if (panel) parts.push(PANEL_LABEL[panel] || panel);
+    if (s){
+      const t = (s.title || 'New chat').replace(/\s+/g,' ').trim().slice(0, 60);
+      const cid = s.chatId ? '[' + s.chatId + '] ' : '';
+      parts.push(cid + t);
+    }
+    parts.push('Claude Code UI');
+    document.title = parts.join(' · ');
+  }
+  function syncUrlAndTitle(){
+    const target = buildHash();
+    const want   = target || location.pathname;
+    if (location.hash !== target){
+      try { history.replaceState(null, '', want); } catch (e) {}
+    }
+    refreshDocTitle();
+  }
+
   // Resolve a chatId/sid-prefix to a full sid against the current
   // sessions list. `needle` defaults to whatever's in location.hash;
   // callers can pass an explicit value (we capture the original hash
@@ -4657,10 +4722,9 @@
   // active. The snapshot survives that overwrite).
   function resolveHashChat(needle){
     if (needle == null){
-      const h = location.hash || '';
-      const m = h.match(/^#chat=(.+)$/);
-      if (!m) return null;
-      needle = decodeURIComponent(m[1]).toLowerCase();
+      // Honour both legacy `#chat=X` and the new `#chat=X&panel=Y`.
+      needle = parseHash().chat;
+      if (!needle) return null;
     }
     needle = (needle || '').toLowerCase();
     if (!needle) return null;
@@ -4694,12 +4758,13 @@
   let _pendingNewSession = false;
   // Snapshot the URL hash BEFORE anything else can run — `setActive`
   // overwrites location.hash on every state event, so we'd lose the
-  // user's intended target the moment the first state lands. This
-  // value is consumed once in the state-handler's first-load branch.
-  const _initialHashChat = (() => {
-    const m = (location.hash || '').match(/^#chat=(.+)$/);
-    return m ? decodeURIComponent(m[1]).toLowerCase() : null;
-  })();
+  // user's intended target the moment the first state lands. These
+  // values are consumed once in the state-handler's first-load branch
+  // (chat) and after sessions arrive (panel — needs sessions to be
+  // populated so we can land on a chat first, then open the panel).
+  const _initialHashChat  = parseHash().chat;
+  const _initialHashPanel = parseHash().panel;
+  let   _initialPanelHandled = false;
 
   function setOnline(on){
     online = on;
@@ -4791,6 +4856,22 @@
             if (target !== reportedActive){
               send({type:'switch', id: target});
             }
+          }
+          // Restore any bookmarked panel (explorer / notes / terminal).
+          // Sessions are now in `sessions`, so notes can resolve the
+          // active chat and the explorer can render proper labels.
+          if (_initialHashPanel && !_initialPanelHandled){
+            _initialPanelHandled = true;
+            const p = _initialHashPanel;
+            // Defer one tick so the chat-active branch finishes painting
+            // before we open a side panel on top of it.
+            setTimeout(() => {
+              try {
+                if (p === 'explorer') openExplorer();
+                else if (p === 'notes' && activeId) openNotesPanel();
+                else if (p === 'terminal') openTerminalPanel();
+              } catch (e) {}
+            }, 80);
           }
           showTyping(false);
           setOnline(true);
@@ -7352,6 +7433,7 @@
       btn.onclick = () => applyNotesFormat(ta, btn.dataset.fmt);
     });
     setTimeout(() => ta.focus(), 60);
+    syncUrlAndTitle();
   }
 
   function closeNotesPanel(){
@@ -7375,6 +7457,7 @@
     artPanel.setAttribute('aria-hidden', 'true');
     artTitleEl.textContent = 'Artifact';
     artBodyEl.innerHTML = '';
+    syncUrlAndTitle();
   }
 
   function saveNotes(silent){
@@ -7562,11 +7645,13 @@
     expApplyViewMode();
     expUpdateNavButtons();
     send({type:'fs_list', path:''});
+    syncUrlAndTitle();
   }
   function closeExplorer(){
     expHideCtxMenu();
     document.getElementById('explorerSheet').classList.remove('on');
     document.getElementById('explorerSheet').setAttribute('aria-hidden','true');
+    syncUrlAndTitle();
   }
   function expNavigate(path, {pushHistory = true} = {}){
     if (pushHistory && expCurrentPath !== null && expCurrentPath !== undefined
@@ -8224,6 +8309,7 @@
       if (w) w.remove();
       _termRequestResize();
     }
+    syncUrlAndTitle();
   }
 
   function closeTermPanel(){
@@ -8240,6 +8326,7 @@
     // we just blew away) but keep the xterm Terminal so re-opening is
     // instant — its scrollback survives.
     if (termResizeObs){ try { termResizeObs.disconnect(); } catch(e) {} }
+    syncUrlAndTitle();
   }
 
   function restartTerminal(){
