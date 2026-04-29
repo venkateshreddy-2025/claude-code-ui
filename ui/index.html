@@ -5491,7 +5491,13 @@
         // form pointed at it.
         if (m.savedId) personaEditingId = m.savedId;
         refreshPersonasUI();
-        // Persona colour may have changed — repaint the typing avatar.
+        // Repaint anything that depends on persona colours.  These can
+        // arrive AFTER the initial `sessions` event, so the chat list
+        // and chat title may have been painted with the deterministic-
+        // hash fallback colour (e.g. Pallavi → blue when the registry
+        // wasn't ready yet). Re-render now that we have ground truth.
+        try { renderSessions(); } catch (e) {}
+        try { refreshHeaderTitle(); } catch (e) {}
         try { refreshTypingAva(); } catch (e) {}
         break;
       }

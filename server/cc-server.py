@@ -955,6 +955,31 @@ def derive_title_from_message(text: str) -> str:
     return title or 'New chat'
 
 
+def mark_streaming(sid: str, streaming: bool) -> None:
+    """Persist whether session `sid` is currently mid-turn so a server
+    crash / kill can detect interrupted chats on the next startup.
+
+    Idempotent — only writes when the flag actually flips, so the cost
+    of marking-around-every-turn is one extra disk write at the start
+    and one at the end, not on every delta."""
+    try:
+        sess = load_session(sid)
+        if sess is None:
+            return
+        cur = bool(sess.get('streaming'))
+        if cur == streaming:
+            return
+        if streaming:
+            sess['streaming']   = True
+            sess['streamingAt'] = time.time()
+        else:
+            sess.pop('streaming',   None)
+            sess.pop('streamingAt', None)
+        save_session(sess)
+    except Exception as e:
+        log(f'mark_streaming({sid[:8]}, {streaming}) failed: {e}')
+
+
 def append_message(sid: str, msg: dict):
     """Append a message to session `sid`'s persisted JSON. The sid is
     explicit (not implicit on state.active_id) so background workers
@@ -3607,6 +3632,10 @@ async def claude_reader(w: Worker):
 
             if t == 'result':
                 w.busy = False
+                # Pair to the mark_streaming(True) call at turn start —
+                # clearing it tells the next-startup wake scanner this
+                # chat finished cleanly.
+                mark_streaming(sid, False)
                 # Silent-turn finalisation: this was a synthetic SAVE
                 # turn, not a normal user turn. Fire `save_done`, mark
                 # the session as saved, and skip the normal turn_done
@@ -3996,6 +4025,10 @@ async def send_to_session(sid: str, text: str, attachments: list[dict],
     append_message(sid, user_msg)
     w.busy = True
     w.turn_started_at = time.time()
+    # Persist a "this chat is mid-turn" flag so a SIGKILL / restart can
+    # detect chats that died with their reply half-typed. Cleared in the
+    # streaming reader when the worker emits its `result` event.
+    mark_streaming(sid, True)
     await broadcast({'type': 'user', 'sessionId': sid, 'msg': user_msg})
 
     # First-real-message trigger for Aurora's heartbeat: if this is an
@@ -6065,6 +6098,61 @@ async def telegram_poller():
 
 
 # ───────────────────  bootstrap  ───────────────────
+async def wake_interrupted_sessions():
+    """Find sessions that were mid-turn when the server died, clear the
+    streaming flag, and inject a synthetic wake user message so the
+    worker spawns and continues from where it left off.
+
+    Idle chats (no `streaming` flag) are left alone — only re-engages
+    chats that were actively producing a reply at the moment of kill.
+    The user-visible effect: the spinner that clients show while they
+    wait for the next delta resolves on its own within a few seconds
+    instead of staying stuck forever after a crash."""
+    if not SESS_DIR.exists():
+        return
+    interrupted = []
+    for f in SESS_DIR.glob('*.json'):
+        if f.name == 'index.json':
+            continue
+        try:
+            sess = json.loads(f.read_text())
+        except Exception:
+            continue
+        if not sess.get('streaming'):
+            continue
+        interrupted.append(sess)
+
+    if not interrupted:
+        return
+    log(f'wake: {len(interrupted)} interrupted session(s) to resume')
+    for sess in interrupted:
+        sid = sess['id']
+        title = (sess.get('title') or '?')[:40]
+        # Clear the flag FIRST so a second crash mid-resume doesn't loop
+        # through the same chats again.
+        sess.pop('streaming',   None)
+        sess.pop('streamingAt', None)
+        try:
+            save_session(sess)
+        except Exception as e:
+            log(f'wake: clear-flag save failed for {sid[:8]}: {e}')
+            continue
+        # Compose a self-explanatory wake message tagged so the UI can
+        # render it specially. Routed through send_to_session so the
+        # worker spawns lazily and the message goes through the normal
+        # turn pipeline.
+        from datetime import datetime
+        ts = datetime.now().strftime('%I:%M %p').lstrip('0')
+        text = (f'[wake: server restarted at {ts} — your previous '
+                f'response was interrupted mid-stream. Please continue '
+                f'from where you stopped.]')
+        try:
+            await send_to_session(sid, text, [], source='wake')
+            log(f'wake: resumed {sid[:8]} ({title})')
+        except Exception as e:
+            log(f'wake: resume failed for {sid[:8]}: {e}')
+
+
 async def main():
     seed_default_personas_if_empty()
 
@@ -6131,6 +6219,12 @@ async def main():
     # live worker.
     bg_tasks.append(asyncio.create_task(aurora_watchdog(stop_event)))
     log('aurora watchdog: started (20s interval, silent respawn)')
+
+    # Wake-on-restart: any chat that died mid-stream gets a synthetic
+    # "continue" turn. Spawned as a task so it doesn't block the WS
+    # listener — the wake worker boots in the background while clients
+    # connect.
+    bg_tasks.append(asyncio.create_task(wake_interrupted_sessions()))
 
     async with websockets.serve(
             handle_client, HOST, PORT,
