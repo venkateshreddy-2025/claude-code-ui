@@ -219,6 +219,19 @@
   .session-item .persona-dot{flex:0 0 auto;width:8px;height:8px;border-radius:50%;
     background:var(--persona-color, var(--fg-faint));
     box-shadow:0 0 0 1px rgba(0,0,0,.25) inset}
+  /* Group chat sidebar items: stack of overlapping coloured dots so a
+     glance at the chat list says "this is a group". Width adjusts based
+     on how many members there are. */
+  .session-item .persona-dot-stack{flex:0 0 auto;display:inline-flex;
+    align-items:center;padding-left:4px}
+  .session-item .stack-dot{width:10px;height:10px;border-radius:50%;
+    border:1.5px solid var(--bg);margin-left:-4px;
+    box-shadow:0 0 0 1px rgba(0,0,0,.25) inset}
+  .session-item .persona-dot-more{margin-left:4px;font-size:9.5px;
+    color:var(--fg-faint);font-weight:600;line-height:1}
+  /* Group chats get a thicker accent stripe so they pop off the list. */
+  .session-item.is-group{border-left-width:4px;
+    border-left-style:solid;border-left-color:var(--persona-color, var(--accent))}
   /* Aurora-pinned (orchestrator persona) gets a subtle border accent at the
      top so it's clearly anchored in place. */
   .session-item.pinned-top{border:1px solid rgba(245,158,11,.25);
@@ -582,17 +595,57 @@
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .who .name .t-persona{font-weight:700}
   .who .name .t-sep{color:var(--fg-faint);margin:0 4px}
-  /* Group-chat header bits: per-member name chips + "+ Add" pill. */
-  .who .name .t-group-members{display:inline-flex;align-items:center;gap:0;
-    margin-left:6px;font-size:13px;font-weight:500}
-  .who .name .t-member{padding:0 4px;border-left:2px solid var(--persona-color, var(--fg-faint));
-    line-height:1.1}
-  .who .name .t-add-member{margin-left:8px;font-size:11px;font-weight:600;
-    padding:2px 8px;border:1px solid var(--border);border-radius:10px;
+  /* Group-chat header members button — overlapping persona dots +
+     count + chevron, opens a popover listing members with × delete. */
+  .who .name .t-members-btn{margin-left:8px;display:inline-flex;
+    align-items:center;gap:6px;padding:3px 8px 3px 6px;
+    border:1px solid var(--border);border-radius:14px;
     background:rgba(255,255,255,.04);color:var(--fg-dim);cursor:pointer;
-    letter-spacing:.04em;transition:background .12s,color .12s,border-color .12s}
-  .who .name .t-add-member:hover{background:rgba(245,158,11,.14);
+    font:inherit;font-size:11.5px;font-weight:600;line-height:1;
+    transition:background .12s,color .12s,border-color .12s}
+  .who .name .t-members-btn:hover{background:rgba(245,158,11,.12);
     color:var(--accent);border-color:var(--accent)}
+  .who .name .t-member-stack{display:inline-flex;align-items:center;
+    padding-left:4px}
+  .who .name .t-member-dot{width:10px;height:10px;border-radius:50%;
+    border:1.5px solid var(--bg-2);margin-left:-4px;
+    box-shadow:0 0 0 1px rgba(0,0,0,.25) inset}
+  .who .name .t-members-count{font-size:11px;letter-spacing:.02em}
+  /* Group members popover — appears below the header button, shows
+     each member with their colour swatch + name + × delete. Bottom
+     row has a "+ Add member" button that re-uses the new-group modal. */
+  #groupMembersPop{position:fixed;z-index:80;min-width:240px;
+    max-width:340px;background:var(--bg-2);border:1px solid var(--border);
+    border-radius:10px;box-shadow:0 18px 50px rgba(0,0,0,.5);
+    padding:6px 4px;animation:rs-pop-in .12s ease-out;display:none}
+  #groupMembersPop.on{display:block}
+  #groupMembersPop .gm-title{font-size:10.5px;color:var(--fg-faint);
+    text-transform:uppercase;letter-spacing:.08em;font-weight:600;
+    padding:6px 12px 4px}
+  #groupMembersPop .gm-row{display:flex;align-items:center;gap:8px;
+    padding:6px 10px;border-radius:6px;cursor:default;font-size:13px;
+    color:var(--fg)}
+  #groupMembersPop .gm-row:hover{background:rgba(255,255,255,.04)}
+  #groupMembersPop .gm-dot{width:11px;height:11px;border-radius:50%;
+    flex:0 0 11px;box-shadow:0 0 0 1px rgba(0,0,0,.25) inset}
+  #groupMembersPop .gm-name{flex:1;font-weight:500}
+  #groupMembersPop .gm-cap{font-size:11px;color:var(--fg-faint);
+    margin-right:6px}
+  #groupMembersPop .gm-remove{flex:0 0 auto;width:24px;height:24px;
+    border:none;background:transparent;color:var(--fg-faint);cursor:pointer;
+    border-radius:50%;font-size:16px;line-height:1;padding:0;
+    display:inline-flex;align-items:center;justify-content:center;
+    transition:background .12s,color .12s}
+  #groupMembersPop .gm-remove:hover{background:#e2515126;color:#ff8888}
+  #groupMembersPop .gm-row.locked .gm-remove{opacity:.35;cursor:not-allowed}
+  #groupMembersPop .gm-row.locked .gm-remove:hover{background:transparent;
+    color:var(--fg-faint)}
+  #groupMembersPop .gm-sep{height:1px;background:var(--border);margin:4px 0}
+  #groupMembersPop .gm-add{display:flex;align-items:center;gap:8px;
+    padding:8px 12px;border:none;background:transparent;color:var(--accent);
+    cursor:pointer;font:inherit;font-size:12.5px;font-weight:600;
+    width:100%;text-align:left;border-radius:6px}
+  #groupMembersPop .gm-add:hover{background:rgba(245,158,11,.12)}
   .who .status{font-size:11.5px;color:var(--fg-dim);display:flex;align-items:center;gap:6px;
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .dot{width:7px;height:7px;border-radius:50%;background:#5d5d66;flex:0 0 7px;transition:background .25s}
@@ -2735,6 +2788,11 @@
   </div>
 </div>
 
+<!-- Group members popover — opens from the header's members button,
+     lists every persona in the group with a × remove button + an
+     "Add member" affordance at the bottom. -->
+<div id="groupMembersPop" role="dialog" aria-label="Group members"></div>
+
 <!-- Themed confirm dialog — replaces native window.confirm() so every
      prompt feels like part of the app instead of a browser system box.
      The body is opt-in HTML (caller-controlled), the title is plain
@@ -3476,11 +3534,40 @@
     // Title row: persona color dot + inline-editable input.
     const titleRow = document.createElement('div');
     titleRow.className = 'title-row';
-    const dot = document.createElement('span');
-    dot.className = 'persona-dot';
-    dot.style.background = col;
-    dot.title = personaNameOf(s) || '(no persona)';
-    titleRow.appendChild(dot);
+    if (s.groupChat){
+      // Group chat: render a stack of overlapping persona-coloured dots
+      // (one per member, capped at 3 with a "+N" overflow tag) so the
+      // sidebar item is visually distinct from a single-persona chat.
+      const stack = document.createElement('span');
+      stack.className = 'persona-dot-stack';
+      stack.title = 'Group: ' + (s.groupMembers || []).map(m => m.name || m.id).join(', ');
+      const members = (s.groupMembers || []).slice(0, 3);
+      for (const m of members){
+        const d = document.createElement('span');
+        d.className = 'persona-dot stack-dot';
+        d.style.background = personaColor(m.id);
+        stack.appendChild(d);
+      }
+      const more = (s.groupMembers || []).length - members.length;
+      if (more > 0){
+        const tag = document.createElement('span');
+        tag.className = 'persona-dot-more';
+        tag.textContent = '+' + more;
+        stack.appendChild(tag);
+      }
+      titleRow.appendChild(stack);
+      // Override the persona-color CSS variable with the first member's
+      // colour so the left-edge stripe still has presence.
+      const lead = (s.groupMembers || [])[0];
+      if (lead) item.style.setProperty('--persona-color', personaColor(lead.id));
+      item.classList.add('is-group');
+    } else {
+      const dot = document.createElement('span');
+      dot.className = 'persona-dot';
+      dot.style.background = col;
+      dot.title = personaNameOf(s) || '(no persona)';
+      titleRow.appendChild(dot);
+    }
 
     const title = document.createElement('input');
     title.className = 'title';
@@ -5003,22 +5090,30 @@
         title="Click to set the project / theme tag for this chat"
         aria-label="Edit tag">${escHtml(tag)}</button>`;
     if (s.groupChat){
-      // Group chats: title shows "Group · <title>" plus member chips +
-      // a "+ Add" button. Persona dot uses a multi-coloured gradient
-      // built from the member colours so the chat list also flags it
-      // visually.
+      // Group chats: keep the title compact — render "Group · title"
+      // plus a single members button (people-icon + count). The button
+      // opens a popover listing each member with × delete + an inline
+      // "+ Add" affordance. Avoids the chip explosion when groups have
+      // 4+ personas.
       const members = s.groupMembers || [];
-      const chips = members.map(m => {
+      const dots = members.slice(0, 3).map(m => {
         const c = personaColor(m.id);
-        return `<span class="t-member" style="--persona-color:${c};color:${c}">${escHtml(m.name || m.id)}</span>`;
-      }).join('<span class="t-sep">·</span>');
+        return `<span class="t-member-dot" style="background:${c}"></span>`;
+      }).join('');
       titleLabel.innerHTML =
         `<span class="t-persona" style="color:#f59e0b">Group</span>` +
         ` <span class="t-sep">·</span> ${escHtml(s.title || 'Group chat')}` +
-        ` <span class="t-group-members">${chips}</span>` +
-        ` <button type="button" class="t-add-member" id="titleAddMemberBtn"
-            title="Add another persona to this group"
-            aria-label="Add persona">+ Add</button>` +
+        ` <button type="button" class="t-members-btn" id="titleMembersBtn"
+              title="View / manage group members"
+              aria-label="Group members">` +
+        `<span class="t-member-stack">${dots}</span>` +
+        `<span class="t-members-count">${members.length}</span>` +
+        `<svg viewBox="0 0 24 24" width="13" height="13" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round"
+              stroke-linejoin="round" aria-hidden="true">
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>` +
+        `</button>` +
         tagChip;
     } else if (pid){
       titleLabel.innerHTML =
@@ -5028,7 +5123,13 @@
     } else {
       titleLabel.innerHTML = `${escHtml(s.title || 'New chat')}${tagChip}`;
     }
-    // "+ Add" button → open the persona picker in add-member mode.
+    // Members button → open the popover listing each member with × delete.
+    document.getElementById('titleMembersBtn')?.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      openGroupMembersPop(ev.currentTarget, activeId);
+    });
+    // Legacy "+ Add" button (kept for back-compat if a render path
+    // still emits it) — same behaviour.
     document.getElementById('titleAddMemberBtn')?.addEventListener('click', (ev) => {
       ev.stopPropagation();
       openGroupAddPicker(activeId);
@@ -5322,7 +5423,24 @@
           // the server is now broadcasting that session's full log.
           setOnline(true);
           hideBanner();
-          if (reportedActive === activeId){
+          // Active-chat-was-deleted detection: if our activeId is no
+          // longer in the sessions list, the chat was removed from
+          // under us. Clear the message pane + retarget to whatever
+          // chat the server reports active (or the first one available).
+          if (activeId && !sessions.some(s => s.id === activeId)){
+            chats.delete(activeId);
+            const fallback = reportedActive || (sessions[0]?.id || null);
+            if (fallback){
+              setActive(fallback);
+              renderAllMessages();
+              send({type:'switch', id: fallback});
+            } else {
+              setActive(null);
+              clearMessages();
+              document.body.classList.add('empty-chat');
+              try { emptyPane(); } catch (e) {}
+            }
+          } else if (reportedActive === activeId){
             renderAllMessages();
           }
           if (sessions.length === 0 && !reportedActive && !autoCreatePending){
@@ -6471,6 +6589,96 @@
     document.getElementById('newGroupTitle').disabled = false;
     document.getElementById('newGroupModal').querySelector('h3').textContent = 'New group chat';
     document.getElementById('newGroupCreate').textContent = 'Create';
+  }
+
+  // ─── Group members popover (header button) ───
+  // Anchor a small floating panel under the title's "members" button.
+  // Lists each member with their persona colour + a × remove control,
+  // and a bottom "+ Add member" row that re-uses the new-group modal.
+  function openGroupMembersPop(anchor, sid){
+    const pop  = document.getElementById('groupMembersPop');
+    const sess = sessions.find(x => x.id === sid);
+    if (!pop || !sess || !sess.groupChat) return;
+    const members = sess.groupMembers || [];
+    let html = '<div class="gm-title">Members · ' + members.length + '</div>';
+    // We never let the user remove the LAST member — a group chat
+    // with zero members is meaningless. The first one is also locked
+    // because removing the persona that founded the group nukes peer
+    // context for every other member.
+    for (let i = 0; i < members.length; i++){
+      const m = members[i];
+      const c = personaColor(m.id);
+      const locked = members.length <= 2;   // can't drop below 2
+      html += '<div class="gm-row' + (locked ? ' locked' : '') + '"'
+            + ' data-mid="' + escHtml(m.id) + '">'
+            + '<span class="gm-dot" style="background:' + c + '"></span>'
+            + '<span class="gm-name">' + escHtml(m.name || m.id) + '</span>'
+            + '<button type="button" class="gm-remove" data-remove="' + escHtml(m.id) + '"'
+              + ' title="' + (locked ? 'Group needs ≥2 members' : 'Remove from group')
+              + '" aria-label="Remove member">×</button>'
+            + '</div>';
+    }
+    html += '<div class="gm-sep"></div>'
+          + '<button type="button" class="gm-add" id="gmAddBtn">'
+          + '<svg viewBox="0 0 24 24" width="14" height="14" fill="none"'
+          + ' stroke="currentColor" stroke-width="2.2" stroke-linecap="round"'
+          + ' stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>'
+          + ' Add member' + '</button>';
+    pop.innerHTML = html;
+    pop.classList.add('on');
+
+    // Position under the anchor (clamped inside the viewport).
+    const r = anchor.getBoundingClientRect();
+    pop.style.left = Math.min(r.left, window.innerWidth - 360) + 'px';
+    pop.style.top  = (r.bottom + 6) + 'px';
+
+    // Wire row × buttons + add.
+    pop.querySelectorAll('[data-remove]').forEach(btn => {
+      btn.onclick = async (ev) => {
+        ev.stopPropagation();
+        if (btn.closest('.gm-row')?.classList.contains('locked')) return;
+        const pid = btn.dataset.remove;
+        const member = members.find(m => m.id === pid);
+        const ok = await confirmAction({
+          title: 'Remove from group?',
+          body: 'Remove <b>' + escHtml(member?.name || pid) + '</b> from this group? '
+              + 'Their messages stay in history; they just stop receiving new turns.',
+          confirmText: 'Remove', danger: true,
+        });
+        if (!ok) return;
+        send({ type: 'group_remove', id: sid, persona: pid });
+        closeGroupMembersPop();
+      };
+    });
+    pop.querySelector('#gmAddBtn').onclick = (ev) => {
+      ev.stopPropagation();
+      closeGroupMembersPop();
+      openGroupAddPicker(sid);
+    };
+
+    // Close on outside click / Esc.
+    setTimeout(() => {
+      document.addEventListener('mousedown', _gmOutsideClick, true);
+      document.addEventListener('keydown',   _gmEsc, true);
+    }, 0);
+  }
+  function closeGroupMembersPop(){
+    const pop = document.getElementById('groupMembersPop');
+    if (!pop) return;
+    pop.classList.remove('on');
+    pop.innerHTML = '';
+    document.removeEventListener('mousedown', _gmOutsideClick, true);
+    document.removeEventListener('keydown',   _gmEsc, true);
+  }
+  function _gmOutsideClick(ev){
+    const pop = document.getElementById('groupMembersPop');
+    if (pop && !pop.contains(ev.target)
+        && !ev.target.closest('#titleMembersBtn')){
+      closeGroupMembersPop();
+    }
+  }
+  function _gmEsc(ev){
+    if (ev.key === 'Escape') closeGroupMembersPop();
   }
 
   function renderGroupChips(){

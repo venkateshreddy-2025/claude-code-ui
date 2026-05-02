@@ -607,6 +607,82 @@ access to their chat history.
 GLOBAL_SYSTEM_PROMPT = _global_system_prompt()
 
 
+# ───────────────────  Group-chat etiquette prompt  ───────────────────
+# Prepended to every group-chat member's persona prompt. Teaches them:
+#   1. They share the room with other personas (named below in
+#      placeholders the bridge fills in per-turn).
+#   2. They see two kinds of incoming messages: real user turns AND
+#      "[from <name>]:" peer-observation lines that the bridge injects
+#      with each user turn so each member knows what the others said.
+#   3. They reply ONLY when they're addressed (by @-mention or by name)
+#      OR the message is clearly within their expertise / they have
+#      something concrete to add. Otherwise they emit literally
+#      `[silent]` and stop — the bridge swallows that and the user
+#      never sees the bubble.
+#   4. They never reply with empty filler ("Got it", "OK"). Either a
+#      substantive reply OR `[silent]`.
+def _group_chat_prompt(member_names: list[str], my_name: str) -> str:
+    others = [n for n in member_names if n != my_name]
+    others_str = ', '.join(others) if others else '(no one yet)'
+    return f"""## You are in a group chat
+
+You ({my_name}) share this conversation with: {others_str}.
+
+The bridge fans every user message to all members in parallel. Between
+turns, you'll also see lines like `[from <name>]: …` — those are what
+the OTHER personas said in the previous round. Treat them as context,
+NOT as a turn you must respond to.
+
+### When to reply
+
+DEFAULT: respond. A group chat with no voice is dead. Lean toward
+engaging — a short, useful contribution from your perspective is
+almost always better than silence.
+
+Always reply when:
+- The message addresses you by name or @mention.
+- It's the FIRST message in the conversation (introduce yourself
+  briefly + add value — let the user know you're here).
+- The topic is in your wheelhouse / matches your persona's expertise.
+- Another persona's `[from <name>]:` observation asks you a question
+  or invites your perspective.
+- You can add something concrete (a different angle, a correction,
+  a follow-up question, a complementary suggestion) that others
+  haven't covered.
+
+Keep replies SHORT in group chats — 1–3 sentences is plenty unless
+the user asked for depth. You'll get more turns to dig in.
+
+### When to stay silent
+
+ONLY stay silent when ALL of the following are true:
+- Another persona is clearly the right one for this specific message
+  (e.g. user asked "Sage, what's the literature say?" and you're not
+  Sage).
+- You have nothing meaningful to add — no different angle, no useful
+  follow-up, no correction.
+- Replying would be filler ("good point", "agreed", "I'll watch").
+
+If those all apply, respond with EXACTLY:
+
+    [silent]
+
+Just those two words, nothing before, nothing after, no period. The
+bridge drops the reply entirely; the user never sees a bubble from
+you. Never apologise for staying silent. Never narrate ("I'll let X
+handle this") — just emit `[silent]`.
+
+Empty filler is NOT acceptable. Either substantive contribution OR
+`[silent]`. Pick one.
+"""
+
+
+# Marker the bridge looks for to suppress a member's reply. Defined
+# once so the streaming reader and the prompt above stay in sync.
+SILENT_MARKER = '[silent]'
+SILENT_PEEK_LEN = 24   # chars to buffer before deciding silent vs real
+
+
 # ───────────────────  Telegram bridge config  ───────────────────
 # Optional integration: if CC_TELEGRAM_BOT_TOKEN is set, the server runs
 # a background long-polling task that lets a Telegram bot reach into
@@ -1836,7 +1912,8 @@ async def start_worker(sid: str, *, force_fresh: bool = False,
     # Persona override (group-chat member): use that persona's prompt
     # bundle (PERSONA.md + INSTRUCTIONS.md → systemPrompt) and force
     # fresh spawning since we don't reuse a single claude session for
-    # group members.
+    # group members. Also prepend a group-chat etiquette block so each
+    # member knows about the other personas + the silent-watcher rule.
     if persona_override:
         force_fresh = True
         p = persona_full(persona_override)
@@ -1844,6 +1921,15 @@ async def start_worker(sid: str, *, force_fresh: bool = False,
             persona_prompt = materialise_persona_files(p, Path(cwd))
         else:
             persona_prompt = None
+        member_names = []
+        for m in (sess.get('groupMembers') or []):
+            mp = persona_full(m.get('id'))
+            member_names.append(
+                (mp.get('name') if mp else None) or m.get('name') or m.get('id'))
+        my_name = (p.get('name') if p else None) or persona_override
+        group_block = _group_chat_prompt(member_names, my_name)
+        persona_prompt = (persona_prompt + '\n\n---\n\n' + group_block) \
+                         if persona_prompt else group_block
     else:
         # If the session has a stored systemPrompt (forked / persona-
         # pinned), always use it. Otherwise build a resume context blob
@@ -2022,6 +2108,55 @@ async def new_session(cwd_override: str | None = None,
     # has even said hello. Persona-list state changes regardless (Aurora
     # locks once she's spawned), so refresh that.
     await broadcast({'type': 'personas', **list_personas_brief()})
+    await broadcast(state_snapshot())
+
+
+async def group_remove_member(sid: str, persona_id: str) -> None:
+    """Remove a persona from an existing group chat. Stops the worker
+    for that member, removes them from the group roster, but leaves
+    their prior messages intact in chat history. The group must keep
+    at least 2 members — attempts to drop below that are rejected."""
+    sess = load_session(sid)
+    if sess is None or not sess.get('groupChat'):
+        await broadcast({'type': 'error',
+            'message': 'group_remove: not a group chat'})
+        return
+    members = sess.get('groupMembers') or []
+    if not any(m.get('id') == persona_id for m in members):
+        return                                 # already gone, idempotent
+    if len(members) <= 2:
+        await broadcast({'type': 'error',
+            'message': 'group_remove: group needs at least 2 members'})
+        return
+    sess['groupMembers'] = [m for m in members if m.get('id') != persona_id]
+    # Drop their last-turn reply too so future fan-outs don't keep
+    # quoting a member who's no longer in the room.
+    if isinstance(sess.get('groupLastTurnReplies'), dict):
+        sess['groupLastTurnReplies'].pop(persona_id, None)
+    sess['lastActiveAt'] = time.time()
+    save_session(sess)
+    upsert_index_entry(sess)
+    # Stop + drop the worker for this member so we don't keep a dead
+    # subprocess around once they're removed. Group workers are keyed
+    # by `<sid>:<personaId>` (worker_key), not the bare sid.
+    try:
+        wkey = worker_key(sid, persona_id)
+        w = state.workers.get(wkey)
+        if w and w.proc is not None:
+            try:
+                w.proc.terminate()
+                try: await asyncio.wait_for(w.proc.wait(), 5)
+                except asyncio.TimeoutError: w.proc.kill()
+            except ProcessLookupError:
+                pass
+            w.proc = None; w.pid = None; w.busy = False; w.current = None
+            if w.reader_task:
+                w.reader_task.cancel(); w.reader_task = None
+        state.workers.pop(wkey, None)
+    except Exception as e:
+        log(f'group_remove_member: worker teardown failed: {e}')
+    await broadcast({'type': 'group_member_removed',
+                     'sessionId': sid, 'personaId': persona_id})
     await broadcast(state_snapshot())
 
 
@@ -3780,6 +3915,13 @@ async def claude_reader(w: Worker):
                         # discard any accumulated text — never appears in chat
                         w.current = None
                     continue
+                # Group-chat members peek at the first ~24 chars before
+                # broadcasting `assistant_start`. If those chars look
+                # like the silent marker (`[silent]`), we drop the
+                # entire turn so the user never sees a fleeting bubble.
+                # Single-persona chats skip this peek and broadcast as
+                # before — no visible latency in the common case.
+                is_group = bool(w.persona_id)
                 if ev_type == 'content_block_start':
                     block = ev.get('content_block', {}) or {}
                     btype = block.get('type')
@@ -3787,16 +3929,15 @@ async def claude_reader(w: Worker):
                         in_text_block = True
                         if w.current is None:
                             w.current = {'id': str(uuid.uuid4()),
-                                         'text': '', 'started_at': time.time()}
-                            ev_start = {'type': 'assistant_start',
-                                        'sessionId': sid,
-                                        'id': w.current['id']}
-                            # Group-chat members tag every event with
-                            # their personaId so the client can render
-                            # the bubble with the right colour + name.
-                            if w.persona_id:
-                                ev_start['personaId'] = w.persona_id
-                            await broadcast(ev_start)
+                                         'text': '', 'started_at': time.time(),
+                                         'peek': '', 'silent': False,
+                                         'started_broadcast': False}
+                            if not is_group:
+                                ev_start = {'type': 'assistant_start',
+                                            'sessionId': sid,
+                                            'id': w.current['id']}
+                                await broadcast(ev_start)
+                                w.current['started_broadcast'] = True
                     else:
                         in_text_block = False
                 elif ev_type == 'content_block_delta':
@@ -3806,6 +3947,42 @@ async def claude_reader(w: Worker):
                             chunk = delta.get('text', '') or ''
                             if chunk and w.current:
                                 w.current['text'] += chunk
+                                # Group: buffer until we can decide if
+                                # this is a silent ack or a real reply.
+                                if is_group and not w.current['started_broadcast'] \
+                                        and not w.current['silent']:
+                                    w.current['peek'] += chunk
+                                    peek = w.current['peek'].lstrip()
+                                    if peek.startswith(SILENT_MARKER):
+                                        w.current['silent'] = True
+                                        # Stop streaming the rest — we
+                                        # let the worker finish writing
+                                        # but suppress all client events.
+                                        continue
+                                    if (len(w.current['peek']) >= SILENT_PEEK_LEN
+                                            or '\n' in w.current['peek']
+                                            or not SILENT_MARKER.startswith(
+                                                peek[:len(SILENT_MARKER)])):
+                                        # Definitely NOT silent — flush
+                                        # the buffered prefix in one shot
+                                        # and continue normal streaming.
+                                        ev_start = {'type': 'assistant_start',
+                                                    'sessionId': sid,
+                                                    'id': w.current['id'],
+                                                    'personaId': w.persona_id}
+                                        await broadcast(ev_start)
+                                        flush = w.current['peek']
+                                        w.current['peek'] = ''
+                                        w.current['started_broadcast'] = True
+                                        ev_delta = {'type': 'assistant_delta',
+                                                    'sessionId': sid,
+                                                    'id': w.current['id'],
+                                                    'personaId': w.persona_id,
+                                                    'text': flush}
+                                        await broadcast(ev_delta)
+                                    continue
+                                if is_group and w.current['silent']:
+                                    continue   # swallow remaining deltas
                                 ev_delta = {'type': 'assistant_delta',
                                             'sessionId': sid,
                                             'id': w.current['id'],
@@ -3816,23 +3993,62 @@ async def claude_reader(w: Worker):
                 elif ev_type == 'content_block_stop':
                     in_text_block = False
                 elif ev_type == 'message_stop':
-                    if w.current and w.current.get('text'):
-                        msg = {'role': 'assistant',
-                               'text': w.current['text'],
-                               'ts': time.time(),
-                               'id': w.current['id']}
-                        # Tag the persisted message too so re-renders
-                        # (chat switch / page reload) can colour the
-                        # bubble correctly without needing the live event.
-                        if w.persona_id:
-                            msg['personaId'] = w.persona_id
-                        append_message(sid, msg)
-                        ev_end = {'type': 'assistant_end',
-                                  'sessionId': sid,
-                                  'id': w.current['id']}
-                        if w.persona_id:
-                            ev_end['personaId'] = w.persona_id
-                        await broadcast(ev_end)
+                    if w.current:
+                        text = (w.current.get('text') or '').strip()
+                        is_silent = (
+                            (is_group and w.current.get('silent'))
+                            or (text == SILENT_MARKER)
+                            or (is_group and text and text.startswith(SILENT_MARKER)
+                                and len(text) <= len(SILENT_MARKER) + 4)
+                        )
+                        if is_silent:
+                            # Suppress entirely — no broadcasts, no save.
+                            log(f'group {sid[:8]}: {w.persona_id or "?"} '
+                                f'observed silently')
+                        elif text:
+                            msg = {'role': 'assistant',
+                                   'text': w.current['text'],
+                                   'ts': time.time(),
+                                   'id': w.current['id']}
+                            if w.persona_id:
+                                msg['personaId'] = w.persona_id
+                            append_message(sid, msg)
+                            # Group: stash this reply under the session
+                            # so the NEXT user turn's fan-out can hand
+                            # it to the OTHER members as peer context.
+                            if w.persona_id:
+                                try:
+                                    sess_now = load_session(sid)
+                                    if sess_now and sess_now.get('groupChat'):
+                                        replies = sess_now.get(
+                                            'groupLastTurnReplies') or {}
+                                        replies[w.persona_id] = w.current['text']
+                                        sess_now['groupLastTurnReplies'] = replies
+                                        save_session(sess_now)
+                                except Exception as e:
+                                    log(f'group: peer-context save failed: {e}')
+                            # Group flush: if we never broadcast the
+                            # start (response was short and we hadn't
+                            # decided yet), do the start + full text now
+                            # so the client paints a normal bubble.
+                            if is_group and not w.current.get('started_broadcast'):
+                                await broadcast({
+                                    'type': 'assistant_start',
+                                    'sessionId': sid,
+                                    'id': w.current['id'],
+                                    'personaId': w.persona_id})
+                                await broadcast({
+                                    'type': 'assistant_delta',
+                                    'sessionId': sid,
+                                    'id': w.current['id'],
+                                    'personaId': w.persona_id,
+                                    'text': w.current['text']})
+                            ev_end = {'type': 'assistant_end',
+                                      'sessionId': sid,
+                                      'id': w.current['id']}
+                            if w.persona_id:
+                                ev_end['personaId'] = w.persona_id
+                            await broadcast(ev_end)
                     w.current = None
                 continue
 
@@ -4333,13 +4549,46 @@ async def send_to_session(sid: str, text: str, attachments: list[dict],
             log(f'send: group {sid[:8]} has no members')
             return
         log(f'group send: {sid[:8]} → {len(members)} members')
+        # Peer context: replies from OTHER members in the previous round.
+        # claude_reader stores each member's reply under
+        # sess.groupLastTurnReplies[personaId] at message_stop time
+        # (silent replies are skipped so they don't pollute context).
+        prior_replies = sess.get('groupLastTurnReplies') or {}
+        # Lookup persona name by id once so the prefix uses real names.
+        member_names = {}
+        for m in members:
+            mid = m.get('id')
+            if not mid: continue
+            mp = persona_full(mid)
+            member_names[mid] = (mp.get('name') if mp else None) \
+                                 or m.get('name') or mid
+
         async def _deliver(persona_id: str):
             w = await _ensure_worker(sid, sess, persona_override=persona_id)
             if w is None:
                 return
             w.busy = True
             w.turn_started_at = time.time()
-            await _write_to_worker(w, payload, sid)
+            # Build per-member payload: prepend other members' prior
+            # replies as `[from <name>]: …` observation lines so each
+            # persona has the context to decide whether to engage.
+            peer_lines = []
+            for pid, ptext in prior_replies.items():
+                if pid == persona_id: continue   # don't echo own reply
+                if not ptext: continue
+                pname = member_names.get(pid, pid)
+                peer_lines.append(f'[from {pname}]: {ptext}')
+            if peer_lines:
+                wrapped = ('Observations from the previous round '
+                           '(treat as context, do not respond unless '
+                           'addressed):\n\n'
+                           + '\n\n'.join(peer_lines)
+                           + '\n\n---\n\nNew user message:\n\n' + text)
+                member_payload = _build_claude_payload(wrapped, attachments)
+            else:
+                member_payload = payload
+            await _write_to_worker(w, member_payload, sid)
+
         # Fire all member sends in parallel — each worker's reader will
         # stream its assistant_* events tagged with personaId, so the
         # UI lands them as separate bubbles.
@@ -4720,6 +4969,13 @@ async def handle_client(websocket):
                 pid = msg.get('persona')
                 if gsid and pid:
                     await group_add_member(gsid, pid)
+            elif cmd == 'group_remove':
+                # Remove a persona from an existing group chat. Group
+                # must keep ≥2 members; the helper rejects otherwise.
+                gsid = msg.get('id') or state.active_id
+                pid = msg.get('persona')
+                if gsid and pid:
+                    await group_remove_member(gsid, pid)
             elif cmd == 'personas_list':
                 await websocket.send(json.dumps({
                     'type': 'personas',
