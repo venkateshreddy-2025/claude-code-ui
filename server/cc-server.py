@@ -628,10 +628,18 @@ def _group_chat_prompt(member_names: list[str], my_name: str) -> str:
 
 You ({my_name}) share this conversation with: {others_str}.
 
-The bridge fans every user message to all members in parallel. Between
-turns, you'll also see lines like `[from <name>]: …` — those are what
-the OTHER personas said in the previous round. Treat them as context,
-NOT as a turn you must respond to.
+This room works like Slack. Every message — from the human OR from
+another persona — lands in your terminal in real time. The whole
+point is that you can talk WITH each other, not just answer the human.
+
+You'll see two kinds of incoming messages:
+
+1. **Direct user messages.** A normal human turn — fanned to every
+   member in parallel.
+2. **Peer messages**, prefixed with `[from <name>]: …` — that's
+   another persona finishing their reply. You can respond to it
+   exactly like you'd respond to a Slack message from a coworker.
+   Reply, push back, ask a follow-up, or stay quiet. Your call.
 
 ### When to reply
 
@@ -644,14 +652,28 @@ Always reply when:
 - It's the FIRST message in the conversation (introduce yourself
   briefly + add value — let the user know you're here).
 - The topic is in your wheelhouse / matches your persona's expertise.
-- Another persona's `[from <name>]:` observation asks you a question
-  or invites your perspective.
+- A peer's `[from <name>]:` line asks a question, says something
+  you disagree with, or hands you a thread you can build on.
 - You can add something concrete (a different angle, a correction,
   a follow-up question, a complementary suggestion) that others
   haven't covered.
 
-Keep replies SHORT in group chats — 1–3 sentences is plenty unless
-the user asked for depth. You'll get more turns to dig in.
+Keep replies SHORT in group chats — 1–2 sentences is the norm.
+You'll get more turns to dig in.
+
+### Talking TO another persona
+
+When you address another persona directly, just write to them like
+you'd write to a coworker. Don't restate their message. Don't put
+`[from X]:` in your OWN reply — that prefix is added automatically
+by the bridge when others see your message. Just speak naturally:
+
+    "Brielle, that's not how I'd play it. He's not interested in
+     your drama, he's interested in lunch."
+
+The bridge handles the routing — your reply lands in every other
+persona's terminal AND on the user's screen as a normal bubble
+with your name on it.
 
 ### When to stay silent
 
@@ -711,6 +733,12 @@ default verbosity. Read them every turn.
 6. **One-shot punch.** If you do reply, make it land in the first
    sentence. Save the elaboration for if they ask. A sharp single
    line beats a competent paragraph in a group chat.
+
+7. **Bot-to-bot ping-pong has limits.** The bridge caps how many
+   peer-to-peer messages can fire in a row before the human gets
+   the next turn. If a peer says something that doesn't really need
+   your response, just stay `[silent]` — don't volunteer filler
+   to keep the chain alive.
 """
 
 
@@ -2025,12 +2053,17 @@ async def start_worker(sid: str, *, force_fresh: bool = False,
 
     # Group-member workers share the bridge session id (used for our
     # fan-out + history append) but need a UNIQUE claude-session id so
-    # the per-persona memories don't collide. uuid5 makes the per-member
-    # id deterministic across restarts so --resume keeps working.
+    # the per-persona memories don't collide.
+    #
+    # Group members ALWAYS force_fresh (we synthesize per-turn context
+    # via --append-system-prompt instead of relying on claude's own
+    # session memory), so a deterministic uuid would just collide on the
+    # second spawn — claude rejects re-use of a session id even after
+    # the prior process exits ("Session ID ... is already in use").
+    # Fresh uuid4 per spawn for group members; bare sid for solo chats
+    # so --resume still works there.
     if persona_override:
-        claude_sid = str(uuid.uuid5(
-            uuid.UUID('00000000-0000-0000-0000-c1aac1aac1aa'),
-            f'{sid}:{persona_override}'))
+        claude_sid = str(uuid.uuid4())
     else:
         claude_sid = sid
 
@@ -2083,6 +2116,21 @@ async def start_worker(sid: str, *, force_fresh: bool = False,
     w.current = None
     log(f'  → pid {w.pid}')
     w.reader_task = asyncio.create_task(claude_reader(w))
+    # Drain stderr so a crashing claude can't fill the pipe buffer
+    # and so we capture the actual error message in the bridge log.
+    async def _stderr_drain(p, sid_short):
+        try:
+            while True:
+                chunk = await p.stderr.readline()
+                if not chunk: break
+                txt = chunk.decode('utf-8', errors='replace').rstrip()
+                if txt:
+                    log(f'  claude[{sid_short}] err: {txt}')
+        except Exception:
+            pass
+    asyncio.create_task(_stderr_drain(
+        w.proc,
+        sid[:8] + (':'+persona_override if persona_override else '')))
     return w
 
 
@@ -3992,6 +4040,46 @@ async def claude_reader(w: Worker):
 
             t = obj.get('type')
 
+            # ── --resume corruption fast-path ──
+            # Claude Code's `--resume <id>` looks up the session in its
+            # local store; if the conversation is missing (server data
+            # wiped, claude reinstalled, ID never existed), it errors out
+            # immediately with this exact message in the result event.
+            # Arm the fallback right away so the next spawn skips
+            # --resume and rebuilds context from chat.json instead, AND
+            # auto-retry the just-sent user turn so the human doesn't
+            # have to retype it.
+            if t == 'result' and obj.get('subtype') == 'error_during_execution':
+                errs = obj.get('errors') or []
+                missing = any(isinstance(e, str)
+                              and 'No conversation found' in e for e in errs)
+                if missing:
+                    if not w.fallback_armed:
+                        w.fallback_armed = True
+                        log(f'  ⚠ session {sid[:8]} --resume: claude has no '
+                            f'memory of this id → fallback armed')
+                    # Auto-retry: pull the last user message off chat.json
+                    # and replay it. claude will exit cleanly after this
+                    # event, the bridge will tear the worker down, and
+                    # the retry below lazy-spawns a fresh one with the
+                    # fallback path (no --resume).
+                    try:
+                        sess_retry = load_session(sid)
+                        msgs = (sess_retry.get('messages') or []) \
+                            if sess_retry else []
+                        last_user = next(
+                            (m for m in reversed(msgs)
+                             if m.get('role') == 'user'),
+                            None)
+                        if last_user and last_user.get('text'):
+                            log(f'  ↻ auto-retrying last user turn for '
+                                f'sid={sid[:8]} after --resume miss')
+                            asyncio.create_task(_retry_after_resume_miss(
+                                sid, last_user.get('text') or '',
+                                last_user.get('attachments') or []))
+                    except Exception as e:
+                        log(f'  resume-miss auto-retry failed: {e}')
+
             if t == 'stream_event':
                 ev = obj.get('event', {}) or {}
                 ev_type = ev.get('type')
@@ -4106,20 +4194,44 @@ async def claude_reader(w: Worker):
                             if w.persona_id:
                                 msg['personaId'] = w.persona_id
                             append_message(sid, msg)
-                            # Group: stash this reply under the session
-                            # so the NEXT user turn's fan-out can hand
-                            # it to the OTHER members as peer context.
+                            # Group multi-agent: a non-silent reply gets
+                            # pushed to every OTHER member's worker as
+                            # a synthetic user message right away, so
+                            # the conversation can continue between
+                            # personas WITHOUT waiting for the next
+                            # user turn. Capped so we can't infinite-loop.
                             if w.persona_id:
                                 try:
                                     sess_now = load_session(sid)
                                     if sess_now and sess_now.get('groupChat'):
+                                        # Stash for next-user-turn context too.
                                         replies = sess_now.get(
                                             'groupLastTurnReplies') or {}
                                         replies[w.persona_id] = w.current['text']
                                         sess_now['groupLastTurnReplies'] = replies
+                                        # Chain cap: each user turn can
+                                        # produce at most this many peer
+                                        # replies before the cross-talk
+                                        # stops. Generous enough for a
+                                        # real back-and-forth, tight
+                                        # enough that nobody loops forever.
+                                        chain = int(sess_now.get(
+                                            'groupTurnChainCount') or 0)
+                                        sess_now['groupTurnChainCount'] = chain + 1
                                         save_session(sess_now)
+                                        max_chain = 12
+                                        if chain < max_chain:
+                                            asyncio.create_task(
+                                                _broadcast_to_peers(
+                                                    sid, sess_now,
+                                                    w.persona_id,
+                                                    w.current['text']))
+                                        else:
+                                            log(f'group {sid[:8]}: chain cap '
+                                                f'({max_chain}) hit, peer '
+                                                f'broadcast suppressed')
                                 except Exception as e:
-                                    log(f'group: peer-context save failed: {e}')
+                                    log(f'group: peer broadcast failed: {e}')
                             # Group flush: if we never broadcast the
                             # start (response was short and we hadn't
                             # decided yet), do the start + full text now
@@ -4589,6 +4701,93 @@ async def _write_to_worker(w: Worker, payload: dict, sid: str) -> bool:
         return False
 
 
+async def _retry_after_resume_miss(sid: str, text: str,
+                                    attachments: list[dict]) -> None:
+    """When claude's `--resume <id>` fails with "No conversation found"
+    we arm the fallback AND replay the last user message so the human
+    doesn't have to retype. The original worker is still draining its
+    error result + about to exit, so we wait for it to clear before
+    spawning fresh."""
+    await asyncio.sleep(0.3)
+    w = state.workers.get(worker_key(sid))
+    if w is not None and w.proc is not None:
+        # Give the dying claude a moment to actually exit (it always
+        # does after error_during_execution). 2s is generous.
+        for _ in range(20):
+            if w.proc.returncode is not None:
+                break
+            await asyncio.sleep(0.1)
+    sess = load_session(sid)
+    if sess is None:
+        return
+    payload = _build_claude_payload(text, attachments or [])
+    if payload is None:
+        return
+    new_w = await _ensure_worker(sid, sess)
+    if new_w is None:
+        return
+    new_w.busy = True
+    new_w.turn_started_at = time.time()
+    await _write_to_worker(new_w, payload, sid)
+
+
+async def _broadcast_to_peers(sid: str, sess: dict,
+                              sender_id: str, text: str) -> None:
+    """Slack-style: when a group-chat member finishes a non-silent reply,
+    push it to every OTHER member's worker as a synthetic user message
+    `[from <name>]: <text>`. That's how the personas talk to each
+    other instead of just broadcasting at the human.
+
+    Each downstream worker is free to either engage (reply, normal
+    bubble) or stay quiet (`[silent]`). The chain count cap upstream
+    in claude_reader stops infinite ping-pong."""
+    members = sess.get('groupMembers') or []
+    if not members:
+        return
+    # Resolve sender's display name once — falls back to the persona's
+    # registry record, then the member entry's stored name, then id.
+    sender_name = None
+    for m in members:
+        if m.get('id') == sender_id:
+            sender_name = m.get('name')
+            break
+    if not sender_name:
+        sp = persona_full(sender_id)
+        sender_name = (sp.get('name') if sp else None) or sender_id
+
+    peer_text = f'[from {sender_name}]: {text}'
+    payload = _build_claude_payload(peer_text, [])
+    if payload is None:
+        return
+
+    # Fan out in parallel — each peer's worker is independent.
+    async def _push(pid: str):
+        wkey = worker_key(sid, pid)
+        other_w = state.workers.get(wkey)
+        if other_w is None or other_w.proc is None \
+                or other_w.proc.returncode is not None:
+            # Lazy-spawn the peer if it's not already alive (e.g. they
+            # just got added to the group, or their worker crashed).
+            other_w = await _ensure_worker(sid, sess, persona_override=pid)
+            if other_w is None:
+                return
+        other_w.busy = True
+        other_w.turn_started_at = time.time()
+        try:
+            await _write_to_worker(other_w, payload, sid)
+        except Exception as e:
+            log(f'peer broadcast {sender_id}→{pid} failed: {e}')
+
+    targets = [m.get('id') for m in members
+               if m.get('id') and m.get('id') != sender_id]
+    if not targets:
+        return
+    log(f'group {sid[:8]}: peer broadcast {sender_name} → '
+        f'{len(targets)} peer(s)')
+    await asyncio.gather(*[_push(pid) for pid in targets],
+                          return_exceptions=True)
+
+
 async def send_to_session(sid: str, text: str, attachments: list[dict],
                           *, source: str = 'web'):
     """Send a turn to the claude worker for `sid`. If no worker is
@@ -4642,6 +4841,11 @@ async def send_to_session(sid: str, text: str, attachments: list[dict],
             log(f'send: group {sid[:8]} has no members')
             return
         log(f'group send: {sid[:8]} → {len(members)} members')
+        # Reset the chain-count budget at the START of each user turn.
+        # Peer-to-peer cross-talk is metered per-turn so a runaway
+        # back-and-forth between bots can't outlive a single human prompt.
+        sess['groupTurnChainCount'] = 0
+        save_session(sess)
         # Peer context: replies from OTHER members in the previous round.
         # claude_reader stores each member's reply under
         # sess.groupLastTurnReplies[personaId] at message_stop time
