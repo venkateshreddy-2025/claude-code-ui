@@ -5420,8 +5420,12 @@
           // typing immediately.
           if (sessions.length === 0 && !reportedActive && !autoCreatePending){
             autoCreatePending = true;
-            // First-load on a fresh install: Aurora (orchestrator).
-            send({type:'new', persona:'aurora'});
+            // Empty install: don't hardcode a persona client-side. The
+            // server's `new_session()` falls back to the saved default
+            // (Claudy by default) when no `persona` field is sent —
+            // that's the single source of truth for "what's the default
+            // persona for new chats" so the UI can't drift.
+            send({type:'new'});
           } else if (sessions.length > 0){
             autoCreatePending = false;
           }
@@ -5459,7 +5463,10 @@
           }
           if (sessions.length === 0 && !reportedActive && !autoCreatePending){
             autoCreatePending = true;
-            send({type:'new', persona:'aurora'});
+            // Same as the first-state branch: let the server's
+            // `new_session()` apply the saved default persona instead
+            // of hardcoding one client-side.
+            send({type:'new'});
           } else if (sessions.length > 0){
             autoCreatePending = false;
           }
@@ -7023,10 +7030,10 @@
   const PERSONA_CAPABILITIES = {
     aurora:  'Chief of staff — never does the work herself, spawns the right specialist, briefs them, follows up. Pinned to top of the chat list.',
     claudy:  'Friendly engineering generalist — coding, debugging, system design, web research. Default for new chats.',
-    curator: 'Organiser — installs skills, finds files on disk, summarises into knowledge MDs. Uses desktop-commander MCP for fast scans.',
     flash:   'Haiku-fast snappy answers — lookups, math, definitions, one-liners. No multi-step plans, no big context.',
     sage:    'Deep research with citations — multi-source web search, inline `[N]` markers, confidence tags, structured TL;DR.',
-    pallavi: 'Roleplay companion — Pallavi, 24, romanized Telugu only, casual + teasing. Never breaks character. Not for work.',
+    tucker:  'Companion-mode demo — Tucker, 40, divorced tax accountant. Dry sarcasm first, soft spot underneath. Group-chat banter foil.',
+    brielle: 'Companion-mode demo — Brielle, 24, fresh off a breakup. Sarcasm + attitude, never softens. Group-chat banter foil.',
     lumen:   'Topic → polished single-file HTML deck + companion MD. Researches first, ships visuals, no thin text-walls.',
     verdict: 'Structured critique — works/doesn\'t work/missing/change-first/score. Code, prose, design, plans, anything.',
   };

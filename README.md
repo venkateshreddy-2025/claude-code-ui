@@ -77,7 +77,7 @@ npm install -g @anthropic-ai/claude-code
 claude login                                # browser → your Pro/Max account
 
 # 2. Clone + install (one Python dep).
-git clone https://github.com/venkateshreddy-2025/claude-code-ui.git armyclaw
+git clone https://github.com/atmostai-online/armyclaw.git armyclaw
 cd armyclaw
 pip3 install --user "websockets>=12,<17"
 
@@ -311,18 +311,49 @@ Click **Fork** below the last assistant message. ArmyClaw:
 
 Forks show with a `- fork` suffix in the title. Rename via ⋮.
 
-### 9. Chat filters — by persona, tag, favorite, time
+### 9. Chat filters — quick focus by persona or tag
 
-The sidebar header has two filter selects:
+The sidebar header has two filter selects that work together:
 
-- **Persona** — dropdown auto-populated from any personas with at
-  least one chat. "All chats (12) · Tucker (3) · Aurora (5) · …"
-- **Tag** — chats can be tagged (project, theme); filter narrows by tag.
+- **Persona** — auto-populated from any personas with at least one
+  chat. "All chats (12) · Tucker (3) · Aurora (5) · …"
+- **Tag** — your project / theme groupings (see #10 below).
 
-Plus date subtitles under each title — `5m · May 2, 12:05 AM` — for
-at-a-glance recency.
+Pick a persona AND a tag to narrow further (e.g. "Aurora chats with
+the `marketing` tag"). Plus date subtitles under each title —
+`5m · May 2, 12:05 AM` — for at-a-glance recency.
 
-### 10. Favorites — star chats AND individual messages
+### 10. Tags — group chats by project, theme, or anything
+
+Every chat carries a **tag** (default `general`) that you can rename
+to whatever you want — `infra`, `marketing`, `personal`, `client-x`,
+`research-q4`, anything alphanumeric. Set it once via the chat's
+`⋮ → Set tag` menu and the chat carries that tag forever.
+
+Tags are first-class citizens of the orchestrator:
+
+- **One-click filter.** The sidebar's tag dropdown shows every tag
+  in use with a count: `All tags (14) · #infra (5) · #marketing (4) · #personal (5)`.
+  Pick one and the sidebar collapses to just those chats — instant
+  context switch when you're juggling multiple projects.
+- **Search scope.** Full-text search (⌘K) accepts a tag filter,
+  so `tag:marketing brand voice` only hits chats inside that
+  project group.
+- **Survives forks.** Forking a chat copies its tag to the new fork,
+  so a single project's branching exploration stays in the same
+  group.
+- **Survives restart.** Tags are persisted in each chat's index
+  brief and the on-disk session JSON; nothing tag-related lives
+  in volatile worker state.
+- **Pair with personas.** Common pattern: tag-by-project + persona-
+  by-role. "Aurora orchestrating marketing" vs "Sage researching
+  marketing" — same project tag, different specialist personas,
+  one click to filter to either.
+
+Tags are how the sidebar stays usable past 50+ chats. Your "what
+am I working on right now" is two clicks away, not a scroll.
+
+### 11. Favorites — star chats AND individual messages
 
 Two independent stars:
 
@@ -334,7 +365,7 @@ Two independent stars:
   pull up later, an answer that taught you something, an artifact
   worth keeping. Search filters by starred-only.
 
-### 11. Search — full-text across every agent's history, ⌘K style
+### 12. Search — full-text across every agent's history, ⌘K style
 
 Magnifier in the header (or `⌘K` / `Ctrl-K`) opens a SERP-style overlay:
 
@@ -346,7 +377,7 @@ Magnifier in the header (or `⌘K` / `Ctrl-K`) opens a SERP-style overlay:
 - Click a result → preview popup → "Open in chat →" jumps to the exact
   message and pulses the bubble.
 
-### 12. Notes — per-chat scratchpad
+### 13. Notes — per-chat scratchpad
 
 Header → 📝 opens the notes panel. Each chat has its own `NOTES.md` in
 its working directory. Markdown-rendered, autosaved, lives on disk
@@ -356,7 +387,7 @@ forever. Use it for:
 - Output you don't want re-summarised.
 - A standalone scratchpad that doesn't pollute the chat transcript.
 
-### 13. Voice control — speech-to-text, on-device
+### 14. Voice control — speech-to-text, on-device
 
 Mic icon in the composer toggles the browser's Web Speech API. **No audio
 ever leaves the page.** Interim results stream into the textarea live;
@@ -365,7 +396,7 @@ hit `Esc` or click the pulsing mic to stop. Edit before sending.
 Coming up (roadmap): streaming TTS so claude reads its answers back to
 you while you stay hands-free.
 
-### 14. Inbuilt terminal — xterm.js + PTY, in the right panel
+### 15. Inbuilt terminal — xterm.js + PTY, in the right panel
 
 Header → ⌨ opens a real terminal **inside the same page**, attached to
 a server-side `pty.fork()` running your shell. Run `git status`, run a
@@ -376,7 +407,7 @@ test, tail a log — without leaving ArmyClaw. The terminal:
 - Resizes when the panel resizes.
 - Inherits the active chat's working directory by default.
 
-### 15. File explorer — browse + edit, rooted at the chat's cwd
+### 16. File explorer — browse + edit, rooted at the chat's cwd
 
 Header → 📁 opens a file tree rooted at `runtime/<chatId>/`. Click a
 file → opens an inline editor with autosave. Click a folder → expands.
@@ -385,7 +416,7 @@ All paths are sanity-checked against the root so `..` can't escape.
 Drag-and-drop uploads land in the chat's uploads dir; the path is
 mentioned to claude so its `Read` tool can pull it in on the next turn.
 
-### 16. Snapshots / time-machine
+### 17. Snapshots / time-machine
 
 Header → ⚙ → **Snapshots** opens a timeline of saved checkpoints. Each
 snapshot is a full disk-state copy of:
@@ -399,7 +430,7 @@ Restore any snapshot to roll back. Snapshots are gzipped folders under
 `runtime/snapshots/<ts>/`. Useful before a risky experiment, before
 upgrading the bridge, or just because.
 
-### 17. Wake-on-restart — interrupted agents self-resume
+### 18. Wake-on-restart — interrupted agents self-resume
 
 If the server is killed mid-stream, ArmyClaw flags those sessions on
 disk (`streaming: true`). On next boot, the bridge:
@@ -412,7 +443,7 @@ disk (`streaming: true`). On next boot, the bridge:
 
 Idle chats are left alone. No lost work, no manual restart drill.
 
-### 18. Skills + knowledge — thousands at your agents' disposal
+### 19. Skills + knowledge — thousands at your agents' disposal
 
 ArmyClaw's agents have native access to **the entire Claude Code skills
 ecosystem AND the OpenClaw skills library — thousands of pre-built
@@ -435,13 +466,13 @@ Two parallel registries surface in the UI under **⚙ → Skills** and
 Both registries auto-rebuild when files change. No restart, no
 re-deploy.
 
-### 19. Themes — 10 accents, persisted
+### 20. Themes — 10 accents, persisted
 
 Amber, Ember, Sunset, Rose, Magenta, Violet, Ocean, Mint, Forest, Slate.
 Pick from header → 🎨. Persisted in `localStorage`. Tables, code blocks,
 links, sidebar accents, typing bubbles all retint together.
 
-### 20. Reload-safe state
+### 21. Reload-safe state
 
 Refresh mid-stream. Close your laptop. Switch Wi-Fi networks. The
 WebSocket reconnects, the server replays the full state snapshot
@@ -449,7 +480,7 @@ WebSocket reconnects, the server replays the full state snapshot
 exactly where you were — including the streaming bubble that's
 still mid-token.
 
-### 21. Crash recovery + auto-fallback
+### 22. Crash recovery + auto-fallback
 
 If `claude --resume <id>` fails (corrupt CLI session memory, fresh
 machine, etc.), the bridge:
@@ -461,7 +492,7 @@ machine, etc.), the bridge:
 
 You see no hiccup. The chat just keeps going.
 
-### 22. Model-agnostic backend — every agent, any model
+### 23. Model-agnostic backend — every agent, any model
 
 Claude Code itself is the orchestrator's brain — but you don't have
 to feed it Anthropic models. Claude Code reads `ANTHROPIC_BASE_URL`
@@ -532,7 +563,7 @@ Everything — group chats, routines, artifacts, terminal, voice in,
 favorites, memory — works whether the brain is Anthropic Opus,
 Kimi K2.5, GLM-4.7, or a 4 GB Ollama model running on your laptop.
 
-### 23. Companion mode — roleplay-grade personas, locally
+### 24. Companion mode — roleplay-grade personas, locally
 
 ArmyClaw doubles as a serious roleplay / companion platform.
 The persona machinery, group-chat banter, and shared memory
@@ -597,7 +628,7 @@ pure Windows is untested.
 ### Option A — minimal (recommended)
 
 ```bash
-git clone https://github.com/venkateshreddy-2025/claude-code-ui.git armyclaw
+git clone https://github.com/atmostai-online/armyclaw.git armyclaw
 cd armyclaw
 pip3 install --user "websockets>=12,<17"
 python3 server/cc-server.py
@@ -607,7 +638,7 @@ python3 server/cc-server.py
 ### Option B — guided installer
 
 ```bash
-git clone https://github.com/venkateshreddy-2025/claude-code-ui.git armyclaw
+git clone https://github.com/atmostai-online/armyclaw.git armyclaw
 cd armyclaw
 ./scripts/install.sh             # checks deps, creates data dir, smoke-tests
 ./scripts/install.sh --start     # …and starts the server in the foreground
