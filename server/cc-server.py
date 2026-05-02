@@ -1005,9 +1005,41 @@ def upsert_index_entry(sess: dict):
         # session; the user can change it from the chat header. The
         # filter dropdown + search both honor it. See `set_tag` WS cmd.
         'tag': (sess.get('tag') or 'general'),
+        # Group-chat marker + roster — without this in the brief, the
+        # sidebar / header can't distinguish a group from a one-on-one
+        # chat (the full session JSON is only loaded on focus).
+        'groupChat':    bool(sess.get('groupChat')),
+        'groupMembers': sess.get('groupMembers') or [],
     })
     idx['sessions'] = items
     save_index(idx)
+
+
+def reindex_groupchat_briefs():
+    """One-shot startup migration: pre-existing index.json entries don't
+    include groupChat / groupMembers (the brief schema was extended
+    after some groups were already created). Walk every session JSON,
+    find the ones flagged groupChat, and re-upsert their brief so the
+    sidebar starts showing the rich group icon on first paint."""
+    if not SESS_DIR.exists():
+        return
+    refreshed = 0
+    for f in SESS_DIR.glob('*.json'):
+        if f.name == 'index.json':
+            continue
+        try:
+            sess = json.loads(f.read_text())
+        except Exception:
+            continue
+        if not sess.get('groupChat'):
+            continue
+        try:
+            upsert_index_entry(sess)
+            refreshed += 1
+        except Exception as e:
+            log(f'reindex_groupchat_briefs: {sess.get("id","?")[:8]}: {e}')
+    if refreshed:
+        log(f'refreshed {refreshed} group-chat brief(s) in index.json')
 
 
 def next_chat_id(persona_name: str | None = None) -> str:
@@ -6757,6 +6789,9 @@ async def main():
     # file explorer + per-chat artifacts always live in a predictable
     # place. Idempotent: runs cheaply on every boot.
     migrate_legacy_chat_cwds()
+    # Backfill groupChat / groupMembers into pre-existing index.json
+    # briefs so the sidebar shows the right icon for old groups.
+    reindex_groupchat_briefs()
 
     idx = load_index()
     state.active_id = idx.get('active')

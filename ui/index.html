@@ -219,19 +219,24 @@
   .session-item .persona-dot{flex:0 0 auto;width:8px;height:8px;border-radius:50%;
     background:var(--persona-color, var(--fg-faint));
     box-shadow:0 0 0 1px rgba(0,0,0,.25) inset}
-  /* Group chat sidebar items: stack of overlapping coloured dots so a
-     glance at the chat list says "this is a group". Width adjusts based
-     on how many members there are. */
-  .session-item .persona-dot-stack{flex:0 0 auto;display:inline-flex;
-    align-items:center;padding-left:4px}
-  .session-item .stack-dot{width:10px;height:10px;border-radius:50%;
-    border:1.5px solid var(--bg);margin-left:-4px;
-    box-shadow:0 0 0 1px rgba(0,0,0,.25) inset}
-  .session-item .persona-dot-more{margin-left:4px;font-size:9.5px;
-    color:var(--fg-faint);font-weight:600;line-height:1}
+  /* Group chat sidebar items: a clear "people" SVG badge replaces the
+     persona dot so the row is unmistakable as a group chat. The
+     thicker accent stripe + tinted icon use the first member's colour
+     so the row still carries persona-flavoured cues. */
+  .session-item .group-badge{flex:0 0 auto;display:inline-flex;
+    align-items:center;gap:3px;padding:2px 6px 2px 4px;
+    border-radius:10px;background:rgba(255,255,255,.06);
+    border:1px solid var(--border);color:var(--accent);
+    line-height:1}
+  .session-item .group-badge svg{flex:0 0 14px}
+  .session-item .group-badge .group-badge-count{font-size:10.5px;
+    font-weight:700;color:inherit;letter-spacing:.02em}
   /* Group chats get a thicker accent stripe so they pop off the list. */
   .session-item.is-group{border-left-width:4px;
     border-left-style:solid;border-left-color:var(--persona-color, var(--accent))}
+  .session-item.is-group.active .group-badge,
+  .session-item.is-group:hover .group-badge{
+    background:rgba(245,158,11,.14);border-color:rgba(245,158,11,.4)}
   /* Aurora-pinned (orchestrator persona) gets a subtle border accent at the
      top so it's clearly anchored in place. */
   .session-item.pinned-top{border:1px solid rgba(245,158,11,.25);
@@ -595,22 +600,22 @@
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .who .name .t-persona{font-weight:700}
   .who .name .t-sep{color:var(--fg-faint);margin:0 4px}
-  /* Group-chat header members button — overlapping persona dots +
-     count + chevron, opens a popover listing members with × delete. */
-  .who .name .t-members-btn{margin-left:8px;display:inline-flex;
-    align-items:center;gap:6px;padding:3px 8px 3px 6px;
+  /* Group-chat header: people-icon badge to the left of the title +
+     a "members" button (people-icon + count + chevron) that opens
+     the popover. Both icons make it unmistakable that this is a
+     group chat, and the button is the obvious add/remove handle. */
+  .who .name .t-group-icon{display:inline-flex;align-items:center;
+    color:var(--accent);margin-right:4px;vertical-align:-3px}
+  .who .name .t-members-btn{margin-left:10px;display:inline-flex;
+    align-items:center;gap:6px;padding:4px 10px 4px 8px;
     border:1px solid var(--border);border-radius:14px;
     background:rgba(255,255,255,.04);color:var(--fg-dim);cursor:pointer;
     font:inherit;font-size:11.5px;font-weight:600;line-height:1;
     transition:background .12s,color .12s,border-color .12s}
   .who .name .t-members-btn:hover{background:rgba(245,158,11,.12);
     color:var(--accent);border-color:var(--accent)}
-  .who .name .t-member-stack{display:inline-flex;align-items:center;
-    padding-left:4px}
-  .who .name .t-member-dot{width:10px;height:10px;border-radius:50%;
-    border:1.5px solid var(--bg-2);margin-left:-4px;
-    box-shadow:0 0 0 1px rgba(0,0,0,.25) inset}
-  .who .name .t-members-count{font-size:11px;letter-spacing:.02em}
+  .who .name .t-members-btn svg{flex:0 0 auto}
+  .who .name .t-members-count{font-size:12px;letter-spacing:.02em}
   /* Group members popover — appears below the header button, shows
      each member with their colour swatch + name + × delete. Bottom
      row has a "+ Add member" button that re-uses the new-group modal. */
@@ -3535,30 +3540,30 @@
     const titleRow = document.createElement('div');
     titleRow.className = 'title-row';
     if (s.groupChat){
-      // Group chat: render a stack of overlapping persona-coloured dots
-      // (one per member, capped at 3 with a "+N" overflow tag) so the
-      // sidebar item is visually distinct from a single-persona chat.
-      const stack = document.createElement('span');
-      stack.className = 'persona-dot-stack';
-      stack.title = 'Group: ' + (s.groupMembers || []).map(m => m.name || m.id).join(', ');
-      const members = (s.groupMembers || []).slice(0, 3);
-      for (const m of members){
-        const d = document.createElement('span');
-        d.className = 'persona-dot stack-dot';
-        d.style.background = personaColor(m.id);
-        stack.appendChild(d);
-      }
-      const more = (s.groupMembers || []).length - members.length;
-      if (more > 0){
-        const tag = document.createElement('span');
-        tag.className = 'persona-dot-more';
-        tag.textContent = '+' + more;
-        stack.appendChild(tag);
-      }
-      titleRow.appendChild(stack);
-      // Override the persona-color CSS variable with the first member's
-      // colour so the left-edge stripe still has presence.
-      const lead = (s.groupMembers || [])[0];
+      // Group chat: a small "people" SVG badge replaces the persona dot
+      // and the chat row gets a thicker accent stripe so groups are
+      // unmistakable in the sidebar list. Hover shows member names.
+      const members = s.groupMembers || [];
+      const badge = document.createElement('span');
+      badge.className = 'group-badge';
+      badge.title = 'Group: ' + members.map(m => m.name || m.id).join(', ');
+      // Tint the badge with the first member's colour so the row still
+      // carries some persona-flavoured colour cue.
+      const lead = members[0];
+      const tint = lead ? personaColor(lead.id) : 'var(--accent)';
+      badge.style.color = tint;
+      badge.innerHTML =
+        '<svg viewBox="0 0 24 24" width="14" height="14" fill="none"'
+        + ' stroke="currentColor" stroke-width="2" stroke-linecap="round"'
+        + ' stroke-linejoin="round" aria-hidden="true">'
+        + '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>'
+        + '<circle cx="9" cy="7" r="4"/>'
+        + '<path d="M23 21v-2a4 4 0 0 0-3-3.87"/>'
+        + '<path d="M16 3.13a4 4 0 0 1 0 7.75"/>'
+        + '</svg>'
+        + '<span class="group-badge-count">' + members.length + '</span>';
+      titleRow.appendChild(badge);
+      // Stripe colour comes from the first member.
       if (lead) item.style.setProperty('--persona-color', personaColor(lead.id));
       item.classList.add('is-group');
     } else {
@@ -5090,29 +5095,38 @@
         title="Click to set the project / theme tag for this chat"
         aria-label="Edit tag">${escHtml(tag)}</button>`;
     if (s.groupChat){
-      // Group chats: keep the title compact — render "Group · title"
-      // plus a single members button (people-icon + count). The button
-      // opens a popover listing each member with × delete + an inline
-      // "+ Add" affordance. Avoids the chip explosion when groups have
-      // 4+ personas.
+      // Group chats: clear "people" icon at the top + count, opens a
+      // popover for managing members. No chip explosion in the title.
       const members = s.groupMembers || [];
-      const dots = members.slice(0, 3).map(m => {
-        const c = personaColor(m.id);
-        return `<span class="t-member-dot" style="background:${c}"></span>`;
-      }).join('');
       titleLabel.innerHTML =
-        `<span class="t-persona" style="color:#f59e0b">Group</span>` +
-        ` <span class="t-sep">·</span> ${escHtml(s.title || 'Group chat')}` +
+        `<span class="t-group-icon" aria-hidden="true">` +
+          `<svg viewBox="0 0 24 24" width="18" height="18" fill="none"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                stroke-linejoin="round">` +
+            `<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>` +
+            `<circle cx="9" cy="7" r="4"/>` +
+            `<path d="M23 21v-2a4 4 0 0 0-3-3.87"/>` +
+            `<path d="M16 3.13a4 4 0 0 1 0 7.75"/>` +
+          `</svg>` +
+        `</span>` +
+        ` ${escHtml(s.title || 'Group chat')}` +
         ` <button type="button" class="t-members-btn" id="titleMembersBtn"
               title="View / manage group members"
               aria-label="Group members">` +
-        `<span class="t-member-stack">${dots}</span>` +
-        `<span class="t-members-count">${members.length}</span>` +
-        `<svg viewBox="0 0 24 24" width="13" height="13" fill="none"
-              stroke="currentColor" stroke-width="2" stroke-linecap="round"
-              stroke-linejoin="round" aria-hidden="true">
-            <polyline points="6 9 12 15 18 9"/>
-          </svg>` +
+          `<svg viewBox="0 0 24 24" width="14" height="14" fill="none"
+                stroke="currentColor" stroke-width="2.2" stroke-linecap="round"
+                stroke-linejoin="round" aria-hidden="true">` +
+            `<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>` +
+            `<circle cx="9" cy="7" r="4"/>` +
+            `<path d="M23 21v-2a4 4 0 0 0-3-3.87"/>` +
+            `<path d="M16 3.13a4 4 0 0 1 0 7.75"/>` +
+          `</svg>` +
+          `<span class="t-members-count">${members.length}</span>` +
+          `<svg viewBox="0 0 24 24" width="11" height="11" fill="none"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                stroke-linejoin="round" aria-hidden="true">` +
+            `<polyline points="6 9 12 15 18 9"/>` +
+          `</svg>` +
         `</button>` +
         tagChip;
     } else if (pid){
