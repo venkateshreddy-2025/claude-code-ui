@@ -1,0 +1,644 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>ArmyClaw — make your Claude Code subscription 100× more powerful</title>
+<meta name="description" content="ArmyClaw is the agent-orchestration layer for Claude Code. Run a parallel battalion of agents from web + Telegram on one subscription. Zero API keys.">
+<meta name="theme-color" content="#0e0a06">
+<meta property="og:title" content="ArmyClaw — Claude Code agent orchestration">
+<meta property="og:description" content="One subscription. Many agents. Full orchestration. Web + mobile + Telegram.">
+<meta property="og:image" content="assets/armyclaw.png">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/png" href="assets/armyclaw.png">
+<link rel="apple-touch-icon" href="assets/armyclaw.png">
+<style>
+  /* ─────────  reset / tokens  ───────── */
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  :root{
+    --bg:#0c0a07;
+    --bg-2:#15110a;
+    --bg-3:#1d180e;
+    --line:rgba(245,158,11,.16);
+    --line-2:rgba(245,158,11,.30);
+    --ink:#f6efe2;
+    --ink-2:#cdc4b3;
+    --ink-3:#8a8170;
+    --accent:#f59e0b;
+    --accent-2:#fbbf24;
+    --accent-glow:rgba(245,158,11,.35);
+    --green:#34d399;
+    --red:#f87171;
+    --radius:14px;
+    --radius-sm:10px;
+    --maxw:1180px;
+    --shadow-1:0 8px 24px rgba(0,0,0,.35);
+    --shadow-2:0 24px 64px rgba(245,158,11,.18);
+  }
+  html,body{background:var(--bg);color:var(--ink);
+    font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+  body{
+    background:
+      radial-gradient(1200px 700px at 50% -200px,rgba(245,158,11,.10),transparent 70%),
+      radial-gradient(900px 600px at 100% 100%,rgba(245,158,11,.04),transparent 70%),
+      var(--bg);
+    min-height:100vh;
+  }
+  a{color:var(--accent);text-decoration:none}
+  a:hover{color:var(--accent-2)}
+  ::selection{background:var(--accent);color:#1a1208}
+
+  /* ─────────  layout  ───────── */
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 28px}
+  @media (max-width:520px){.wrap{padding:0 18px}}
+
+  /* ─────────  nav  ───────── */
+  nav.top{position:sticky;top:0;z-index:50;
+    background:rgba(12,10,7,.78);backdrop-filter:blur(14px) saturate(140%);
+    -webkit-backdrop-filter:blur(14px) saturate(140%);
+    border-bottom:1px solid var(--line)}
+  nav.top .wrap{display:flex;align-items:center;gap:18px;padding-top:14px;padding-bottom:14px}
+  nav.top .brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:-.01em}
+  nav.top .brand img{width:30px;height:30px;border-radius:8px;background:rgba(245,158,11,.12);
+    box-shadow:inset 0 0 0 1px var(--line)}
+  nav.top .brand span{font-size:16px}
+  nav.top .links{margin-left:auto;display:flex;align-items:center;gap:22px;font-size:14px}
+  nav.top .links a{color:var(--ink-2);font-weight:500}
+  nav.top .links a:hover{color:var(--ink)}
+  nav.top .links .ghbtn{
+    display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border-radius:8px;
+    background:rgba(245,158,11,.10);border:1px solid var(--line-2);color:var(--accent-2);font-weight:600}
+  nav.top .links .ghbtn:hover{background:rgba(245,158,11,.16)}
+  @media (max-width:680px){
+    nav.top .links a:not(.ghbtn){display:none}
+  }
+
+  /* ─────────  hero  ───────── */
+  .hero{padding:88px 0 64px;text-align:center;position:relative}
+  .hero .mascot{width:144px;height:144px;border-radius:32px;
+    background:radial-gradient(circle at 50% 35%,rgba(245,158,11,.20),transparent 60%);
+    box-shadow:var(--shadow-2);
+    display:inline-block;padding:8px}
+  .hero h1{margin:26px auto 14px;font-size:clamp(34px,5.6vw,64px);line-height:1.04;
+    letter-spacing:-.025em;font-weight:800;max-width:14ch}
+  .hero h1 .ink{background:linear-gradient(180deg,var(--ink) 0%,#ddd2bb 100%);
+    -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .hero h1 .accent{background:linear-gradient(180deg,var(--accent-2),var(--accent));
+    -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .hero .sub{color:var(--ink-2);font-size:clamp(15px,1.6vw,18px);max-width:620px;margin:0 auto 28px}
+  .hero .ctas{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-bottom:18px}
+  .btn{display:inline-flex;align-items:center;gap:8px;padding:12px 18px;border-radius:10px;
+    font-weight:600;font-size:14px;letter-spacing:.01em;
+    transition:transform .12s ease,background .15s ease,border-color .15s ease}
+  .btn-primary{background:linear-gradient(180deg,var(--accent-2),var(--accent));color:#1a1208;
+    box-shadow:0 8px 24px var(--accent-glow)}
+  .btn-primary:hover{color:#1a1208;transform:translateY(-1px)}
+  .btn-ghost{background:rgba(245,158,11,.08);border:1px solid var(--line-2);color:var(--ink)}
+  .btn-ghost:hover{background:rgba(245,158,11,.14);color:var(--ink)}
+  .btn svg{width:16px;height:16px}
+  .hero .pill-row{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:16px;
+    color:var(--ink-3);font-size:12.5px}
+  .hero .pill-row .dot{color:var(--accent);font-weight:700}
+
+  /* ─────────  section header  ───────── */
+  section{padding:72px 0;border-top:1px solid var(--line)}
+  section.tight{padding:56px 0}
+  section h2{font-size:clamp(28px,3.6vw,40px);font-weight:800;letter-spacing:-.02em;
+    margin-bottom:14px;line-height:1.1}
+  section .lede{color:var(--ink-2);font-size:16px;max-width:62ch;margin-bottom:36px}
+
+  /* ─────────  pillars (why)  ───────── */
+  .pillars{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+  .pillar{
+    padding:24px;border-radius:var(--radius);background:var(--bg-2);
+    border:1px solid var(--line);transition:transform .15s ease,border-color .15s ease}
+  .pillar:hover{border-color:var(--line-2);transform:translateY(-2px)}
+  .pillar .icon{width:38px;height:38px;border-radius:10px;background:rgba(245,158,11,.12);
+    display:flex;align-items:center;justify-content:center;margin-bottom:14px;color:var(--accent-2)}
+  .pillar .icon svg{width:20px;height:20px}
+  .pillar h3{font-size:17px;letter-spacing:-.01em;margin-bottom:6px}
+  .pillar p{color:var(--ink-2);font-size:14px;line-height:1.55}
+  .pillar .num{font-size:26px;font-weight:800;color:var(--accent-2);letter-spacing:-.02em;margin-bottom:6px;line-height:1}
+  .pillar .num small{font-size:13px;color:var(--ink-3);font-weight:500;letter-spacing:0;margin-left:4px}
+  @media (max-width:760px){.pillars{grid-template-columns:1fr}}
+
+  /* ─────────  feature grid  ───────── */
+  .grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+  @media (max-width:980px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+  @media (max-width:580px){.grid{grid-template-columns:1fr}}
+  .card{padding:22px;border-radius:var(--radius);background:var(--bg-2);
+    border:1px solid var(--line);transition:transform .12s ease,border-color .12s ease}
+  .card:hover{border-color:var(--line-2);transform:translateY(-1px)}
+  .card .ico{font-size:18px;display:inline-flex;align-items:center;justify-content:center;
+    width:32px;height:32px;border-radius:8px;background:rgba(245,158,11,.10);color:var(--accent-2);
+    margin-bottom:12px}
+  .card .ico svg{width:18px;height:18px}
+  .card h3{font-size:15px;letter-spacing:-.005em;margin-bottom:6px}
+  .card p{color:var(--ink-2);font-size:13.5px;line-height:1.55}
+  .card.shipped::after,.card.soon::after{
+    content:"";position:absolute;}
+  .card{position:relative}
+  .card .tag{position:absolute;top:14px;right:14px;font-size:10px;font-weight:700;
+    letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;border-radius:6px}
+  .card .tag.shipped{background:rgba(52,211,153,.12);color:var(--green)}
+  .card .tag.soon{background:rgba(245,158,11,.10);color:var(--accent-2)}
+
+  /* ─────────  comparison table  ───────── */
+  .compare{background:var(--bg-2);border:1px solid var(--line);border-radius:var(--radius);
+    overflow:hidden;margin-top:8px}
+  .compare table{border-collapse:collapse;width:100%;font-size:13.5px}
+  .compare th,.compare td{padding:13px 14px;text-align:left;border-bottom:1px solid var(--line);
+    vertical-align:middle}
+  .compare thead th{background:var(--bg-3);font-weight:700;font-size:13px;color:var(--ink);letter-spacing:.005em}
+  .compare th:first-child,.compare td:first-child{font-weight:600;color:var(--ink-2);width:30%}
+  .compare th.us{color:var(--accent-2)}
+  .compare td.us{color:var(--ink);background:rgba(245,158,11,.04)}
+  .compare td.yes{color:var(--green);font-weight:600}
+  .compare td.no{color:var(--ink-3)}
+  .compare tr:last-child th,.compare tr:last-child td{border-bottom:0}
+  .compare-wrap{overflow-x:auto;margin:0 -28px;padding:0 28px}
+  @media (max-width:520px){.compare-wrap{margin:0 -18px;padding:0 18px}}
+
+  /* ─────────  architecture diagram  ───────── */
+  .ascii{background:var(--bg-2);border:1px solid var(--line);border-radius:var(--radius);
+    padding:24px;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    color:var(--ink-2);overflow-x:auto;white-space:pre}
+  .ascii .accent-line{color:var(--accent-2)}
+
+  /* ─────────  setup block  ───────── */
+  .setup{display:grid;grid-template-columns:1.2fr 1fr;gap:24px;align-items:start}
+  @media (max-width:840px){.setup{grid-template-columns:1fr}}
+  pre.code{background:var(--bg-2);border:1px solid var(--line);border-radius:var(--radius);
+    padding:20px;font:13px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    color:var(--ink);overflow-x:auto}
+  pre.code .cm{color:var(--ink-3)}
+  pre.code .kw{color:var(--accent-2)}
+  pre.code .str{color:#86efac}
+  .setup-side h3{font-size:16px;letter-spacing:-.005em;margin-bottom:8px}
+  .setup-side p{color:var(--ink-2);font-size:14px;margin-bottom:14px}
+  .setup-side .linklist{display:grid;gap:10px}
+  .setup-side .linklist a{
+    display:flex;align-items:center;gap:10px;padding:11px 14px;
+    background:var(--bg-2);border:1px solid var(--line);border-radius:var(--radius-sm);
+    color:var(--ink);font-size:14px}
+  .setup-side .linklist a:hover{border-color:var(--line-2);background:var(--bg-3)}
+  .setup-side .linklist a span{margin-left:auto;color:var(--ink-3);font-size:12px}
+
+  /* ─────────  economics callout  ───────── */
+  .econ{background:linear-gradient(135deg,rgba(245,158,11,.10),rgba(52,211,153,.06));
+    border:1px solid var(--line-2);border-radius:var(--radius);padding:32px;
+    display:grid;grid-template-columns:auto 1fr;gap:24px;align-items:center}
+  .econ .big{font-size:56px;font-weight:800;letter-spacing:-.04em;
+    background:linear-gradient(180deg,var(--accent-2),var(--accent));
+    -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;line-height:1}
+  .econ .big small{font-size:18px;color:var(--ink-2);font-weight:500;
+    -webkit-text-fill-color:var(--ink-2);background:none;letter-spacing:0;margin-left:8px}
+  .econ p{color:var(--ink-2);font-size:14.5px;line-height:1.6;margin-bottom:6px}
+  .econ p strong{color:var(--ink)}
+  @media (max-width:580px){.econ{grid-template-columns:1fr;text-align:center;padding:24px}
+    .econ .big{font-size:44px}}
+
+  /* ─────────  CTA strip  ───────── */
+  .cta-strip{background:var(--bg-2);border:1px solid var(--line);border-radius:var(--radius);
+    padding:36px;text-align:center}
+  .cta-strip h2{margin-bottom:8px}
+  .cta-strip p{color:var(--ink-2);max-width:48ch;margin:0 auto 22px;font-size:15px}
+
+  /* ─────────  footer  ───────── */
+  footer{padding:48px 0 64px;color:var(--ink-3);font-size:13px;border-top:1px solid var(--line)}
+  footer .wrap{display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap}
+  footer .left{display:flex;align-items:center;gap:10px}
+  footer .left img{width:24px;height:24px;border-radius:6px;opacity:.8}
+  footer a{color:var(--ink-2)}
+</style>
+</head>
+<body>
+
+<nav class="top">
+  <div class="wrap">
+    <a class="brand" href="#top">
+      <img src="assets/armyclaw.png" alt="">
+      <span>ArmyClaw</span>
+    </a>
+    <div class="links">
+      <a href="#why">Why</a>
+      <a href="#features">Features</a>
+      <a href="#compare">Compare</a>
+      <a href="#install">Install</a>
+      <a href="https://github.com/venkateshreddy-2025/claude-code-ui" class="ghbtn" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2.1c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.9 1.2 1.9 1.2 1.1 1.9 2.9 1.4 3.6 1 .1-.8.4-1.4.8-1.7-2.7-.3-5.5-1.3-5.5-6 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2.9-.3 2-.4 3-.4s2.1.1 3 .4c2.3-1.5 3.3-1.2 3.3-1.2.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.5.4.9 1.2.9 2.4v3.5c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/></svg>
+        GitHub
+      </a>
+    </div>
+  </div>
+</nav>
+
+<header id="top" class="hero wrap">
+  <img class="mascot" src="assets/armyclaw.png" alt="ArmyClaw mascot">
+  <h1>
+    <span class="ink">Make your Claude Code</span><br>
+    <span class="accent">100× more powerful.</span>
+  </h1>
+  <p class="sub">
+    The agent-orchestration layer that turns your single <code>claude login</code>
+    into a parallel battalion — running, waking, brainstorming, reporting back
+    across web, mobile, and Telegram. <strong>One subscription. Many agents.</strong>
+  </p>
+  <div class="ctas">
+    <a class="btn btn-primary" href="#install">Get started</a>
+    <a class="btn btn-ghost" href="https://github.com/venkateshreddy-2025/claude-code-ui" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2.1c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.9 1.2 1.9 1.2 1.1 1.9 2.9 1.4 3.6 1 .1-.8.4-1.4.8-1.7-2.7-.3-5.5-1.3-5.5-6 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2.9-.3 2-.4 3-.4s2.1.1 3 .4c2.3-1.5 3.3-1.2 3.3-1.2.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.5.4.9 1.2.9 2.4v3.5c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/></svg>
+      Source on GitHub
+    </a>
+  </div>
+  <div class="pill-row">
+    <span><span class="dot">▲</span> Zero API keys</span>
+    <span>·</span>
+    <span><span class="dot">▲</span> Zero credits burned</span>
+    <span>·</span>
+    <span><span class="dot">▲</span> Zero surprise bills</span>
+  </div>
+</header>
+
+<!-- ─────────  WHY  ───────── -->
+<section id="why">
+  <div class="wrap">
+    <h2>One human, many agents, one bill.</h2>
+    <p class="lede">
+      Claude Code is a CLI. ArmyClaw is the operations center on top of it —
+      orchestrating dozens of long-running agents from a single subscription.
+      Three things separate it from every other wrapper:
+    </p>
+
+    <div class="pillars">
+      <div class="pillar">
+        <div class="num">15–36×<small>cheaper</small></div>
+        <h3>Subscription, never API</h3>
+        <p>
+          Spawns the local <code>claude</code> binary using your
+          <code>claude login</code>. <strong>Never</strong> sets
+          <code>ANTHROPIC_API_KEY</code>. Your Pro/Max plan covers every agent,
+          every group member, every routine, every Telegram message — flat fee.
+        </p>
+      </div>
+      <div class="pillar">
+        <div class="num">∞<small>parallel agents</small></div>
+        <h3>Real subprocess battalion</h3>
+        <p>
+          Each chat is its own long-running agent. Switching tabs never kills
+          a stream. Group chats spawn one agent per persona member, all
+          orchestrated by a single supervisor. Watch them brainstorm in real
+          time.
+        </p>
+      </div>
+      <div class="pillar">
+        <div class="num">3<small>surfaces</small></div>
+        <h3>Web · Telegram · Terminal</h3>
+        <p>
+          Drive any agent from a clean web SPA, your phone via a Telegram bot
+          you control, or the inbuilt terminal panel. All three surfaces share
+          the same agent fleet — start a task on your laptop, finish it from
+          your phone.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─────────  ECONOMICS CALLOUT  ───────── -->
+<section class="tight">
+  <div class="wrap">
+    <div class="econ">
+      <div class="big">$200<small>/mo</small></div>
+      <div>
+        <p style="font-size:18px;color:var(--ink);font-weight:600;margin-bottom:8px">
+          A Max 20× plan delivers <strong>~$2,600 of API value</strong> for $200.
+        </p>
+        <p>
+          That's the gap ArmyClaw captures. If your wrapper hits the API directly,
+          every spawned agent, every retry, every 50K-token system prompt costs real
+          dollars. ArmyClaw spawns the same binary you'd run in your terminal — same
+          auth path, same flat fee, no per-token meter.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─────────  FEATURES  ───────── -->
+<section id="features">
+  <div class="wrap">
+    <h2>What an agent army can do.</h2>
+    <p class="lede">
+      21 shipped capabilities, all driven by the same orchestrator process,
+      all surfaced in one single-file SPA + a Telegram bot.
+    </p>
+
+    <div class="grid">
+      <div class="card">
+        <span class="tag shipped">Shipped</span>
+        <div class="ico">⚡</div>
+        <h3>Parallel agent battalion</h3>
+        <p>Every chat = its own long-running <code>claude</code> agent.
+          Tab away, agents keep streaming. Lazy-spawn — 100 chats, zero idle processes.</p>
+      </div>
+      <div class="card">
+        <span class="tag shipped">Shipped</span>
+        <div class="ico">▣</div>
+        <h3>Group chats with peer broadcast</h3>
+        <p>Pick 2–5 agents. They brainstorm with <em>each other</em>, Slack-style,
+          not just at you. Short-reply rules + <code>[silent]</code> marker keep it clean.</p>
+      </div>
+      <div class="card">
+        <span class="tag shipped">Shipped</span>
+        <div class="ico">✈</div>
+        <h3>Telegram bridge</h3>
+        <p>Drive any agent from your phone. Two-way streaming, file delivery
+          via native Bot API previews, allowlist auth.</p>
+      </div>
+      <div class="card">
+        <span class="tag shipped">Shipped</span>
+        <div class="ico">⏱</div>
+        <h3>Routines · agent wake-ups</h3>
+        <p>Unlimited per-agent schedules. Cron expressions or "every 15 min".
+          Survives restart. Agents wake themselves and report back.</p>
+      </div>
+      <div class="card">
+        <span class="tag shipped">Shipped</span>
+        <div class="ico">⌬</div>
+        <h3>Cross-chat brainstorm</h3>
+        <p>Shared long-term memory index every agent reads each turn.
+          They share knowledge, not transcripts — no context-window pollution.</p>
+      </div>
+      <div class="card">
+        <span class="tag shipped">Shipped</span>
+        <div class="ico">◉</div>
+        <h3>Unlimited personas</h3>
+        <p>Specialist agents per role/project/customer. Color-coded sidebars,
+          per-persona avatars, persona-aware filtering.</p>
+      </div>
+      <div class="card">
+        <span class="tag shipped">Shipped</span>
+        <div class="ico">▤</div>
+        <h3>Artifacts &amp; canvas</h3>
+        <p>HTML, SVG, code, images rendered in a side panel.
+          Sandboxed iframes for live preview. Persisted to disk.</p>
+      </div>
+      <div class="card">
+        <span class="tag shipped">Shipped</span>
+        <div class="ico">⌥</div>
+        <h3>Fork chats</h3>
+        <p>Branch any conversation with the last 200 turns inherited as context.
+          New agent already remembers what the parent knew.</p>
+      </div>
+      <div class="card">
+        <span class="tag shipped">Shipped</span>
+        <div class="ico">★</div>
+        <h3>Favorites · chats &amp; messages</h3>
+        <p>Star important chats (pinned section above Recent). Star individual
+          replies on the hover bar. Search filters by starred-only.</p>
+      </div>
+      <div class="card">
+        <span class="tag shipped">Shipped</span>
+        <div class="ico">⌘K</div>
+        <h3>Full-text search</h3>
+        <p>SERP-style overlay across every agent's history.
+          Filter by role, persona, tag, cwd, starred. Click → jump to bubble.</p>
+      </div>
+      <div class="card">
+        <span class="tag shipped">Shipped</span>
+        <div class="ico">📝</div>
+        <h3>Per-chat notes</h3>
+        <p>Each chat has its own <code>NOTES.md</code> scratchpad. Markdown,
+          autosaved, separate from the transcript.</p>
+      </div>
+      <div class="card">
+        <span class="tag shipped">Shipped</span>
+        <div class="ico">🎙</div>
+        <h3>Voice in</h3>
+        <p>Web Speech API — hold the mic, dictate, edit, send. No audio
+          ever leaves the page.</p>
+      </div>
+      <div class="card">
+        <span class="tag shipped">Shipped</span>
+        <div class="ico">⌨</div>
+        <h3>Inbuilt terminal</h3>
+        <p>xterm.js + <code>pty.fork()</code> in the right panel. Run shells,
+          tail logs, run tests — without leaving ArmyClaw.</p>
+      </div>
+      <div class="card">
+        <span class="tag shipped">Shipped</span>
+        <div class="ico">📁</div>
+        <h3>File explorer</h3>
+        <p>Browse the agent's working directory. Inline editor with autosave.
+          Drag-drop uploads land where the agent can <code>Read</code> them.</p>
+      </div>
+      <div class="card">
+        <span class="tag shipped">Shipped</span>
+        <div class="ico">⏪</div>
+        <h3>Snapshots · time-machine</h3>
+        <p>Full disk-state snapshots of every chat, persona, skill, knowledge
+          file. Restore to roll back. Useful before risky experiments.</p>
+      </div>
+      <div class="card">
+        <span class="tag shipped">Shipped</span>
+        <div class="ico">↻</div>
+        <h3>Wake-on-restart</h3>
+        <p>Server killed mid-stream? Interrupted agents flag themselves, then
+          self-resume on next boot with a synthetic "please continue" prompt.</p>
+      </div>
+      <div class="card">
+        <span class="tag shipped">Shipped</span>
+        <div class="ico">📚</div>
+        <h3>Skills · thousands available</h3>
+        <p>Native access to the entire Claude Code skills ecosystem AND the
+          OpenClaw skills library. Plus your own custom skills, no second-class
+          treatment.</p>
+      </div>
+      <div class="card">
+        <span class="tag shipped">Shipped</span>
+        <div class="ico">🎨</div>
+        <h3>10 themes</h3>
+        <p>Amber, Ember, Sunset, Rose, Magenta, Violet, Ocean, Mint, Forest,
+          Slate. Persisted in localStorage. Tables + code blocks retint together.</p>
+      </div>
+      <div class="card">
+        <span class="tag shipped">Shipped</span>
+        <div class="ico">⟲</div>
+        <h3>Reload-safe state</h3>
+        <p>Refresh mid-stream. Switch networks. Close laptop. WebSocket
+          reconnects, server replays state, streaming bubble keeps going.</p>
+      </div>
+      <div class="card">
+        <span class="tag shipped">Shipped</span>
+        <div class="ico">⛨</div>
+        <h3>Crash recovery</h3>
+        <p>Detects <code>--resume</code> session-not-found errors, arms
+          fallback, auto-retries the last user message. You see no hiccup.</p>
+      </div>
+      <div class="card">
+        <span class="tag soon">Roadmap</span>
+        <div class="ico">💬</div>
+        <h3>WhatsApp · Slack · Discord</h3>
+        <p>Same agent reuse pattern, additional bridge adapters.
+          Architecture is in place; channel adapters are next.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─────────  ARCHITECTURE  ───────── -->
+<section class="tight">
+  <div class="wrap">
+    <h2>Architecture, simplified.</h2>
+    <p class="lede">
+      One supervisor process, many agent workers, three surfaces. All sharing
+      the same <code>claude login</code> auth.
+    </p>
+    <div class="ascii"><span class="accent-line">        ┌────────────────────  YOU  ────────────────────┐</span>
+        │                                               │
+   ┌────▼────┐    ┌────────────┐    ┌────────────┐  ┌──▼──┐
+   │ Browser │    │  Telegram  │    │  Reverse   │  │ Mic │
+   │ (PWA)   │    │   bot      │    │   proxy    │  │     │
+   └────┬────┘    └─────┬──────┘    └─────┬──────┘  └──┬──┘
+        │ WS            │ HTTPS           │ WS         │ WebSpeech
+        └────────┬──────┴──────┬──────────┴────────────┘
+                 ▼             ▼
+        <span class="accent-line">┌────────────────────────────────────┐</span>
+        <span class="accent-line">│             ArmyClaw               │</span>
+        <span class="accent-line">│   orchestrator + agent supervisor  │</span>
+        │  ┌────────┐  ┌────────┐  ┌──────┐  │
+        │  │ agent  │  │ agent  │  │agent │  │  ← parallel claude
+        │  │   A    │  │   B    │  │  C   │  │     agents, one per
+        │  └────────┘  └────────┘  └──────┘  │     chat / group member
+        │      ▲           ▲          ▲      │
+        │      └───────────┴──────────┘      │
+        │      shared subscription auth      │
+        │      (your <span class="accent-line">`claude login`</span> token)   │
+        <span class="accent-line">└────────────────────────────────────┘</span></div>
+  </div>
+</section>
+
+<!-- ─────────  COMPARE  ───────── -->
+<section id="compare">
+  <div class="wrap">
+    <h2>How it stacks up.</h2>
+    <p class="lede">
+      Three other tools live in this neighbourhood: Anthropic's own Claude Code
+      CLI, OpenClaw (messaging-first agent gateway), and Claudia (Tauri desktop
+      checkpoint UI). Here's the side-by-side.
+    </p>
+    <div class="compare-wrap"><div class="compare">
+      <table>
+        <thead>
+          <tr>
+            <th></th><th class="us">ArmyClaw</th><th>Claude Code CLI</th><th>OpenClaw</th><th>Claudia</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><th>Cost model</th><td class="us">Subscription (flat)</td><td class="yes">Subscription</td><td>API key</td><td class="yes">Subscription</td></tr>
+          <tr><th>Web UI</th><td class="us yes">Single-file SPA</td><td class="no">—</td><td class="no">—</td><td>Tauri desktop only</td></tr>
+          <tr><th>Mobile (Telegram)</th><td class="us yes">✓ two-way</td><td class="no">—</td><td class="yes">✓ (and others)</td><td class="no">—</td></tr>
+          <tr><th>Parallel sessions</th><td class="us yes">Unlimited subprocesses</td><td>One</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+          <tr><th>Multi-agent groups</th><td class="us yes">Slack-style peer broadcast</td><td class="no">—</td><td class="no">—</td><td class="no">—</td></tr>
+          <tr><th>Routines (wake-ups)</th><td class="us yes">Unlimited, per-agent</td><td class="no">—</td><td class="yes">Heartbeat (single)</td><td class="no">—</td></tr>
+          <tr><th>Cross-chat memory</th><td class="us yes">Shared brain index</td><td class="no">—</td><td>Per-skill</td><td class="no">—</td></tr>
+          <tr><th>Personas</th><td class="us yes">Unlimited specialists</td><td>One CLAUDE.md</td><td class="yes">Via skills</td><td class="yes">Via agents</td></tr>
+          <tr><th>Inbuilt terminal</th><td class="us yes">xterm.js + PTY</td><td>(you're in one)</td><td class="no">—</td><td class="no">—</td></tr>
+          <tr><th>File explorer</th><td class="us yes">Browse + edit</td><td class="no">—</td><td class="no">—</td><td class="yes">✓</td></tr>
+          <tr><th>Artifacts / canvas</th><td class="us yes">Side-panel renderer</td><td class="no">—</td><td class="no">—</td><td class="no">—</td></tr>
+          <tr><th>Time-machine</th><td class="us yes">Snapshots + restore</td><td class="no">—</td><td class="no">—</td><td class="yes">Checkpoints</td></tr>
+          <tr><th>Voice in</th><td class="us yes">Web Speech</td><td class="no">—</td><td class="no">—</td><td class="no">—</td></tr>
+          <tr><th>License</th><td class="us">MIT</td><td>Proprietary</td><td>MIT-style</td><td>AGPL</td></tr>
+        </tbody>
+      </table>
+    </div></div>
+  </div>
+</section>
+
+<!-- ─────────  INSTALL  ───────── -->
+<section id="install">
+  <div class="wrap">
+    <h2>Get an army running in 90 seconds.</h2>
+    <p class="lede">
+      Three commands. One Python dependency. Your <code>claude login</code>
+      already exists; ArmyClaw just orchestrates around it.
+    </p>
+    <div class="setup">
+      <pre class="code"><span class="cm"># 1. Install the claude CLI and sign in (one-time).</span>
+<span class="kw">npm</span> install -g <span class="str">@anthropic-ai/claude-code</span>
+<span class="kw">claude</span> login                <span class="cm"># browser → your Pro/Max account</span>
+
+<span class="cm"># 2. Clone + install (one Python dep).</span>
+<span class="kw">git</span> clone https://github.com/venkateshreddy-2025/claude-code-ui.git armyclaw
+<span class="kw">cd</span> armyclaw
+<span class="kw">pip3</span> install --user <span class="str">"websockets&gt;=12,&lt;17"</span>
+
+<span class="cm"># 3. Run.</span>
+<span class="kw">python3</span> server/cc-server.py
+<span class="cm"># → http://localhost:8765/</span></pre>
+      <div class="setup-side">
+        <h3>Need more?</h3>
+        <p>The README has the full setup guide — guided installer, launchd /
+          systemd templates, reverse-proxy template, the complete Telegram
+          walk-through with BotFather, and configuration env-var table.</p>
+        <div class="linklist">
+          <a href="https://github.com/venkateshreddy-2025/claude-code-ui#install" target="_blank" rel="noopener">
+            Full install options <span>→</span>
+          </a>
+          <a href="https://github.com/venkateshreddy-2025/claude-code-ui#telegram-bridge-setup" target="_blank" rel="noopener">
+            Telegram bridge setup <span>→</span>
+          </a>
+          <a href="https://github.com/venkateshreddy-2025/claude-code-ui#configuration" target="_blank" rel="noopener">
+            Configuration knobs <span>→</span>
+          </a>
+          <a href="https://github.com/venkateshreddy-2025/claude-code-ui#troubleshooting" target="_blank" rel="noopener">
+            Troubleshooting <span>→</span>
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─────────  CTA STRIP  ───────── -->
+<section class="tight">
+  <div class="wrap">
+    <div class="cta-strip">
+      <h2>Stop renting agents. Build your own army.</h2>
+      <p>
+        One subscription. Unlimited agents, personas, routines. Web + Telegram + terminal.
+        MIT-licensed, single-user, localhost-by-default. Bring your <code>claude login</code>
+        and run.
+      </p>
+      <div class="ctas">
+        <a class="btn btn-primary" href="https://github.com/venkateshreddy-2025/claude-code-ui" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2.1c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.9 1.2 1.9 1.2 1.1 1.9 2.9 1.4 3.6 1 .1-.8.4-1.4.8-1.7-2.7-.3-5.5-1.3-5.5-6 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2.9-.3 2-.4 3-.4s2.1.1 3 .4c2.3-1.5 3.3-1.2 3.3-1.2.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.5.4.9 1.2.9 2.4v3.5c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/></svg>
+          Star on GitHub
+        </a>
+        <a class="btn btn-ghost" href="https://github.com/venkateshreddy-2025/claude-code-ui/blob/newcode/README.md" target="_blank" rel="noopener">
+          Read the docs
+        </a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="left">
+      <img src="assets/armyclaw.png" alt="">
+      <span>ArmyClaw · MIT licensed · single-user · localhost-by-default</span>
+    </div>
+    <div>
+      Built by one person who pays Anthropic once and refuses to do that twice. ·
+      <a href="https://github.com/venkateshreddy-2025/claude-code-ui">Source</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

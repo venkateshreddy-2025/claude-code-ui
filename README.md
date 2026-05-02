@@ -6,18 +6,18 @@
 
 ### Make your Claude Code subscription **100× more powerful.**
 
-A web + mobile + Telegram command center that turns your **single** `claude login`
-into a parallel battalion: dozens of long-running sessions, group brainstorms,
-scheduled wake-ups, persistent personas, artifacts canvas, an inbuilt terminal,
-and full-text search — all reusing your **Pro / Max** plan.
+The agent-orchestration layer that turns your **single** `claude login`
+into a parallel battalion of agents — running, waking, brainstorming,
+and reporting back across web, mobile, and Telegram. One subscription.
+Many agents. Full orchestration.
 **Zero API keys. Zero credits burned. Zero surprise bills.**
 
 [Quick start](#quick-start) ·
 [Why ArmyClaw](#why-armyclaw) ·
 [Feature tour](#feature-tour) ·
 [Telegram setup](#telegram-bridge-setup) ·
-[Architecture](#architecture) ·
-[Roadmap](#roadmap)
+[Roadmap](#roadmap) ·
+[Under the hood](#under-the-hood)
 
 </div>
 
@@ -25,38 +25,34 @@ and full-text search — all reusing your **Pro / Max** plan.
 
 ## TL;DR
 
-ArmyClaw is a **layer that opens many WebSocket-attached `claude` subprocesses
-in the background**, all sharing your existing subscription. You drive them
-from a clean web UI, your phone via Telegram, or both at once. The CLI keeps
-streaming whether you're tabbed in, tabbed out, on the couch, or on a plane.
+ArmyClaw is the **orchestration layer that runs an army of Claude Code
+agents in parallel**, all sharing one subscription. Drive them from a
+clean web UI, your phone via Telegram, or both at once. Agents keep
+streaming whether you're tabbed in, tabbed out, on the couch, or on a
+plane. One human, many agents, one bill.
 
 ```
         ┌────────────────────  YOU  ────────────────────┐
         │                                               │
    ┌────▼────┐    ┌────────────┐    ┌────────────┐  ┌──▼──┐
    │ Browser │    │  Telegram  │    │  Reverse   │  │ Mic │
-   │ (PWA)   │    │  bot       │    │  proxy     │  │     │
+   │ (PWA)   │    │   bot      │    │   proxy    │  │     │
    └────┬────┘    └─────┬──────┘    └─────┬──────┘  └──┬──┘
         │ WS            │ HTTPS           │ WS         │ WebSpeech
         └────────┬──────┴──────┬──────────┴────────────┘
                  ▼             ▼
         ┌────────────────────────────────────┐
-        │         cc-server.py (Python)      │
+        │             ArmyClaw               │
+        │   orchestrator + agent supervisor  │
         │  ┌────────┐  ┌────────┐  ┌──────┐  │
-        │  │worker A│  │worker B│  │worker│  │  ← parallel claude -p
-        │  │claude -p  │claude -p  │  C   │  │     processes, one per
+        │  │ agent  │  │ agent  │  │agent │  │  ← parallel claude
+        │  │   A    │  │   B    │  │  C   │  │     agents, one per
         │  └────────┘  └────────┘  └──────┘  │     chat / group member
         │      ▲           ▲          ▲      │
         │      └───────────┴──────────┘      │
         │      shared subscription auth      │
         │      (your `claude login` token)   │
         └────────────────────────────────────┘
-                          │
-                  ~/Documents/claude-code-ui/runtime/
-                    ├─ <chatId>/chat.json  (per-chat working dir)
-                    ├─ long-term-memory.md (cross-chat brain)
-                    ├─ knowledge/          (saved skills)
-                    └─ snapshots/          (time-machine)
 ```
 
 **Built for one person who pays Anthropic once and refuses to do that twice.**
@@ -138,24 +134,31 @@ spawning is documented use.[^2]
 
 ## Feature tour
 
-### 1. Parallel sessions, real subprocesses
+### 1. Parallel agent battalion
 
-Every chat in the sidebar gets its own long-running `claude -p` subprocess.
-Switching chats **never** kills a stream. You can:
+Every chat in the sidebar is its own long-running `claude` agent
+process — orchestrated by ArmyClaw, supervised by ArmyClaw, but
+running fully independently. Switching chats **never** kills an
+agent's stream. You can:
 
-- Send a 5-minute prompt in chat A.
-- Switch to chat B and start a separate task.
-- Watch chat C's reply arrive in the sidebar with a live indicator + unread dot.
-- Scroll through chat D's history while A, B, C all stream in parallel.
+- Dispatch a 5-minute task to agent A.
+- Switch to agent B and assign a separate task.
+- Watch agent C's reply arrive in the sidebar with a live indicator
+  + unread dot.
+- Scroll through agent D's history while A, B, and C all stream in
+  parallel.
 
-Workers are lazy — they spawn on first send, not on session creation, so the
-sidebar can show 100 chats without 100 `claude` processes running.
+Agents are lazy-spawned — they boot on first dispatch, not on chat
+creation, so the sidebar can show 100 chats with zero idle
+processes burning your subscription window.
 
 ### 2. Group chats with multi-agent peer broadcast
 
-Hit **+ New group chat**, pick 2–5 personas, send a message. Every member
-gets it in parallel. **And here's the trick: every persona sees every other
-persona's reply, in real time, like a Slack channel.**
+Hit **+ New group chat**, pick 2–5 agents, send one message. The
+orchestrator fans it out to every member in parallel. **And here's
+the trick: every agent sees every other agent's reply, in real time,
+like a Slack channel — they brainstorm with each other, not just at
+you.**
 
 ```
 You:  Tucker, ask Brielle one specific question about her day.
@@ -209,54 +212,68 @@ Slash commands inside Telegram: `/list`, `/new`, `/here`, `/fork`, `/start`.
 
 Full setup walk-through with `BotFather` is below — [Telegram bridge setup](#telegram-bridge-setup).
 
-### 4. Routines — scheduled wake-ups, no cron edits
+### 4. Routines — autonomous agent wake-ups
 
-Like OpenClaw's heartbeat, but you can have **as many as you want**, each
-bound to a chat. Each routine is a (cadence, prompt) tuple:
+OpenClaw's heartbeat works on one global cadence. ArmyClaw lets you
+register **unlimited routines, per agent, with independent
+schedules.** Each routine is a (cadence, prompt) tuple:
 
-- **Cadence** — `every 15 minutes`, `every day at 09:00`, or a raw cron
-  expression.
-- **Prompt** — what claude wakes up and does (read your inbox, post a
-  status digest, run a watchdog test, summarise the day).
+- **Cadence** — `every 15 minutes`, `every day at 09:00`, or a raw
+  cron expression.
+- **Prompt** — what the agent wakes up to do (read your inbox,
+  post a status digest, run a watchdog test, summarise the day,
+  monitor a long-running build, ping you with overnight progress).
 
-Routines run inside the chat they're bound to, so they share its
-working directory, persona, and knowledge. State survives restart —
-the bridge re-arms the cron line on next boot. Cancel any routine
-without opening its chat: header → ⚙ → **Routines**.
+Routines run inside the chat their agent owns, so they inherit its
+working directory, persona, and knowledge. The orchestrator re-arms
+every routine on next boot — kill the server, the schedule survives.
+Cancel any routine across the whole fleet without opening its chat:
+header → ⚙ → **Routines**.
 
-### 5. Cross-chat memory — chats brainstorm without corrupting context
+### 5. Cross-chat brainstorm — agents share knowledge, not context
 
-Every chat reads `runtime/long-term-memory.md` at the start of every turn.
-Entries get added when you tell a chat to **save** (the `SAVE` flow drops
-a knowledge file under `runtime/knowledge/<topic>.md` and indexes it
-into the long-term memory).
+Every agent reads the shared **long-term memory index** at the
+start of every turn. Entries get added when you tell an agent to
+**save** (the `SAVE` flow drops a knowledge file and indexes it
+into the cross-chat substrate). That means agents on totally
+separate tasks can pool their learnings without polluting each
+other's context windows:
 
-That means:
+- Agent A discovers a tricky GoDaddy MySQL workaround → saves it.
+- Agent B asks about MySQL on shared hosting → its preamble points
+  it at the saved entry → it Reads the file → applies the workaround.
+- Neither agent forks. Neither agent's context gets polluted with
+  the other's transcript noise. They exchange **knowledge**, not
+  conversation history.
 
-- Chat A discovers a tricky GoDaddy MySQL workaround → saves it.
-- Chat B asking about MySQL on shared hosting → its preamble points it
-  at the saved entry → it Reads the file → applies the workaround.
-- Neither chat had to fork. Neither's context window got polluted with
-  the other's noise. They share knowledge, not transcripts.
+This is the orchestration layer's superpower: thirty agents working
+on thirty different problems, all pulling from a shared brain.
+A "@-mention to summon a specific agent's expertise into another
+chat" UI is on the roadmap.
 
-The long-term memory is **the cross-chat substrate**. A "@-mention" UI
-to summon a specific chat's wisdom on demand is on the roadmap.
+### 6. Personas — unlimited specialist agents
 
-### 6. Personas — unlimited, per-chat character pinning
+Each persona is a self-contained agent definition: personality
++ voice (`PERSONA.md`) and output rules + style (`INSTRUCTIONS.md`).
+Pin one to any chat, and that chat **becomes** that agent.
 
-Personas are folders under `runtime/_data/personas/<id>/` with a `PERSONA.md`
-(personality + voice) and an `INSTRUCTIONS.md` (output rules + style).
-Pin one to any chat, and:
-
-- Every spawn for that chat materialises the persona files into the
-  cwd so claude's `Read` tool can look at them.
-- Sidebar items get the persona's accent color.
-- The composer's typing bubble shows the persona's avatar.
-- Filter the chat list by persona via the pill row at the top of the sidebar.
-
-Ship with `Claudy` (default), `Aurora` (chief-of-staff orchestrator),
-`Pallavi`, `Flash`, `Sage`, `Tucker`, `Brielle`. Add as many as you want
+OpenClaw caps you at a handful of named characters baked into the
+gateway config. ArmyClaw lets you spin up **unlimited specialist
+agents** — one per role, project, language, customer, anything —
 through the **+ New persona** modal. No re-deploy.
+
+When pinned to a chat:
+
+- Every agent spawn for that chat materialises the persona files
+  into the working directory so claude's `Read` tool can pull them.
+- Sidebar items get the persona's accent color.
+- The typing bubble shows the persona's avatar.
+- Filter the chat list by persona via the pill row at the top of
+  the sidebar.
+
+Ships with `Claudy` (default), `Aurora` (chief-of-staff
+orchestrator), `Pallavi`, `Flash`, `Sage`, `Tucker`, `Brielle` — add
+hundreds more.
 
 ### 7. Artifacts + canvas — interactive side panel
 
@@ -292,14 +309,22 @@ The sidebar header has two filter selects:
   least one chat. "All chats (12) · Tucker (3) · Aurora (5) · …"
 - **Tag** — chats can be tagged (project, theme); filter narrows by tag.
 
-Plus:
+Plus date subtitles under each title — `5m · May 2, 12:05 AM` — for
+at-a-glance recency.
 
-- **Favorite** (☆) pins to the top.
-- **Recent** scrolls below.
-- **Date subtitles** under each title — `5m · May 2, 12:05 AM` — for
-  at-a-glance recency.
+### 10. Favorites — star chats AND individual messages
 
-### 10. Search — full-text across every chat, ⌘K style
+Two independent stars:
+
+- **Favorite chats** (☆ in the sidebar ⋮ menu) — starred chats render
+  in a pinned **Starred** section above Recent. The orchestrator
+  persona (Aurora) auto-pins, too.
+- **Favorite messages** (★ on the hover action bar of any bubble) —
+  works on user OR assistant turns. Star a one-liner you want to
+  pull up later, an answer that taught you something, an artifact
+  worth keeping. Search filters by starred-only.
+
+### 11. Search — full-text across every agent's history, ⌘K style
 
 Magnifier in the header (or `⌘K` / `Ctrl-K`) opens a SERP-style overlay:
 
@@ -307,11 +332,11 @@ Magnifier in the header (or `⌘K` / `Ctrl-K`) opens a SERP-style overlay:
 - Filter by **role** (User / Assistant / All).
 - Sort by recency or relevance.
 - Filter by **cwd substring** to limit to a project.
-- Filter by **persona** or **tag**.
+- Filter by **persona**, **tag**, or **starred-only**.
 - Click a result → preview popup → "Open in chat →" jumps to the exact
   message and pulses the bubble.
 
-### 11. Notes — per-chat scratchpad
+### 12. Notes — per-chat scratchpad
 
 Header → 📝 opens the notes panel. Each chat has its own `NOTES.md` in
 its working directory. Markdown-rendered, autosaved, lives on disk
@@ -321,7 +346,7 @@ forever. Use it for:
 - Output you don't want re-summarised.
 - A standalone scratchpad that doesn't pollute the chat transcript.
 
-### 12. Voice control — speech-to-text, on-device
+### 13. Voice control — speech-to-text, on-device
 
 Mic icon in the composer toggles the browser's Web Speech API. **No audio
 ever leaves the page.** Interim results stream into the textarea live;
@@ -330,7 +355,7 @@ hit `Esc` or click the pulsing mic to stop. Edit before sending.
 Coming up (roadmap): streaming TTS so claude reads its answers back to
 you while you stay hands-free.
 
-### 13. Inbuilt terminal — xterm.js + PTY, in the right panel
+### 14. Inbuilt terminal — xterm.js + PTY, in the right panel
 
 Header → ⌨ opens a real terminal **inside the same page**, attached to
 a server-side `pty.fork()` running your shell. Run `git status`, run a
@@ -341,7 +366,7 @@ test, tail a log — without leaving ArmyClaw. The terminal:
 - Resizes when the panel resizes.
 - Inherits the active chat's working directory by default.
 
-### 14. File explorer — browse + edit, rooted at the chat's cwd
+### 15. File explorer — browse + edit, rooted at the chat's cwd
 
 Header → 📁 opens a file tree rooted at `runtime/<chatId>/`. Click a
 file → opens an inline editor with autosave. Click a folder → expands.
@@ -350,7 +375,7 @@ All paths are sanity-checked against the root so `..` can't escape.
 Drag-and-drop uploads land in the chat's uploads dir; the path is
 mentioned to claude so its `Read` tool can pull it in on the next turn.
 
-### 15. Snapshots / time-machine
+### 16. Snapshots / time-machine
 
 Header → ⚙ → **Snapshots** opens a timeline of saved checkpoints. Each
 snapshot is a full disk-state copy of:
@@ -364,7 +389,7 @@ Restore any snapshot to roll back. Snapshots are gzipped folders under
 `runtime/snapshots/<ts>/`. Useful before a risky experiment, before
 upgrading the bridge, or just because.
 
-### 16. Wake-on-restart — interrupted sessions self-resume
+### 17. Wake-on-restart — interrupted agents self-resume
 
 If the server is killed mid-stream, ArmyClaw flags those sessions on
 disk (`streaming: true`). On next boot, the bridge:
@@ -377,27 +402,36 @@ disk (`streaming: true`). On next boot, the bridge:
 
 Idle chats are left alone. No lost work, no manual restart drill.
 
-### 17. Skills + knowledge
+### 18. Skills + knowledge — thousands at your agents' disposal
 
-Two parallel registries that show up in the UI under **⚙ → Skills**
-and **⚙ → Knowledge**:
+ArmyClaw's agents have native access to **the entire Claude Code skills
+ecosystem AND the OpenClaw skills library — thousands of pre-built
+procedures combined**. Drop-in compatible: a Claude Code skill folder
+or an OpenClaw `SKILL.md` works the same way. Plus, build your own —
+custom skills sit alongside the imported ones with no second-class
+treatment.
 
-- **Skills** (`runtime/skills/<name>/SKILL.md`) — reusable procedures
-  claude can recognise and apply. Triggers are listed; when a user
-  message matches, the relevant skill markdown is loaded.
-- **Knowledge** (`runtime/knowledge/<topic>.md`) — saved learnings,
-  references, gotchas. Indexed into long-term memory for cross-chat
-  retrieval.
+Two parallel registries surface in the UI under **⚙ → Skills** and
+**⚙ → Knowledge**:
 
-Both auto-rebuild when files change.
+- **Skills** — reusable agent procedures (deploy flows, code review
+  checklists, refactor recipes, content generation pipelines).
+  Triggers listed; when a turn matches, the skill markdown is
+  loaded into the agent's context.
+- **Knowledge** — saved learnings, references, gotchas. Indexed
+  into long-term memory for cross-chat retrieval, so any agent in
+  the army can pull up what any other agent learned.
 
-### 18. Themes — 10 accents, persisted
+Both registries auto-rebuild when files change. No restart, no
+re-deploy.
+
+### 19. Themes — 10 accents, persisted
 
 Amber, Ember, Sunset, Rose, Magenta, Violet, Ocean, Mint, Forest, Slate.
 Pick from header → 🎨. Persisted in `localStorage`. Tables, code blocks,
 links, sidebar accents, typing bubbles all retint together.
 
-### 19. Reload-safe state
+### 20. Reload-safe state
 
 Refresh mid-stream. Close your laptop. Switch Wi-Fi networks. The
 WebSocket reconnects, the server replays the full state snapshot
@@ -405,7 +439,7 @@ WebSocket reconnects, the server replays the full state snapshot
 exactly where you were — including the streaming bubble that's
 still mid-token.
 
-### 20. Crash recovery + auto-fallback
+### 21. Crash recovery + auto-fallback
 
 If `claude --resume <id>` fails (corrupt CLI session memory, fresh
 machine, etc.), the bridge:
@@ -416,70 +450,6 @@ machine, etc.), the bridge:
 3. **Auto-retries the last user message** so you don't have to retype.
 
 You see no hiccup. The chat just keeps going.
-
----
-
-## Architecture
-
-### One server, many workers
-
-`server/cc-server.py` is ~6,500 lines of asyncio Python. It owns:
-
-- **A WebSocket server** (`/ws`) the UI connects to.
-- **An HTTP server** (same port) for static assets, uploads, healthz.
-- **A `Worker` per session** — group chat members get
-  `<sessionId>:<personaId>` keys; solo chats get bare `<sessionId>`.
-- **A reader task per worker** — pumps stdout from `claude -p`, parses
-  the stream-JSON event protocol, broadcasts deltas to every connected
-  client tagged with `sessionId`.
-- **A Telegram poller** (optional) — long-polls `getUpdates`, routes
-  messages to the same workers.
-- **A routines manager** — schedules and fires wake-ups via an internal
-  cron-style loop.
-- **A pty.fork() per terminal panel** — the inbuilt terminal.
-
-### How a turn flows
-
-```
-1. User sends "fix the bug" in chat A from the web UI.
-2. cc-server appends the message to runtime/<chatA>/chat.json.
-3. cc-server marks chat A as `streaming: true` (wake-on-restart safety).
-4. Lazy-spawn check: if no claude worker for chat A, spawn one with
-     claude -p --input-format stream-json --output-format stream-json
-            --include-partial-messages --verbose
-            --dangerously-skip-permissions --model <m>
-            --resume <chatA-uuid>
-   plus a system-prompt blob (global rules + persona + skills + memory).
-5. cc-server writes {role: user, content: "fix the bug"} to claude's stdin.
-6. Claude streams a `message_start` event. cc-server broadcasts:
-     {type: "assistant_start", sessionId: "<A>", personaId: "...", id: "..."}
-7. Each `content_block_delta` becomes:
-     {type: "assistant_delta", sessionId: "<A>", text: "<chunk>"}
-8. The browser appends to bubble A's text (~12 fps throttled render).
-   Other browsers, Telegram chats bound to A, all see the same stream.
-9. `message_stop` ends the assistant bubble. cc-server appends the final
-   text to chat.json, runs the file-marker scanner (`|SEND|`, `|ARTIFACT|`),
-   delivers files to Telegram + snapshots them locally, broadcasts
-   `assistant_end` and `turn_done`.
-10. cc-server clears `streaming: true`. Worker stays alive for the next turn.
-```
-
-For **group chats**, step 4 runs once per persona member in parallel,
-and step 9's non-silent reply also fans out to every other member's
-worker as `[from <name>]: <text>` so the room becomes Slack-like.
-
-### Subscription preservation
-
-The `claude` binary uses your `~/.claude/credentials.json` (set by
-`claude login`). ArmyClaw spawns the binary with that auth intact:
-
-- **Never** sets `ANTHROPIC_API_KEY`.
-- **Scrubs** any inherited `ANTHROPIC_*` env vars before exec (so a
-  shell with an API key set won't accidentally bypass the subscription).
-- **Never** calls `api.anthropic.com` directly.
-
-So your $20 Pro plan or $200 Max plan covers every chat, every group
-member, every routine, every Telegram message, every wake-on-restart.
 
 ---
 
@@ -750,44 +720,6 @@ caddy run --config examples/Caddyfile
 
 ---
 
-## Project layout
-
-```
-armyclaw/
-├── server/
-│   └── cc-server.py             # WS + HTTP server (Python 3, asyncio + websockets)
-├── ui/
-│   ├── index.html               # single-file SPA, ~285 KB, no build step
-│   └── assets/
-│       └── armyclaw.png         # logo / favicon / mobile home-screen icon
-├── examples/
-│   ├── Caddyfile                # optional reverse-proxy template
-│   ├── ai.claude-code-ui.plist  # macOS launchd template
-│   └── cc-ui.service            # Linux systemd template
-├── scripts/
-│   ├── install.sh               # idempotent local installer
-│   └── run-telegram-bridge.sh   # interactive launcher for the TG bridge
-├── docs/
-│   ├── REQUIREMENTS.md          # detailed feature list + backlog
-│   └── STATUS.md                # paths, env vars, health checks
-├── runtime/                     # gitignored — your data
-│   ├── <chatId>/                # per-chat working dir + chat.json + NOTES.md
-│   ├── _data/
-│   │   ├── cc-sessions/         # chat metadata + index
-│   │   ├── personas/            # persona bundles
-│   │   └── cc-uploads/          # per-chat uploads + bot snapshots
-│   ├── knowledge/               # saved knowledge files (cross-chat)
-│   ├── skills/                  # claude skills registry
-│   ├── snapshots/               # time-machine archives
-│   ├── configs/telegram/        # telegram config (chmod 700)
-│   └── long-term-memory.md      # cross-chat brain index
-├── README.md                    # ← you are here
-├── LICENSE                      # MIT
-└── .gitignore
-```
-
----
-
 ## Roadmap
 
 | Status   | Feature                                                              |
@@ -872,29 +804,74 @@ Use `scripts/install.sh --launchd` (macOS) or copy
 ## Contributing
 
 Issues and PRs welcome. The whole UI is one HTML file with no build
-step — open `ui/index.html` in your editor, refresh the browser, done.
-The server is one Python file. The Markdown library is `marked` loaded
-from a CDN script tag in the HTML; no bundler.
+step — open it in your editor, refresh the browser, done. The server
+is one Python file. The Markdown library is `marked` loaded from a CDN
+script tag; no bundler.
 
 When adding a feature:
 
-- Keep the single-file constraint where possible (one `cc-server.py`,
-  one `index.html`).
-- Add an entry to `docs/REQUIREMENTS.md`.
-- If a new env var is introduced, add it to the [Configuration](#configuration)
-  table and to the boot log.
+- Keep the single-file constraint where possible.
+- Add an entry to the requirements doc.
+- If a new env var is introduced, add it to the
+  [Configuration](#configuration) table and to the boot log.
 - If a new Telegram command is added, register it via `setMyCommands`
   so it appears in the bot's `/` autocomplete.
 
 ---
 
-## Security disclosure
+## Under the hood
 
-ArmyClaw spawns claude with `--dangerously-skip-permissions`. Whoever
-reaches a running claude through any surface (web UI, Telegram, future
+For the curious — how the orchestration layer actually works.
+
+**One supervisor, many agents.** ArmyClaw is a single asyncio Python
+process that owns: a WebSocket server (`/ws`) the UI connects to, an
+HTTP server (same port) for static assets and uploads, a `Worker` per
+chat session (group-chat members get compound `<sessionId>:<personaId>`
+keys), a per-worker reader task that pumps stdout from the agent
+process and broadcasts deltas to every connected client, the optional
+Telegram poller, the routines manager, and a `pty.fork()` per inbuilt
+terminal panel.
+
+**How a turn flows.** When you dispatch a message:
+
+1. The message is appended to the chat's on-disk transcript.
+2. The orchestrator marks the chat as `streaming: true` (so wake-on-restart
+   can pick it back up if the server dies mid-reply).
+3. Lazy-spawn check: if no agent process exists for this chat, the
+   orchestrator boots one with `claude -p` in stream-JSON mode plus a
+   composed system prompt (global rules + persona + skills + memory).
+4. The user message goes to the agent's stdin.
+5. The agent streams `message_start` → `content_block_delta` →
+   `message_stop`. The orchestrator forwards each event to every
+   connected surface tagged with the chat id, so browsers, bound
+   Telegram chats, and any other listening surface all see the same
+   stream live.
+6. On `message_stop` the orchestrator scans for `|SEND|` and
+   `|ARTIFACT|` markers, snapshots files, delivers them, and clears
+   `streaming: true`. The agent stays alive for the next turn.
+
+**For group chats**, step 3 runs once per agent member in parallel,
+and step 6's non-silent reply also fans out to every other member's
+agent as `[from <name>]: <text>` — that's how the room becomes Slack.
+
+**Subscription preservation.** The agent uses your `~/.claude/credentials.json`
+(set by `claude login`). ArmyClaw spawns the binary with that auth
+intact: **never** sets `ANTHROPIC_API_KEY`, **scrubs** any inherited
+`ANTHROPIC_*` env vars before exec (so a shell with an API key set
+won't silently bypass the subscription), and **never** calls
+`api.anthropic.com` directly. Your $20 Pro plan or $200 Max plan
+covers every agent, every group member, every routine, every
+Telegram message, every wake-on-restart.
+
+---
+
+## Security
+
+ArmyClaw spawns agents with `--dangerously-skip-permissions`. Whoever
+reaches a running agent through any surface (web UI, Telegram, future
 bridges) can run shell commands and write files as the user the
-server runs as. **Localhost-by-default for a reason.** Don't expose
-without auth + a reverse proxy.
+orchestrator runs as. **Localhost-by-default for a reason.** Don't
+expose without auth + a reverse proxy.
 
 If you discover a security issue, please open a GitHub issue marked
 `[security]` rather than a public PR.
