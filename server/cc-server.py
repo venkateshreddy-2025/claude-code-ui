@@ -1496,7 +1496,7 @@ def build_routines_preamble(sid: str) -> str:
         '     about the weather forecast for tonight."\n\n'
         "Reference helper script (already in the repo, copy its WS\n"
         "code if useful):\n"
-        "    /Users/venkateshreddy/Documents/claude-code-ui/tools/cc-talk.py\n\n"
+        f"    {Path(__file__).resolve().parent.parent / 'tools' / 'cc-talk.py'}\n\n"
         "AFTER you've actually started the job, register it with the\n"
         "bridge by emitting this marker on its own line at the END\n"
         "of your reply:\n\n"
@@ -3324,6 +3324,13 @@ SUMMARY_MODEL = os.environ.get('CC_SUMMARY_MODEL', 'claude-opus-4-6[1m]')
 # read them, adopt them silently, and never mention these files.
 PERSONAS_FILE = DATA_DIR / 'personas.json'
 
+# Tracked seed shipped with the repo: copied to PERSONAS_FILE on the
+# very first boot of a fresh install so the user starts with a useful
+# roster (Aurora orchestrator, Claudy default, Flash, Sage, Tucker,
+# Brielle, Lumen, Verdict). User-added personas land in PERSONAS_FILE
+# and don't touch the seed. See `seed_default_personas_if_empty()`.
+PERSONAS_SEED_FILE = REPO_ROOT / 'personas' / 'personas.seed.json'
+
 
 def load_personas() -> dict:
     if PERSONAS_FILE.exists():
@@ -3346,10 +3353,10 @@ def save_personas(store: dict):
 DEFAULT_PERSONA_COLORS = {
     'aurora':  '#f59e0b',   # sun-bright amber  (orchestrator)
     'claudy':  '#f97316',   # warm orange       (general default)
-    'curator': '#14b8a6',   # teal              (organise / install / summarise)
     'flash':   '#22d3ee',   # cyan              (Haiku — fast snappy)
     'sage':    '#3b82f6',   # deep blue         (multi-source research)
-    'pallavi': '#ec4899',   # pink              (roleplay / social)
+    'tucker':  '#5c9eff',   # sky blue          (companion-mode demo: 40, divorced, sarcastic)
+    'brielle': '#ff8ad6',   # pink              (companion-mode demo: 24, breakup, sarcastic)
     'lumen':   '#eab308',   # gold              (decks + companion docs)
     'verdict': '#dc2626',   # crimson           (review / verdict)
 }
@@ -3533,12 +3540,24 @@ DEFAULT_PERSONA = {
 
 
 def seed_default_personas_if_empty():
-    """First-run convenience: if there's no personas.json yet, drop in
-    the default Claudy persona so the user has something useful right
-    out of the box. Idempotent — never overwrites an existing store."""
+    """First-run convenience: if there's no personas.json yet, install
+    the repo's tracked seed (Aurora orchestrator + Claudy default +
+    Flash + Sage + Tucker + Brielle + Lumen + Verdict). Idempotent —
+    never overwrites an existing store. Falls back to the bare-Claudy
+    seed if the repo seed file is missing (e.g. someone running just
+    cc-server.py without the rest of the repo)."""
     if PERSONAS_FILE.exists():
         return
     PERSONAS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if PERSONAS_SEED_FILE.exists():
+        try:
+            PERSONAS_FILE.write_text(PERSONAS_SEED_FILE.read_text())
+            log(f'personas: seeded from {PERSONAS_SEED_FILE.name} '
+                f'→ {PERSONAS_FILE}')
+            return
+        except Exception as e:
+            log(f'personas: seed file read failed ({e}); '
+                f'falling back to default Claudy')
     now = time.time()
     seed = {
         'default': DEFAULT_PERSONA['id'],

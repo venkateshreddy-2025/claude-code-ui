@@ -249,8 +249,8 @@ into the cross-chat substrate). That means agents on totally
 separate tasks can pool their learnings without polluting each
 other's context windows:
 
-- Agent A discovers a tricky GoDaddy MySQL workaround → saves it.
-- Agent B asks about MySQL on shared hosting → its preamble points
+- Agent A discovers a tricky shared-hosting MySQL workaround → saves it.
+- Agent B asks about MySQL on a different project → its preamble points
   it at the saved entry → it Reads the file → applies the workaround.
 - Neither agent forks. Neither agent's context gets polluted with
   the other's transcript noise. They exchange **knowledge**, not
