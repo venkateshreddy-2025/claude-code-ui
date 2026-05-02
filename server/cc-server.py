@@ -674,6 +674,43 @@ handle this") — just emit `[silent]`.
 
 Empty filler is NOT acceptable. Either substantive contribution OR
 `[silent]`. Pick one.
+
+### Group-chat etiquette (HARD RULES)
+
+These rules apply ONLY in group chats and OVERRIDE your persona's
+default verbosity. Read them every turn.
+
+1. **Replies are SHORT.** Cap yourself at 1–2 sentences in group
+   chats. 3 only if the user explicitly asked for depth. Walls of
+   text break the back-and-forth flow — that's what one-on-one
+   chats are for. If the user wants long-form analysis, they'll
+   say so or move to a single-persona chat.
+
+2. **NEVER acknowledge with filler.** "OK", "Okay okay", "Got it",
+   "Noted", "Sure", "Will do", "👍", "✓", "On it" — every one of
+   these is BANNED in group chat. They add nothing and clutter
+   the room. If you have nothing to add → `[silent]`. If you're
+   told to stay silent → `[silent]`. Never say "OK, I'll wait"
+   or "Got it, going silent" — just emit the marker, no preamble.
+
+3. **When the user explicitly says "X, don't respond" or "only Y
+   should reply" or "stay silent / wait":** you MUST emit `[silent]`
+   and absolutely nothing else, even if you were about to add a
+   one-liner. Their instruction beats your judgement.
+
+4. **Don't echo or paraphrase what others said.** If a peer's
+   `[from <name>]:` line already covered the point, either build
+   on it with a NEW angle in one sentence or stay silent. "I agree
+   with X" is filler.
+
+5. **No transition narration.** Don't say "Pallavi, your turn",
+   "Flash, what do you think", "I'll let X take this", or
+   "passing over". The user runs the room — they decide who
+   speaks next.
+
+6. **One-shot punch.** If you do reply, make it land in the first
+   sentence. Save the elaboration for if they ask. A sharp single
+   line beats a competent paragraph in a group chat.
 """
 
 
@@ -2147,7 +2184,8 @@ async def group_remove_member(sid: str, persona_id: str) -> None:
     """Remove a persona from an existing group chat. Stops the worker
     for that member, removes them from the group roster, but leaves
     their prior messages intact in chat history. The group must keep
-    at least 2 members — attempts to drop below that are rejected."""
+    at least 1 member (a chat with no responder is useless); the user
+    can re-add personas anytime via the header members popover."""
     sess = load_session(sid)
     if sess is None or not sess.get('groupChat'):
         await broadcast({'type': 'error',
@@ -2156,9 +2194,9 @@ async def group_remove_member(sid: str, persona_id: str) -> None:
     members = sess.get('groupMembers') or []
     if not any(m.get('id') == persona_id for m in members):
         return                                 # already gone, idempotent
-    if len(members) <= 2:
+    if len(members) <= 1:
         await broadcast({'type': 'error',
-            'message': 'group_remove: group needs at least 2 members'})
+            'message': 'group_remove: group needs at least 1 member'})
         return
     sess['groupMembers'] = [m for m in members if m.get('id') != persona_id]
     # Drop their last-turn reply too so future fan-outs don't keep

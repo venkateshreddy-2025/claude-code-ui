@@ -6615,20 +6615,20 @@
     if (!pop || !sess || !sess.groupChat) return;
     const members = sess.groupMembers || [];
     let html = '<div class="gm-title">Members · ' + members.length + '</div>';
-    // We never let the user remove the LAST member — a group chat
-    // with zero members is meaningless. The first one is also locked
-    // because removing the persona that founded the group nukes peer
-    // context for every other member.
+    // Allow removing freely down to a single member. Only lock the ×
+    // when there's exactly 1 member left — a chat with zero responders
+    // is meaningless.
     for (let i = 0; i < members.length; i++){
       const m = members[i];
       const c = personaColor(m.id);
-      const locked = members.length <= 2;   // can't drop below 2
+      const locked = members.length <= 1;
       html += '<div class="gm-row' + (locked ? ' locked' : '') + '"'
             + ' data-mid="' + escHtml(m.id) + '">'
             + '<span class="gm-dot" style="background:' + c + '"></span>'
             + '<span class="gm-name">' + escHtml(m.name || m.id) + '</span>'
             + '<button type="button" class="gm-remove" data-remove="' + escHtml(m.id) + '"'
-              + ' title="' + (locked ? 'Group needs ≥2 members' : 'Remove from group')
+              + ' title="' + (locked ? 'Last member — re-add someone before removing'
+                                     : 'Remove from group')
               + '" aria-label="Remove member">×</button>'
             + '</div>';
     }
