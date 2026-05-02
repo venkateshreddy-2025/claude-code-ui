@@ -59,11 +59,10 @@ plane. One human, many agents, one bill.
 GPT-5 via OpenRouter, or local Ollama with two env vars — every
 agent, every group chat, every routine still works.
 
-**Companion-grade.** Persona profiles, group chats where 2–5
-personalities banter with each other, persistent cross-chat memory,
-voice in. The Character.AI experience, but on YOUR machine, with
-YOUR subscription, with file + code + terminal superpowers c.ai
-will never offer.
+**Character.AI features built in.** Persistent personas, group
+"Rooms" with peer-to-peer banter, cross-chat memory, voice in —
+the roleplay/companion stack lives in the same orchestrator that
+runs the dev work.
 
 **Built for one person who pays Anthropic once and refuses to do that twice.**
 Localhost-by-default; bring your own reverse proxy for LAN/remote.
@@ -106,24 +105,24 @@ Three things matter when you compare wrappers:
 
 Here's how ArmyClaw stacks up:
 
-|                            | **ArmyClaw**                  | Claude Code CLI    | OpenClaw            | Claudia             | Character.AI       |
-|----------------------------|-------------------------------|--------------------|---------------------|---------------------|--------------------|
-| **Cost model**             | Subscription (flat)           | Subscription (flat)| API key (was OAuth) | Subscription (flat) | $9.99/mo c.ai+     |
-| **Runs on YOUR machine**   | ✓ localhost, your data        | ✓                  | ✓                   | ✓                   | — (cloud only)     |
-| **Model-agnostic**         | ✓ Anthropic / GLM / Kimi / OR / Ollama | ✓ via base URL | Mostly Anthropic | Anthropic only | Locked to c.ai     |
-| **Use YOUR subscription**  | ✓ no extra fees               | ✓                  | ✓                   | ✓                   | — (separate plan)  |
-| **Web UI**                 | ✓ single-file SPA             | —                  | —                   | Tauri desktop       | ✓ web              |
-| **Mobile (Telegram)**      | ✓ shipped, two-way            | —                  | ✓ (and others)      | —                   | ✓ native iOS/Android |
-| **Parallel agents**        | ✓ unlimited subprocesses      | One                | ✓                   | ✓                   | One per chat       |
-| **Multi-agent group chat** | ✓ peer broadcast, 5 members   | —                  | —                   | —                   | ✓ "Rooms", 10 chars |
-| **Routines / wake-ups**    | ✓ unlimited per-agent         | —                  | ✓ single heartbeat  | —                   | —                  |
-| **Cross-chat memory**      | ✓ shared brain index          | —                  | per-skill           | —                   | per-chat only, 400 chars |
-| **Unlimited personas**     | ✓ specialist agents           | One CLAUDE.md      | ✓ via skills        | ✓ via agents        | ✓ 18M+ user-made   |
-| **Inbuilt terminal + files** | ✓ xterm + file explorer     | (terminal native)  | —                   | files only          | —                  |
-| **Artifacts / canvas**     | ✓ rendered side-panel         | —                  | —                   | —                   | Imagine Gallery (c.ai+) |
-| **Time-machine**           | ✓ snapshots                   | —                  | —                   | ✓ checkpoints       | —                  |
-| **Voice in**               | ✓ Web Speech                  | —                  | —                   | —                   | ✓ voice calls      |
-| **License**                | MIT                           | proprietary        | MIT-style           | AGPL                | proprietary        |
+|                            | **ArmyClaw**                            | Claude Code CLI    | OpenClaw            | Claudia             |
+|----------------------------|-----------------------------------------|--------------------|---------------------|---------------------|
+| **Cost model**             | Subscription (flat)                     | Subscription (flat)| API key (was OAuth) | Subscription (flat) |
+| **Model-agnostic**         | ✓ Anthropic / GLM / Kimi / OR / Ollama  | ✓ via base URL     | Mostly Anthropic    | Anthropic only      |
+| **Web UI**                 | ✓ single-file SPA                       | —                  | —                   | Tauri desktop       |
+| **Mobile (Telegram)**      | ✓ shipped, two-way bridge               | —                  | ✓ (and others)      | —                   |
+| **Parallel agents**        | ✓ unlimited subprocesses                | One                | ✓                   | ✓                   |
+| **Multi-agent groups**     | ✓ Slack-style peer broadcast            | —                  | —                   | —                   |
+| **Routines / wake-ups**    | ✓ unlimited per-agent                   | —                  | ✓ single heartbeat  | —                   |
+| **Cross-chat memory**      | ✓ shared brain index                    | —                  | per-skill           | —                   |
+| **Unlimited personas**     | ✓ specialist agents                     | One CLAUDE.md      | ✓ via skills        | ✓ via agents        |
+| **Inbuilt terminal**       | ✓ xterm.js + PTY                        | (you're in one)    | —                   | —                   |
+| **File explorer**          | ✓ browse + edit                         | —                  | —                   | ✓                   |
+| **Artifacts / canvas**     | ✓ rendered side-panel                   | —                  | —                   | —                   |
+| **Time-machine**           | ✓ snapshots, restore                    | —                  | —                   | ✓ checkpoints       |
+| **Voice in**               | ✓ Web Speech API                        | —                  | —                   | —                   |
+| **Group chat etiquette**   | ✓ short-reply enforcer                  | —                  | —                   | —                   |
+| **License**                | MIT                                     | proprietary        | MIT-style           | AGPL                |
 
 ### The economics
 
@@ -533,37 +532,49 @@ Everything — group chats, routines, artifacts, terminal, voice in,
 favorites, memory — works whether the brain is Anthropic Opus,
 Kimi K2.5, GLM-4.7, or a 4 GB Ollama model running on your laptop.
 
-### 23. Roleplay & companion mode — Character.AI on your machine
+### 23. Companion mode — roleplay-grade personas, locally
 
-The same parallel-agent + persona + group-chat machinery that lets
-you run a coding battalion ALSO gives you a fully local, zero-cost
-Character.AI clone. Every Character.AI sticky behaviour has an
-analog:
+ArmyClaw doubles as a serious roleplay / companion platform.
+The persona machinery, group-chat banter, and shared memory
+that drive the dev workflow are the same primitives behind
+character-AI-style companions:
 
-| Character.AI                                  | ArmyClaw                                                      |
-|-----------------------------------------------|---------------------------------------------------------------|
-| Custom characters with personality + greeting | Personas (`PERSONA.md` + `INSTRUCTIONS.md`), unlimited        |
-| Group chat "Rooms" (up to 10 characters)      | Group chats with up to 5 personas, with **peer-to-peer** banter c.ai's gateway never enabled |
-| Persistent character memory (400 chars)       | Cross-chat brain index + per-chat NOTES.md, no length cap     |
-| Voice calls (1-on-1 only, c.ai+ paid)         | Voice input via Web Speech (free, on-device); streaming TTS roadmapped |
-| Imagine Gallery image-gen (c.ai+ paid)        | Artifacts canvas — claude renders HTML/SVG/code/images inline |
-| Scenes / Stories / Streams                    | Forks let you branch any roleplay arc into parallel storylines |
-| Closed cloud, c.ai keeps your data            | **Localhost-by-default**, your personas + transcripts live in `runtime/` on YOUR disk |
-| $9.99/mo c.ai+ for the good features          | Free + your existing Claude Code subscription                  |
-| Locked to c.ai's PipSqueak/DeepSqueak models  | Any model on the planet (see #22)                              |
+- **Unlimited custom characters.** Create as many personas as you
+  want, each with their own personality file (`PERSONA.md`) and
+  output rules (`INSTRUCTIONS.md`). No 400-character memory cap,
+  no platform-imposed safety rails on harmless adult banter.
+- **Group "Rooms" with real peer-to-peer chemistry.** Drop 2–5
+  characters into one chat and they actually talk to each other,
+  not just at you — with the chain-cap, short-reply rules, and
+  `[silent]` etiquette the orchestrator enforces.
+- **Persistent character memory.** Every persona accumulates a
+  long-term memory index across chats, plus per-chat `NOTES.md`
+  scratchpads. Characters remember what they've done, what they
+  said, who they've met.
+- **Voice in.** Web Speech API turns the mic into roleplay input —
+  hold to dictate, edit, send. (Voice OUT / streaming TTS is
+  roadmapped.)
+- **Multimodal output.** Claude can render artifacts inline —
+  HTML scenes, SVG portraits, code listings — so a character can
+  "draw" or "show you something" inside the conversation.
+- **Branchable storylines.** Fork any chat to take a story in a
+  different direction without losing the original arc; both
+  branches keep their own character memory.
+- **Localhost.** Personas, transcripts, memory, and any generated
+  content live on YOUR machine in `runtime/`. No cloud, no
+  telemetry, no platform pulling features behind a paywall.
+- **Backend choice.** Use your Claude Code subscription, switch
+  to GLM-4.7 or Kimi K2.5 for cheaper roleplay tokens, or run
+  fully offline with Ollama (see #22). The persona behaves the
+  same; you pick the brain.
 
 Ships with companion personas (`Tucker`, `Brielle`, `Sage`) that
-demonstrate the group-chat banter pattern. Want a 24-year-old
-sarcastic blonde and a 40-year-old divorced sarcastic blond
-roasting each other? Hit **+ New group chat**, pick both, type
-"go". They'll bicker without addressing you, exactly like
-c.ai Rooms used to before they got watered down.
-
-What you can't do in c.ai but you CAN here: ask your roleplay
-companion to write code, run shell commands, edit files, deploy a
-web app, schedule a daily check-in routine, or read a log file
-mid-conversation. The persona stays in character; the agent
-machinery underneath gets the actual work done.
+demonstrate the group-chat banter pattern out of the box. Hit
+**+ New group chat**, pick two, type "go" — they riff off each
+other without addressing you. Add a project goal mid-banter and
+the same companions will write code, edit files, run shell
+commands, schedule a routine, or deploy something — staying in
+character throughout. Roleplay + dev superpowers in one chat.
 
 ---
 
