@@ -742,6 +742,36 @@ default verbosity. Read them every turn.
 """
 
 
+def _group_bootstrap_text(member_names: list[str], my_name: str) -> str:
+    """One-time inaugural reminder prepended to the very first user
+    message in a group chat. Lives inside `[bridge: …]` brackets so the
+    persona understands it's a system note, not something the human
+    typed. Says the same things the system prompt says, but as a
+    fresh in-channel message right next to the user's words — that
+    catches the model's attention better than another system block.
+
+    Visible to claude only — the bridge doesn't append this to
+    chat.json, so the human never sees it in their UI."""
+    others = [n for n in member_names if n != my_name]
+    others_str = ', '.join(others) if others else '(no one yet)'
+    return (
+        f'[bridge: this is a GROUP CHAT. You ({my_name}) are in a room '
+        f'with: {others_str}. The user message below is being delivered '
+        f'to every member in parallel.\n\n'
+        f'Group-chat rules (re-read every turn):\n'
+        f'• Replies are SHORT — 1-2 sentences. No filler ("OK", "Got '
+        f'it", "Noted", emoji acks). One-shot punch.\n'
+        f'• If you have nothing meaningful to add or the user told '
+        f'someone else to handle this, reply with EXACTLY `[silent]` '
+        f'(two words, no preamble).\n'
+        f'• Peer messages prefixed `[from <name>]:` are real Slack-style '
+        f'messages from your roommates — engage with them, push back, '
+        f'banter. You don\'t have to wait for the human.\n'
+        f'• These rules apply ONLY in group chats. They override your '
+        f'persona\'s default verbosity for THIS room.]\n\n'
+    )
+
+
 # Marker the bridge looks for to suppress a member's reply. Defined
 # once so the streaming reader and the prompt above stay in sync.
 SILENT_MARKER = '[silent]'
@@ -2018,15 +2048,21 @@ async def start_worker(sid: str, *, force_fresh: bool = False,
             persona_prompt = materialise_persona_files(p, Path(cwd))
         else:
             persona_prompt = None
-        member_names = []
-        for m in (sess.get('groupMembers') or []):
-            mp = persona_full(m.get('id'))
-            member_names.append(
-                (mp.get('name') if mp else None) or m.get('name') or m.get('id'))
-        my_name = (p.get('name') if p else None) or persona_override
-        group_block = _group_chat_prompt(member_names, my_name)
-        persona_prompt = (persona_prompt + '\n\n---\n\n' + group_block) \
-                         if persona_prompt else group_block
+        # Group-chat etiquette block is appended ONLY in group chats —
+        # it changes the persona's reply style (short, [silent] when
+        # not addressed, no filler) which we don't want bleeding into
+        # solo 1-on-1 chats. Defensive double-check on sess.groupChat
+        # in case persona_override is ever passed for a non-group spawn.
+        if sess.get('groupChat'):
+            member_names = []
+            for m in (sess.get('groupMembers') or []):
+                mp = persona_full(m.get('id'))
+                member_names.append(
+                    (mp.get('name') if mp else None) or m.get('name') or m.get('id'))
+            my_name = (p.get('name') if p else None) or persona_override
+            group_block = _group_chat_prompt(member_names, my_name)
+            persona_prompt = (persona_prompt + '\n\n---\n\n' + group_block) \
+                             if persona_prompt else group_block
     else:
         # If the session has a stored systemPrompt (forked / persona-
         # pinned), always use it. Otherwise build a resume context blob
@@ -4841,10 +4877,18 @@ async def send_to_session(sid: str, text: str, attachments: list[dict],
             log(f'send: group {sid[:8]} has no members')
             return
         log(f'group send: {sid[:8]} → {len(members)} members')
+        # First user turn of this group's lifetime gets a one-time
+        # `[bridge: …]` preamble re-stating the room rules + roster.
+        # Lives in the user-message body (not chat.json — invisible to
+        # the human) and only fires once per group session, gated by
+        # sess.groupBootstrapSent.
+        send_bootstrap = not sess.get('groupBootstrapSent')
         # Reset the chain-count budget at the START of each user turn.
         # Peer-to-peer cross-talk is metered per-turn so a runaway
         # back-and-forth between bots can't outlive a single human prompt.
         sess['groupTurnChainCount'] = 0
+        if send_bootstrap:
+            sess['groupBootstrapSent'] = True
         save_session(sess)
         # Peer context: replies from OTHER members in the previous round.
         # claude_reader stores each member's reply under
@@ -4875,15 +4919,24 @@ async def send_to_session(sid: str, text: str, attachments: list[dict],
                 if not ptext: continue
                 pname = member_names.get(pid, pid)
                 peer_lines.append(f'[from {pname}]: {ptext}')
+            # Compose the actual claude payload. Layered prefixes are
+            # added in order: bootstrap (first turn only) → peer recap
+            # (every turn that has prior replies) → user's text.
+            body = text
             if peer_lines:
-                wrapped = ('Observations from the previous round '
-                           '(treat as context, do not respond unless '
-                           'addressed):\n\n'
-                           + '\n\n'.join(peer_lines)
-                           + '\n\n---\n\nNew user message:\n\n' + text)
-                member_payload = _build_claude_payload(wrapped, attachments)
-            else:
+                body = ('Peer messages from the previous round '
+                        '(real Slack-style messages from your '
+                        'roommates — feel free to engage):\n\n'
+                        + '\n\n'.join(peer_lines)
+                        + '\n\n---\n\nNew user message:\n\n' + text)
+            if send_bootstrap:
+                my_name = member_names.get(persona_id, persona_id)
+                roster = list(member_names.values())
+                body = _group_bootstrap_text(roster, my_name) + body
+            if body == text:
                 member_payload = payload
+            else:
+                member_payload = _build_claude_payload(body, attachments)
             await _write_to_worker(w, member_payload, sid)
 
         # Fire all member sends in parallel — each worker's reader will
