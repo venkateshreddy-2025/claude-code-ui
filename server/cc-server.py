@@ -2167,8 +2167,14 @@ async def new_session(cwd_override: str | None = None,
     upsert_index_entry(sess)
     state.active_id = sid
     set_active(sid)
+    # Broadcast the freshly-updated session list BEFORE spawning so
+    # the client's spawning handler has the new chat in `sessions`
+    # when it calls setActive() — otherwise the header would show
+    # "Claude Code" until the state_snapshot below arrives.
+    await broadcast({'type': 'sessions',
+                     'sessions': list_sessions_brief()})
     await broadcast({'type': 'spawning',
-                     'sessionId': sid, 'title': 'New chat'})
+                     'sessionId': sid, 'title': sess.get('title') or 'New chat'})
     # New session — first spawn never uses --resume (no memory yet).
     await start_worker(sid, force_fresh=True)
     # NOTE: Aurora's heartbeat is intentionally NOT started here. We defer
@@ -2347,6 +2353,12 @@ async def new_group_session(member_ids: list[str],
     upsert_index_entry(sess)
     state.active_id = sid
     set_active(sid)
+    # Push the new session list FIRST so the client has the row
+    # (with title + groupMembers + groupChat flag) before it lands
+    # on the spawning event and calls setActive: otherwise the
+    # header reads "Claude Code" until state_snapshot below.
+    await broadcast({'type': 'sessions',
+                     'sessions': list_sessions_brief()})
     await broadcast({'type': 'spawning',
                      'sessionId': sid,
                      'title': sess['title']})
