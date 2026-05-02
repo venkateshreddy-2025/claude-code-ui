@@ -496,6 +496,7 @@
   .empty-list{padding:24px 12px;text-align:center;color:var(--fg-faint);font-size:12.5px;
     line-height:1.6}
 
+  .side-bottom .cwd-spacer{flex:1}
   .side-bottom{border-top:1px solid var(--border-soft);padding:10px 12px calc(12px + var(--safe-bot));
     display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--fg-dim)}
   .side-bottom .cwd{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
@@ -986,6 +987,17 @@
   .art-tab.active{color:var(--accent);background:var(--bg-2);
     border-bottom:2px solid var(--accent)}
   .art-tab .at-name{max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* Per-tab close (×) button — dismisses just that artifact without
+     closing the whole side panel. Hidden until hover on inactive tabs
+     so the row stays clean; always shown on the active tab so the
+     user can close the one they're looking at without hunting. */
+  .art-tab .at-close{flex:0 0 16px;width:16px;height:16px;border:none;
+    background:transparent;color:var(--fg-faint);cursor:pointer;
+    border-radius:50%;font-size:14px;line-height:1;padding:0;
+    display:none;align-items:center;justify-content:center;
+    transition:background .12s,color .12s}
+  .art-tab:hover .at-close,.art-tab.active .at-close{display:inline-flex}
+  .art-tab .at-close:hover{background:rgba(255,80,80,.22);color:#ff8888}
 
   .art-body{flex:1;overflow:hidden;background:#0a0a0e;display:flex;
     align-items:stretch;justify-content:stretch;position:relative}
@@ -1597,7 +1609,46 @@
   .pl-empty{color:var(--fg-faint);font-size:12px;padding:18px;text-align:center;
     line-height:1.5}
 
-  /* Group-chat creation modal — chip-add picker for personas. */
+  /* Group-chat creation modal — chip-add picker for personas.
+     Sized big in BOTH directions: long list of personas needs room
+     horizontally for chips + descriptions, AND vertically so the
+     suggest dropdown isn't squashed under the action row. Becomes a
+     flex column so the action row stays pinned at the bottom while
+     the body scrolls. */
+  #newGroupModal{display:flex;flex-direction:column;
+    width:min(760px,calc(100% - 32px));
+    height:min(90vh,820px);max-height:90vh;
+    padding:22px 24px 0}
+  #newGroupModal.show{display:flex}
+  #newGroupModal h3{flex:0 0 auto}
+  /* Scrolling body area — everything between the title and the action
+     row lives here so it can grow / shrink without nuking the buttons. */
+  #newGroupModal .grp-body{flex:1 1 auto;overflow-y:auto;min-height:0;
+    padding-right:4px;margin-right:-4px}
+  /* Sticky action row — large buttons, always visible at the bottom.
+     Margins match the modal's larger 24px horizontal padding so the
+     row spans the full width of the dialog. */
+  #newGroupModal .modal-actions{flex:0 0 auto;
+    margin:8px -24px 0;padding:16px 24px 18px;
+    background:var(--bg-2);border-top:1px solid var(--border);
+    border-bottom-left-radius:14px;border-bottom-right-radius:14px;
+    display:flex;gap:10px;justify-content:flex-end;align-items:center}
+  #newGroupModal .modal-actions .btn-primary,
+  #newGroupModal .modal-actions .btn-ghost{
+    height:42px;padding:0 22px;font-size:14px;font-weight:600;
+    border-radius:10px;letter-spacing:.005em}
+  #newGroupModal .modal-actions .btn-primary{
+    background:var(--accent);border-color:var(--accent);color:#000}
+  #newGroupModal .modal-actions .btn-primary:hover{filter:brightness(1.06)}
+  #newGroupModal .modal-actions .btn-primary:disabled{
+    opacity:.45;cursor:not-allowed;filter:none}
+  /* Hint chip showing how many members are picked — useful feedback
+     while the user types in the @-search and the action row stays
+     anchored at the bottom. */
+  #newGroupModal .modal-actions .grp-count{margin-right:auto;
+    font-size:12px;color:var(--fg-faint);font-weight:500}
+  #newGroupModal .modal-actions .grp-count.ready{color:var(--accent)}
+
   .grp-picker{position:relative;display:flex;flex-direction:column;gap:6px;
     margin:6px 0 4px}
   .grp-chips{display:flex;flex-wrap:wrap;gap:6px;min-height:0}
@@ -1611,7 +1662,7 @@
   .grp-chip .grp-chip-x:hover{background:rgba(255,80,80,.18);color:#ff8888}
   .grp-suggest{position:absolute;left:0;right:0;top:100%;margin-top:4px;
     background:var(--bg-2);border:1px solid var(--border);border-radius:8px;
-    box-shadow:0 12px 36px rgba(0,0,0,.42);max-height:240px;overflow-y:auto;
+    box-shadow:0 12px 36px rgba(0,0,0,.42);max-height:380px;overflow-y:auto;
     padding:4px;z-index:80;animation:rs-pop-in .12s ease-out}
   .grp-suggest .grp-row{display:flex;align-items:center;gap:8px;
     padding:7px 10px;border-radius:6px;cursor:pointer;font-size:13px;
@@ -2009,7 +2060,11 @@
     <!-- drag handle for resizing the sidebar (desktop only) -->
     <div class="side-resize" id="sideResize" title="Drag to resize"></div>
     <div class="side-bottom">
-      <span class="cwd" id="cwdLabel" title="Working directory for new chats">~</span>
+      <!-- The cwd label used to live here but it just showed a long
+           legacy path that meant nothing to the user. Kept hidden so
+           any code still reading from #cwdLabel keeps working. -->
+      <span class="cwd" id="cwdLabel" hidden></span>
+      <span class="cwd-spacer" aria-hidden="true"></span>
       <button class="icon-btn" id="explorerBtn"
               title="Browse runtime files (knowledge, skills, configs, chat folders)"
               aria-label="Open file explorer">
@@ -2652,26 +2707,31 @@
 <div class="modal" id="newGroupModal" hidden>
   <button class="close" id="newGroupClose" aria-label="Close">×</button>
   <h3>New group chat</h3>
-  <label class="setting-label" for="newGroupTitle">Title (optional)</label>
-  <input type="text" id="newGroupTitle" class="setting-input wide"
-         placeholder="e.g. Brainstorm session"
-         autocomplete="off" spellcheck="false" maxlength="80">
-  <label class="setting-label">Members (pick 2+)</label>
-  <div class="grp-picker">
-    <div class="grp-chips" id="newGroupChips"></div>
-    <input type="text" id="newGroupSearch" class="setting-input wide"
-           placeholder="Type @ or search to add personas…"
-           autocomplete="off" spellcheck="false">
-    <div class="grp-suggest" id="newGroupSuggest" hidden></div>
+  <!-- Scrollable body — only this region scrolls when the user adds a
+       lot of member chips, so the Create / Cancel buttons stay pinned. -->
+  <div class="grp-body">
+    <label class="setting-label" for="newGroupTitle">Title (optional)</label>
+    <input type="text" id="newGroupTitle" class="setting-input wide"
+           placeholder="e.g. Brainstorm session"
+           autocomplete="off" spellcheck="false" maxlength="80">
+    <label class="setting-label">Members (pick 2+)</label>
+    <div class="grp-picker">
+      <div class="grp-chips" id="newGroupChips"></div>
+      <input type="text" id="newGroupSearch" class="setting-input wide"
+             placeholder="Type @ or search to add personas…"
+             autocomplete="off" spellcheck="false">
+      <div class="grp-suggest" id="newGroupSuggest" hidden></div>
+    </div>
+    <p class="setting-help">
+      Every message you send goes to all members in parallel; each
+      persona replies in their own bubble. You can add more later from
+      the chat header.
+    </p>
   </div>
-  <p class="setting-help">
-    Every message you send goes to all members in parallel; each
-    persona replies in their own bubble. You can add more later from
-    the chat header.
-  </p>
   <div class="modal-actions">
+    <span class="grp-count" id="newGroupCount">0 members</span>
     <button type="button" class="btn-ghost"   id="newGroupCancel">Cancel</button>
-    <button type="button" class="btn-primary" id="newGroupCreate">Create</button>
+    <button type="button" class="btn-primary" id="newGroupCreate" disabled>Create</button>
   </div>
 </div>
 
@@ -4701,21 +4761,60 @@
 
   function renderArtifactTabs(){
     if (!artTabsEl) return;
-    if (artifactStack.length <= 1){ artTabsEl.innerHTML = ''; artTabsEl.style.display = 'none'; return; }
+    // Always render the tab strip when at least one artifact is open
+    // — even with a single tab, the (×) close button gives the user a
+    // way to dismiss the artifact without closing the whole side panel.
+    if (artifactStack.length === 0){
+      artTabsEl.innerHTML = '';
+      artTabsEl.style.display = 'none';
+      return;
+    }
     artTabsEl.style.display = '';
     let html = '';
     for (const a of artifactStack){
       const cls = a.url === activeArtifactUrl ? 'art-tab active' : 'art-tab';
-      html += '<button type="button" class="' + cls + '"'
+      html += '<span class="' + cls + '"'
             + ' data-art-tab="' + escapeHTML(a.url) + '"'
             + ' title="' + escapeHTML(a.name || '') + '">'
             + '<span class="at-name">' + escapeHTML(a.name || '') + '</span>'
-            + '</button>';
+            + '<button type="button" class="at-close"'
+              + ' data-art-close="' + escapeHTML(a.url) + '"'
+              + ' aria-label="Close artifact" title="Close this artifact">×</button>'
+            + '</span>';
     }
     artTabsEl.innerHTML = html;
   }
 
+  function closeArtifactTab(url){
+    if (!url) return;
+    const idx = artifactStack.findIndex(x => x.url === url);
+    if (idx < 0) return;
+    const wasActive = (artifactStack[idx].url === activeArtifactUrl);
+    artifactStack.splice(idx, 1);
+    if (artifactStack.length === 0){
+      // Last artifact gone — fold the whole side panel.
+      activeArtifactUrl = null;
+      closeArtifact();
+      return;
+    }
+    if (wasActive){
+      // Pick a neighbouring tab to focus (prefer the one to the left).
+      const next = artifactStack[Math.max(0, idx - 1)];
+      activeArtifactUrl = next.url;
+      renderActiveArtifact();
+    }
+    renderArtifactTabs();
+  }
+
   artTabsEl?.addEventListener('click', e => {
+    // Per-tab close (×) — handled before the tab-switch path so a
+    // click on the × doesn't first switch to that tab.
+    const x = e.target.closest('[data-art-close]');
+    if (x){
+      e.stopPropagation();
+      closeArtifactTab(x.dataset.artClose);
+      return;
+    }
     const t = e.target.closest('[data-art-tab]');
     if (!t) return;
     activeArtifactUrl = t.dataset.artTab;
@@ -6392,6 +6491,26 @@
       };
       wrap.appendChild(chip);
     }
+    // Update the bottom-row count badge + enable/disable the Create
+    // button. Modal threshold differs for "new" vs "add to existing":
+    // creating a new group needs ≥2 members; adding to an existing
+    // one needs ≥1 (the existing chat already has the others).
+    const countEl  = document.getElementById('newGroupCount');
+    const createEl = document.getElementById('newGroupCreate');
+    const n        = _groupPickerSelected.length;
+    const isAdd    = (createEl && createEl.textContent.trim() === 'Add');
+    const min      = isAdd ? 1 : 2;
+    const ready    = n >= min;
+    if (countEl){
+      const word = isAdd
+        ? (n === 1 ? '1 to add' : n + ' to add')
+        : (n === 0 ? 'add at least 2 members'
+            : n === 1 ? 'pick 1 more'
+            : n + ' members');
+      countEl.textContent = word;
+      countEl.classList.toggle('ready', ready);
+    }
+    if (createEl) createEl.disabled = !ready;
   }
 
   function renderGroupSuggest(query){

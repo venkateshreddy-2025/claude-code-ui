@@ -6392,6 +6392,54 @@ async def telegram_poller():
 
 
 # ───────────────────  bootstrap  ───────────────────
+def migrate_legacy_chat_cwds():
+    """One-shot startup migration: any chat whose `cwd` doesn't live
+    under `CWD_ROOT/<chatId>` (legacy timestamp folders, ad-hoc paths,
+    or shared scratch dirs) gets pointed at its own `CWD_ROOT/<chatId>`.
+
+    Idempotent — sessions already on the new layout are skipped.
+    Doesn't touch the legacy folders themselves; just re-targets the
+    saved cwd metadata so future writes (NOTES.md, MEMORY.md, scratch
+    files, etc.) land in a per-chat directory."""
+    if not SESS_DIR.exists():
+        return
+    cwd_root = CWD_ROOT.resolve()
+    migrated = 0
+    for f in SESS_DIR.glob('*.json'):
+        if f.name == 'index.json':
+            continue
+        try:
+            sess = json.loads(f.read_text())
+        except Exception:
+            continue
+        cid = sess.get('chatId')
+        if not cid:
+            # No chatId on this session yet — assign one keyed off the
+            # persona name (or 'general' fallback) so the folder name
+            # stays human-readable.
+            persona = (sess.get('persona') or {})
+            cid = next_chat_id(persona.get('name'))
+            sess['chatId'] = cid
+        target = (CWD_ROOT / cid).resolve()
+        cwd = sess.get('cwd', '')
+        try:
+            cwd_resolved = Path(cwd).resolve() if cwd else None
+        except Exception:
+            cwd_resolved = None
+        if cwd_resolved == target:
+            continue   # already on the canonical layout
+        target.mkdir(parents=True, exist_ok=True)
+        sess['cwd'] = str(target)
+        try:
+            save_session(sess)
+            upsert_index_entry(sess)
+            migrated += 1
+        except Exception as e:
+            log(f'migrate cwd failed for {sess.get("id","?")[:8]}: {e}')
+    if migrated:
+        log(f'migrated {migrated} chat(s) onto chatId-named folders')
+
+
 async def wake_interrupted_sessions():
     """Find sessions that were mid-turn when the server died, clear the
     streaming flag, and inject a synthetic wake user message so the
@@ -6449,6 +6497,10 @@ async def wake_interrupted_sessions():
 
 async def main():
     seed_default_personas_if_empty()
+    # One-shot: re-home any legacy chat onto runtime/<chatId>/ so the
+    # file explorer + per-chat artifacts always live in a predictable
+    # place. Idempotent: runs cheaply on every boot.
+    migrate_legacy_chat_cwds()
 
     idx = load_index()
     state.active_id = idx.get('active')
