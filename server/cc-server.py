@@ -2232,7 +2232,8 @@ async def group_remove_member(sid: str, persona_id: str) -> None:
 
 async def group_add_member(sid: str, persona_id: str) -> None:
     """Add a persona to an existing group chat mid-conversation. Idempotent
-    — adding a persona that's already a member is a no-op."""
+    — adding a persona that's already a member is a no-op. Refuses if
+    the group is already at GROUP_MAX_MEMBERS."""
     sess = load_session(sid)
     if sess is None or not sess.get('groupChat'):
         await broadcast({'type': 'error',
@@ -2246,6 +2247,10 @@ async def group_add_member(sid: str, persona_id: str) -> None:
     members = sess.get('groupMembers') or []
     if any(m.get('id') == persona_id for m in members):
         return                                # already in the group
+    if len(members) >= GROUP_MAX_MEMBERS:
+        await broadcast({'type': 'error',
+            'message': f'Group chat is capped at {GROUP_MAX_MEMBERS} members.'})
+        return
     members.append({'id': p['id'], 'name': p.get('name')})
     sess['groupMembers'] = members
     sess['lastActiveAt'] = time.time()
@@ -2271,6 +2276,8 @@ async def group_add_member(sid: str, persona_id: str) -> None:
     await broadcast(state_snapshot())
 
 
+GROUP_MAX_MEMBERS = 5  # cap so the fan-out doesn't burn through tokens
+
 async def new_group_session(member_ids: list[str],
                               title: str | None = None,
                               cwd_override: str | None = None) -> str | None:
@@ -2278,8 +2285,8 @@ async def new_group_session(member_ids: list[str],
     Each member persona gets its own claude worker (keyed by
     `<sid>:<personaId>`) when the first message arrives.
 
-    `member_ids` must contain at least 2 valid persona ids. Duplicates
-    are dropped. Returns the new session id, or None on failure."""
+    `member_ids` must contain 2 to GROUP_MAX_MEMBERS valid persona ids.
+    Duplicates are dropped. Returns the new session id, or None on failure."""
     member_ids = list(dict.fromkeys(member_ids or []))   # dedupe, preserve order
     # Validate every id resolves to a real persona — otherwise the
     # member-worker spawn would crash later with no system prompt.
@@ -2293,6 +2300,10 @@ async def new_group_session(member_ids: list[str],
     if len(valid) < 2:
         await broadcast({'type': 'error',
             'message': 'Group chat needs at least 2 valid personas.'})
+        return None
+    if len(valid) > GROUP_MAX_MEMBERS:
+        await broadcast({'type': 'error',
+            'message': f'Group chat is capped at {GROUP_MAX_MEMBERS} members.'})
         return None
 
     sid = str(uuid.uuid4())

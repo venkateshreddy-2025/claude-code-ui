@@ -6716,24 +6716,36 @@
     // Update the bottom-row count badge + enable/disable the Create
     // button. Modal threshold differs for "new" vs "add to existing":
     // creating a new group needs ≥2 members; adding to an existing
-    // one needs ≥1 (the existing chat already has the others).
+    // one needs ≥1 (the existing chat already has the others). Both
+    // modes share a hard cap of GROUP_MAX_MEMBERS (5) — server rejects
+    // anything beyond that, so we mirror the limit in the UI.
     const countEl  = document.getElementById('newGroupCount');
     const createEl = document.getElementById('newGroupCreate');
     const n        = _groupPickerSelected.length;
     const isAdd    = (createEl && createEl.textContent.trim() === 'Add');
     const min      = isAdd ? 1 : 2;
-    const ready    = n >= min;
+    // Already-in-group count (for add mode) so the cap math works.
+    const already  = isAdd ? (_groupPickerExclude || []).length : 0;
+    const max      = GROUP_MAX_MEMBERS - already;
+    const overCap  = n > max;
+    const atCap    = n + already >= GROUP_MAX_MEMBERS;
+    const ready    = n >= min && !overCap;
     if (countEl){
-      const word = isAdd
-        ? (n === 1 ? '1 to add' : n + ' to add')
-        : (n === 0 ? 'add at least 2 members'
-            : n === 1 ? 'pick 1 more'
-            : n + ' members');
+      let word;
+      if (overCap) word = `max ${GROUP_MAX_MEMBERS} members — drop ${n - max}`;
+      else if (atCap && isAdd) word = `at ${GROUP_MAX_MEMBERS}-member cap`;
+      else if (atCap) word = `${n} members (cap)`;
+      else if (isAdd) word = (n === 0 ? 'pick 1+ to add' : `${n} to add`);
+      else if (n === 0) word = 'add at least 2 members';
+      else if (n === 1) word = 'pick 1 more';
+      else word = `${n} members`;
       countEl.textContent = word;
       countEl.classList.toggle('ready', ready);
     }
     if (createEl) createEl.disabled = !ready;
   }
+  // Server-side hard cap. Keep in sync with GROUP_MAX_MEMBERS in cc-server.py.
+  const GROUP_MAX_MEMBERS = 5;
 
   function renderGroupSuggest(query){
     const box = document.getElementById('newGroupSuggest');
