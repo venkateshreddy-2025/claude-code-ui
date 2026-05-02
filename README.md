@@ -55,6 +55,16 @@ plane. One human, many agents, one bill.
         └────────────────────────────────────┘
 ```
 
+**Model-agnostic.** Point Claude Code at GLM-4.7, Kimi K2.5, DeepSeek,
+GPT-5 via OpenRouter, or local Ollama with two env vars — every
+agent, every group chat, every routine still works.
+
+**Companion-grade.** Persona profiles, group chats where 2–5
+personalities banter with each other, persistent cross-chat memory,
+voice in. The Character.AI experience, but on YOUR machine, with
+YOUR subscription, with file + code + terminal superpowers c.ai
+will never offer.
+
 **Built for one person who pays Anthropic once and refuses to do that twice.**
 Localhost-by-default; bring your own reverse proxy for LAN/remote.
 
@@ -96,23 +106,24 @@ Three things matter when you compare wrappers:
 
 Here's how ArmyClaw stacks up:
 
-|                          | **ArmyClaw**                  | Anthropic CLI      | OpenClaw            | Claudia             |
-|--------------------------|-------------------------------|--------------------|---------------------|---------------------|
-| **Cost model**           | Subscription (flat)           | Subscription (flat)| API key (was OAuth) | Subscription (flat) |
-| **Web UI**               | ✓ single-file SPA, ~285 KB    | —                  | —                   | Tauri desktop only  |
-| **Mobile (Telegram)**    | ✓ shipped, two-way bridge     | —                  | ✓ (and others)      | —                   |
-| **Parallel sessions**    | ✓ unlimited, true subprocess  | One                | ✓                   | ✓                   |
-| **Multi-agent groups**   | ✓ Slack-style peer broadcast  | —                  | —                   | —                   |
-| **Routines (wake-ups)**  | ✓ cron + heartbeat            | —                  | ✓ heartbeat         | —                   |
-| **Cross-chat memory**    | ✓ shared `long-term-memory.md`| —                  | per-skill           | —                   |
-| **Personas**             | ✓ unlimited, persistent       | One CLAUDE.md      | ✓ via skills        | ✓ via agents        |
-| **Inbuilt terminal**     | ✓ xterm.js + PTY              | (you're in one)    | —                   | —                   |
-| **File explorer**        | ✓ browse + edit               | —                  | —                   | ✓                   |
-| **Artifacts / canvas**   | ✓ rendered side-panel         | —                  | —                   | —                   |
-| **Time-machine**         | ✓ snapshots, restore          | —                  | —                   | ✓ checkpoints       |
-| **Voice in**             | ✓ Web Speech API              | —                  | —                   | —                   |
-| **Group chat etiquette** | ✓ short-reply enforcer        | —                  | —                   | —                   |
-| **License**              | MIT                           | proprietary        | MIT-style           | AGPL                |
+|                            | **ArmyClaw**                  | Claude Code CLI    | OpenClaw            | Claudia             | Character.AI       |
+|----------------------------|-------------------------------|--------------------|---------------------|---------------------|--------------------|
+| **Cost model**             | Subscription (flat)           | Subscription (flat)| API key (was OAuth) | Subscription (flat) | $9.99/mo c.ai+     |
+| **Runs on YOUR machine**   | ✓ localhost, your data        | ✓                  | ✓                   | ✓                   | — (cloud only)     |
+| **Model-agnostic**         | ✓ Anthropic / GLM / Kimi / OR / Ollama | ✓ via base URL | Mostly Anthropic | Anthropic only | Locked to c.ai     |
+| **Use YOUR subscription**  | ✓ no extra fees               | ✓                  | ✓                   | ✓                   | — (separate plan)  |
+| **Web UI**                 | ✓ single-file SPA             | —                  | —                   | Tauri desktop       | ✓ web              |
+| **Mobile (Telegram)**      | ✓ shipped, two-way            | —                  | ✓ (and others)      | —                   | ✓ native iOS/Android |
+| **Parallel agents**        | ✓ unlimited subprocesses      | One                | ✓                   | ✓                   | One per chat       |
+| **Multi-agent group chat** | ✓ peer broadcast, 5 members   | —                  | —                   | —                   | ✓ "Rooms", 10 chars |
+| **Routines / wake-ups**    | ✓ unlimited per-agent         | —                  | ✓ single heartbeat  | —                   | —                  |
+| **Cross-chat memory**      | ✓ shared brain index          | —                  | per-skill           | —                   | per-chat only, 400 chars |
+| **Unlimited personas**     | ✓ specialist agents           | One CLAUDE.md      | ✓ via skills        | ✓ via agents        | ✓ 18M+ user-made   |
+| **Inbuilt terminal + files** | ✓ xterm + file explorer     | (terminal native)  | —                   | files only          | —                  |
+| **Artifacts / canvas**     | ✓ rendered side-panel         | —                  | —                   | —                   | Imagine Gallery (c.ai+) |
+| **Time-machine**           | ✓ snapshots                   | —                  | —                   | ✓ checkpoints       | —                  |
+| **Voice in**               | ✓ Web Speech                  | —                  | —                   | —                   | ✓ voice calls      |
+| **License**                | MIT                           | proprietary        | MIT-style           | AGPL                | proprietary        |
 
 ### The economics
 
@@ -450,6 +461,109 @@ machine, etc.), the bridge:
 3. **Auto-retries the last user message** so you don't have to retype.
 
 You see no hiccup. The chat just keeps going.
+
+### 22. Model-agnostic backend — every agent, any model
+
+Claude Code itself is the orchestrator's brain — but you don't have
+to feed it Anthropic models. Claude Code reads `ANTHROPIC_BASE_URL`
++ `ANTHROPIC_AUTH_TOKEN` at spawn time and points its inference at
+**any Anthropic-format endpoint**. Set those once, and every agent,
+every group member, every routine routes through whatever provider
+you pick.
+
+Works out of the box (no proxy needed):
+
+| Provider                     | `ANTHROPIC_BASE_URL`                    | Notes                                         |
+|------------------------------|------------------------------------------|-----------------------------------------------|
+| **Anthropic** (default)      | `https://api.anthropic.com`              | Subscription auth via `claude login`.         |
+| **Z.AI · GLM-4.5/4.7**       | `https://api.z.ai/api/anthropic`         | Native Anthropic Messages format.             |
+| **Moonshot · Kimi K2 / K2.5**| `https://api.moonshot.ai/anthropic`      | Native. Use `kimi-k2-turbo-preview` for speed.|
+| **OpenRouter** (200+ models) | `https://openrouter.ai/api`              | Anthropic skin endpoint. Set `ANTHROPIC_API_KEY=""`. Needs Claude Code ≥ 2.1.96. |
+| **LM Studio** (≥ 0.4.1)      | `http://localhost:1234`                  | Native `/v1/messages` Anthropic endpoint.     |
+| **vLLM**                     | `http://your-host:8000`                  | Native Anthropic Messages.                    |
+
+Needs a translator (use `claude-code-router` or LiteLLM):
+
+- **DeepSeek V3 / V3.2** — ~50× cheaper than Opus.
+- **Qwen Coder** — strong cheap-tier coder.
+- **Local Ollama** (`http://localhost:11434`) — full offline mode.
+- **Groq / Together / Fireworks** — fast, OpenAI-format.
+- **OpenAI GPT-5** — via `claude-code-router`.
+
+Switch routes per shell:
+
+```bash
+# Anthropic native (your $20 Pro / $200 Max subscription)
+unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_MODEL && python3 server/cc-server.py
+
+# Z.AI GLM-4.7
+ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic \
+ANTHROPIC_AUTH_TOKEN=$ZAI_KEY \
+ANTHROPIC_MODEL=glm-4.7 \
+python3 server/cc-server.py
+
+# Moonshot Kimi K2.5
+ANTHROPIC_BASE_URL=https://api.moonshot.ai/anthropic \
+ANTHROPIC_AUTH_TOKEN=$KIMI_KEY \
+ANTHROPIC_MODEL=kimi-k2.5 \
+python3 server/cc-server.py
+
+# Local Ollama via LiteLLM proxy on :4000 (fully offline)
+ANTHROPIC_BASE_URL=http://0.0.0.0:4000 \
+ANTHROPIC_AUTH_TOKEN=$LITELLM_MASTER_KEY \
+ANTHROPIC_MODEL=qwen2.5-coder \
+python3 server/cc-server.py
+```
+
+Or set the same vars under `"env"` in `~/.claude/settings.json`
+to make them sticky.
+
+**Caveats with non-Anthropic backends.**
+- Tool quality drops noticeably below native Claude — small local
+  models routinely fumble tool calls.
+- Image/vision is unreliable on most non-Anthropic providers; reference
+  images by file path and add a vision MCP if you need them.
+- Three model slots (`OPUS` / `SONNET` / `HAIKU`) — set all three or
+  unmapped slots crash. Use `ANTHROPIC_DEFAULT_OPUS_MODEL`, etc.
+- Set `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` when off-Anthropic
+  to silence telemetry pings home.
+
+ArmyClaw doesn't gate any feature on which backend you choose.
+Everything — group chats, routines, artifacts, terminal, voice in,
+favorites, memory — works whether the brain is Anthropic Opus,
+Kimi K2.5, GLM-4.7, or a 4 GB Ollama model running on your laptop.
+
+### 23. Roleplay & companion mode — Character.AI on your machine
+
+The same parallel-agent + persona + group-chat machinery that lets
+you run a coding battalion ALSO gives you a fully local, zero-cost
+Character.AI clone. Every Character.AI sticky behaviour has an
+analog:
+
+| Character.AI                                  | ArmyClaw                                                      |
+|-----------------------------------------------|---------------------------------------------------------------|
+| Custom characters with personality + greeting | Personas (`PERSONA.md` + `INSTRUCTIONS.md`), unlimited        |
+| Group chat "Rooms" (up to 10 characters)      | Group chats with up to 5 personas, with **peer-to-peer** banter c.ai's gateway never enabled |
+| Persistent character memory (400 chars)       | Cross-chat brain index + per-chat NOTES.md, no length cap     |
+| Voice calls (1-on-1 only, c.ai+ paid)         | Voice input via Web Speech (free, on-device); streaming TTS roadmapped |
+| Imagine Gallery image-gen (c.ai+ paid)        | Artifacts canvas — claude renders HTML/SVG/code/images inline |
+| Scenes / Stories / Streams                    | Forks let you branch any roleplay arc into parallel storylines |
+| Closed cloud, c.ai keeps your data            | **Localhost-by-default**, your personas + transcripts live in `runtime/` on YOUR disk |
+| $9.99/mo c.ai+ for the good features          | Free + your existing Claude Code subscription                  |
+| Locked to c.ai's PipSqueak/DeepSqueak models  | Any model on the planet (see #22)                              |
+
+Ships with companion personas (`Tucker`, `Brielle`, `Sage`) that
+demonstrate the group-chat banter pattern. Want a 24-year-old
+sarcastic blonde and a 40-year-old divorced sarcastic blond
+roasting each other? Hit **+ New group chat**, pick both, type
+"go". They'll bicker without addressing you, exactly like
+c.ai Rooms used to before they got watered down.
+
+What you can't do in c.ai but you CAN here: ask your roleplay
+companion to write code, run shell commands, edit files, deploy a
+web app, schedule a daily check-in routine, or read a log file
+mid-conversation. The persona stays in character; the agent
+machinery underneath gets the actual work done.
 
 ---
 

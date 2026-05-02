@@ -111,7 +111,7 @@
   section .lede{color:var(--ink-2);font-size:16px;max-width:62ch;margin-bottom:36px}
 
   /* ─────────  pillars (why)  ───────── */
-  .pillars{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+  .pillars{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px}
   .pillar{
     padding:24px;border-radius:var(--radius);background:var(--bg-2);
     border:1px solid var(--line);transition:transform .15s ease,border-color .15s ease}
@@ -121,9 +121,8 @@
   .pillar .icon svg{width:20px;height:20px}
   .pillar h3{font-size:17px;letter-spacing:-.01em;margin-bottom:6px}
   .pillar p{color:var(--ink-2);font-size:14px;line-height:1.55}
-  .pillar .num{font-size:26px;font-weight:800;color:var(--accent-2);letter-spacing:-.02em;margin-bottom:6px;line-height:1}
-  .pillar .num small{font-size:13px;color:var(--ink-3);font-weight:500;letter-spacing:0;margin-left:4px}
-  @media (max-width:760px){.pillars{grid-template-columns:1fr}}
+  .pillar .num{font-size:24px;font-weight:800;color:var(--accent-2);letter-spacing:-.02em;margin-bottom:6px;line-height:1}
+  .pillar .num small{font-size:12px;color:var(--ink-3);font-weight:500;letter-spacing:0;margin-left:4px}
 
   /* ─────────  feature grid  ───────── */
   .grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
@@ -245,7 +244,8 @@
   <p class="sub">
     The agent-orchestration layer that turns your single <code>claude login</code>
     into a parallel battalion — running, waking, brainstorming, reporting back
-    across web, mobile, and Telegram. <strong>One subscription. Many agents.</strong>
+    across web, mobile, and Telegram. <strong>One subscription. Many agents.
+    Any model.</strong> Plus Character.AI-grade roleplay companions, on YOUR machine.
   </p>
   <div class="ctas">
     <a class="btn btn-primary" href="#install">Get started</a>
@@ -302,6 +302,26 @@
           you control, or the inbuilt terminal panel. All three surfaces share
           the same agent fleet — start a task on your laptop, finish it from
           your phone.
+        </p>
+      </div>
+      <div class="pillar">
+        <div class="num">∞<small>models</small></div>
+        <h3>Model-agnostic backend</h3>
+        <p>
+          Two env vars (<code>ANTHROPIC_BASE_URL</code> +
+          <code>ANTHROPIC_AUTH_TOKEN</code>) and every agent routes through
+          GLM-4.7, Kimi K2.5, OpenRouter, DeepSeek, GPT-5, or local Ollama —
+          fully offline if you want. Same orchestrator, any brain.
+        </p>
+      </div>
+      <div class="pillar">
+        <div class="num">∞<small>characters</small></div>
+        <h3>Character.AI on your machine</h3>
+        <p>
+          Persistent personas, group "Rooms" where 2–5 agents banter with
+          each other peer-to-peer, cross-chat memory, voice in. The c.ai
+          experience — local, free, with full file + code + terminal
+          superpowers c.ai will never offer.
         </p>
       </div>
     </div>
@@ -480,6 +500,22 @@
           fallback, auto-retries the last user message. You see no hiccup.</p>
       </div>
       <div class="card">
+        <span class="tag shipped">Shipped</span>
+        <div class="ico">⇆</div>
+        <h3>Model-agnostic backend</h3>
+        <p>Two env vars route every agent through GLM-4.7, Kimi K2.5,
+          OpenRouter, DeepSeek, GPT-5, or local Ollama. Same orchestrator,
+          any brain, fully offline mode supported.</p>
+      </div>
+      <div class="card">
+        <span class="tag shipped">Shipped</span>
+        <div class="ico">◐</div>
+        <h3>Roleplay companion mode</h3>
+        <p>The Character.AI experience — persistent personas, group "Rooms"
+          with peer-to-peer banter, cross-chat memory — but local, free, and
+          backed by file + code + terminal superpowers c.ai will never offer.</p>
+      </div>
+      <div class="card">
         <span class="tag soon">Roadmap</span>
         <div class="ico">💬</div>
         <h3>WhatsApp · Slack · Discord</h3>
@@ -527,32 +563,35 @@
   <div class="wrap">
     <h2>How it stacks up.</h2>
     <p class="lede">
-      Three other tools live in this neighbourhood: Anthropic's own Claude Code
-      CLI, OpenClaw (messaging-first agent gateway), and Claudia (Tauri desktop
-      checkpoint UI). Here's the side-by-side.
+      Four other tools live in this neighbourhood: Anthropic's own Claude Code
+      CLI, OpenClaw (messaging-first agent gateway), Claudia (Tauri desktop
+      checkpoint UI), and Character.AI (closed-cloud roleplay companion).
+      Here's the side-by-side.
     </p>
     <div class="compare-wrap"><div class="compare">
       <table>
         <thead>
           <tr>
-            <th></th><th class="us">ArmyClaw</th><th>Claude Code CLI</th><th>OpenClaw</th><th>Claudia</th>
+            <th></th><th class="us">ArmyClaw</th><th>Claude Code CLI</th><th>OpenClaw</th><th>Claudia</th><th>Character.AI</th>
           </tr>
         </thead>
         <tbody>
-          <tr><th>Cost model</th><td class="us">Subscription (flat)</td><td class="yes">Subscription</td><td>API key</td><td class="yes">Subscription</td></tr>
-          <tr><th>Web UI</th><td class="us yes">Single-file SPA</td><td class="no">—</td><td class="no">—</td><td>Tauri desktop only</td></tr>
-          <tr><th>Mobile (Telegram)</th><td class="us yes">✓ two-way</td><td class="no">—</td><td class="yes">✓ (and others)</td><td class="no">—</td></tr>
-          <tr><th>Parallel sessions</th><td class="us yes">Unlimited subprocesses</td><td>One</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-          <tr><th>Multi-agent groups</th><td class="us yes">Slack-style peer broadcast</td><td class="no">—</td><td class="no">—</td><td class="no">—</td></tr>
-          <tr><th>Routines (wake-ups)</th><td class="us yes">Unlimited, per-agent</td><td class="no">—</td><td class="yes">Heartbeat (single)</td><td class="no">—</td></tr>
-          <tr><th>Cross-chat memory</th><td class="us yes">Shared brain index</td><td class="no">—</td><td>Per-skill</td><td class="no">—</td></tr>
-          <tr><th>Personas</th><td class="us yes">Unlimited specialists</td><td>One CLAUDE.md</td><td class="yes">Via skills</td><td class="yes">Via agents</td></tr>
-          <tr><th>Inbuilt terminal</th><td class="us yes">xterm.js + PTY</td><td>(you're in one)</td><td class="no">—</td><td class="no">—</td></tr>
-          <tr><th>File explorer</th><td class="us yes">Browse + edit</td><td class="no">—</td><td class="no">—</td><td class="yes">✓</td></tr>
-          <tr><th>Artifacts / canvas</th><td class="us yes">Side-panel renderer</td><td class="no">—</td><td class="no">—</td><td class="no">—</td></tr>
-          <tr><th>Time-machine</th><td class="us yes">Snapshots + restore</td><td class="no">—</td><td class="no">—</td><td class="yes">Checkpoints</td></tr>
-          <tr><th>Voice in</th><td class="us yes">Web Speech</td><td class="no">—</td><td class="no">—</td><td class="no">—</td></tr>
-          <tr><th>License</th><td class="us">MIT</td><td>Proprietary</td><td>MIT-style</td><td>AGPL</td></tr>
+          <tr><th>Cost model</th><td class="us">Subscription (flat)</td><td class="yes">Subscription</td><td>API key</td><td class="yes">Subscription</td><td>$9.99/mo c.ai+</td></tr>
+          <tr><th>Runs on YOUR machine</th><td class="us yes">localhost</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">cloud only</td></tr>
+          <tr><th>Model-agnostic</th><td class="us yes">Anthropic / GLM / Kimi / OR / Ollama</td><td class="yes">via base URL</td><td>Mostly Anthropic</td><td>Anthropic only</td><td class="no">Locked to c.ai</td></tr>
+          <tr><th>Use YOUR subscription</th><td class="us yes">no extra fees</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">separate plan</td></tr>
+          <tr><th>Web UI</th><td class="us yes">Single-file SPA</td><td class="no">—</td><td class="no">—</td><td>Tauri desktop</td><td class="yes">✓ web</td></tr>
+          <tr><th>Mobile</th><td class="us yes">Telegram two-way</td><td class="no">—</td><td class="yes">multi-channel</td><td class="no">—</td><td class="yes">native iOS/Android</td></tr>
+          <tr><th>Parallel agents</th><td class="us yes">Unlimited subprocesses</td><td>One</td><td class="yes">✓</td><td class="yes">✓</td><td>One per chat</td></tr>
+          <tr><th>Group chat / Rooms</th><td class="us yes">peer broadcast, 5</td><td class="no">—</td><td class="no">—</td><td class="no">—</td><td class="yes">Rooms, 10 chars</td></tr>
+          <tr><th>Routines / wake-ups</th><td class="us yes">Unlimited per-agent</td><td class="no">—</td><td class="yes">Single heartbeat</td><td class="no">—</td><td class="no">—</td></tr>
+          <tr><th>Cross-chat memory</th><td class="us yes">Shared brain index</td><td class="no">—</td><td>Per-skill</td><td class="no">—</td><td>per-chat, 400 chars</td></tr>
+          <tr><th>Unlimited personas</th><td class="us yes">specialist agents</td><td>One CLAUDE.md</td><td class="yes">Via skills</td><td class="yes">Via agents</td><td class="yes">18M+ user-made</td></tr>
+          <tr><th>Inbuilt terminal + files</th><td class="us yes">xterm + explorer</td><td>(terminal native)</td><td class="no">—</td><td>files only</td><td class="no">—</td></tr>
+          <tr><th>Artifacts / canvas</th><td class="us yes">Side-panel renderer</td><td class="no">—</td><td class="no">—</td><td class="no">—</td><td>Imagine (paid)</td></tr>
+          <tr><th>Time-machine</th><td class="us yes">Snapshots + restore</td><td class="no">—</td><td class="no">—</td><td class="yes">Checkpoints</td><td class="no">—</td></tr>
+          <tr><th>Voice</th><td class="us yes">Voice in (Web Speech)</td><td class="no">—</td><td class="no">—</td><td class="no">—</td><td class="yes">voice calls</td></tr>
+          <tr><th>License</th><td class="us">MIT</td><td>Proprietary</td><td>MIT-style</td><td>AGPL</td><td>Proprietary</td></tr>
         </tbody>
       </table>
     </div></div>
